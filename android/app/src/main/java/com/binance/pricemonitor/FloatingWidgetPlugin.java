@@ -61,8 +61,6 @@ public class FloatingWidgetPlugin extends Plugin {
         call.resolve();
     }
 
-    @PluginMethod
-    }
 
     @PluginMethod
     public void updateConfig(PluginCall call) {
