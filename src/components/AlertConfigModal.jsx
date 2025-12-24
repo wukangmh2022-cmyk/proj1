@@ -198,33 +198,39 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                                             </div>
                                         )}
 
-                                        {indicatorType === 'fib' && (
-                                            <>
-                                                <div className="sub-option" style={{ marginTop: '12px' }}>
-                                                    <label>高点价格</label>
-                                                    <input type="number" className="form-input" placeholder="如 100000"
-                                                        value={targetValue.split('_')[0] || ''}
-                                                        onChange={e => setTargetValue(`${e.target.value}_${targetValue.split('_')[1] || ''}_${targetValue.split('_')[2] || '0.618'}`)} />
-                                                </div>
-                                                <div className="sub-option">
-                                                    <label>低点价格</label>
-                                                    <input type="number" className="form-input" placeholder="如 90000"
-                                                        value={targetValue.split('_')[1] || ''}
-                                                        onChange={e => setTargetValue(`${targetValue.split('_')[0] || ''}_${e.target.value}_${targetValue.split('_')[2] || '0.618'}`)} />
-                                                </div>
-                                                <div className="sub-option">
-                                                    <label>回撤线</label>
-                                                    <select value={targetValue.split('_')[2] || '0.618'}
-                                                        onChange={e => setTargetValue(`${targetValue.split('_')[0] || ''}_${targetValue.split('_')[1] || ''}_${e.target.value}`)}>
-                                                        <option value="0.236">23.6%</option>
-                                                        <option value="0.382">38.2%</option>
-                                                        <option value="0.5">50%</option>
-                                                        <option value="0.618">61.8%</option>
-                                                        <option value="0.786">78.6%</option>
-                                                    </select>
-                                                </div>
-                                            </>
-                                        )}
+                                        {indicatorType === 'fib' && (() => {
+                                            const fibParts = String(targetValue || '__0.618').split('_');
+                                            const fibHigh = fibParts[0] || '';
+                                            const fibLow = fibParts[1] || '';
+                                            const fibRatio = fibParts[2] || '0.618';
+                                            return (
+                                                <>
+                                                    <div className="sub-option" style={{ marginTop: '12px' }}>
+                                                        <label>高点价格</label>
+                                                        <input type="number" className="form-input" placeholder="如 100000"
+                                                            value={fibHigh}
+                                                            onChange={e => setTargetValue(`${e.target.value}_${fibLow}_${fibRatio}`)} />
+                                                    </div>
+                                                    <div className="sub-option">
+                                                        <label>低点价格</label>
+                                                        <input type="number" className="form-input" placeholder="如 90000"
+                                                            value={fibLow}
+                                                            onChange={e => setTargetValue(`${fibHigh}_${e.target.value}_${fibRatio}`)} />
+                                                    </div>
+                                                    <div className="sub-option">
+                                                        <label>回撤线</label>
+                                                        <select value={fibRatio}
+                                                            onChange={e => setTargetValue(`${fibHigh}_${fibLow}_${e.target.value}`)}>
+                                                            <option value="0.236">23.6%</option>
+                                                            <option value="0.382">38.2%</option>
+                                                            <option value="0.5">50%</option>
+                                                            <option value="0.618">61.8%</option>
+                                                            <option value="0.786">78.6%</option>
+                                                        </select>
+                                                    </div>
+                                                </>
+                                            );
+                                        })()}
 
                                         <div className="sub-option" style={{ marginTop: '12px' }}>
                                             <label>K线周期</label>
