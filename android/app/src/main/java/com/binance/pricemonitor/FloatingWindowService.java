@@ -199,6 +199,17 @@ public class FloatingWindowService extends Service {
         });
     }
     
+    // Static listener for ticker updates (used by Plugin)
+    public interface TickerUpdateListener {
+        void onTickerUpdate(String symbol, double price, double changePercent);
+    }
+    
+    private static TickerUpdateListener tickerListener;
+    
+    public static void setTickerListener(TickerUpdateListener listener) {
+        tickerListener = listener;
+    }
+    
     private void handleMessage(String text) {
         try {
             com.google.gson.JsonObject json = com.google.gson.JsonParser.parseString(text).getAsJsonObject();
@@ -214,16 +225,13 @@ public class FloatingWindowService extends Service {
                 
                 priceDataMap.put(symbol, new String[]{
                     formatPrice(closePrice), 
-                    String.format("%.2f", changePercent) // Change always 2 decimals
+                    String.format("%.2f", changePercent)
                 });
                 
-                // Broadcast ticker update for Plugin (to forward to WebView)
-                Intent tickerIntent = new Intent("com.binance.pricemonitor.TICKER_UPDATE");
-                tickerIntent.putExtra("symbol", symbol);
-                tickerIntent.putExtra("price", closePrice);
-                tickerIntent.putExtra("changePercent", changePercent);
-                androidx.localbroadcastmanager.content.LocalBroadcastManager
-                    .getInstance(this).sendBroadcast(tickerIntent);
+                // Notify static listener (Plugin) about ticker update
+                if (tickerListener != null) {
+                    tickerListener.onTickerUpdate(symbol, closePrice, changePercent);
+                }
                 
                 // Update UI on main thread
                 new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {

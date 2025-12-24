@@ -1,9 +1,7 @@
 package com.binance.pricemonitor;
 
-import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.net.Uri;
 import android.provider.Settings;
 import android.os.Build;
@@ -14,45 +12,31 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
-import androidx.localbroadcastmanager.content.LocalBroadcastManager;
-
 @CapacitorPlugin(name = "FloatingWidget")
 public class FloatingWidgetPlugin extends Plugin {
-
-    private BroadcastReceiver tickerReceiver;
 
     @Override
     public void load() {
         super.load();
         
-        // Register receiver to get ticker updates from the Service
-        tickerReceiver = new BroadcastReceiver() {
-            @Override
-            public void onReceive(Context context, Intent intent) {
-                String symbol = intent.getStringExtra("symbol");
-                double price = intent.getDoubleExtra("price", 0);
-                double changePercent = intent.getDoubleExtra("changePercent", 0);
-                
-                JSObject data = new JSObject();
-                data.put("symbol", symbol);
-                data.put("price", price);
-                data.put("changePercent", changePercent);
-                
-                // Notify JS listeners
+        // Register as listener for ticker updates from the Service
+        FloatingWindowService.setTickerListener((symbol, price, changePercent) -> {
+            JSObject data = new JSObject();
+            data.put("symbol", symbol);
+            data.put("price", price);
+            data.put("changePercent", changePercent);
+            
+            // Notify JS listeners (must be on main thread for Capacitor)
+            getActivity().runOnUiThread(() -> {
                 notifyListeners("tickerUpdate", data);
-            }
-        };
-        
-        IntentFilter filter = new IntentFilter("com.binance.pricemonitor.TICKER_UPDATE");
-        LocalBroadcastManager.getInstance(getContext()).registerReceiver(tickerReceiver, filter);
+            });
+        });
     }
     
     @Override
     protected void handleOnDestroy() {
         super.handleOnDestroy();
-        if (tickerReceiver != null) {
-            LocalBroadcastManager.getInstance(getContext()).unregisterReceiver(tickerReceiver);
-        }
+        FloatingWindowService.setTickerListener(null);
     }
 
     @PluginMethod
