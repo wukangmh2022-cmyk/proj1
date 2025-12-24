@@ -631,27 +631,61 @@ public class FloatingWindowService extends Service {
         try {
             period = Integer.parseInt(indicator.replaceAll("[a-zA-Z]", ""));
         } catch (Exception e) {
-            period = 7;
+            period = 14; // Default for RSI
         }
         
-        if (history.size() < period) return Double.NaN;
-        
-        java.util.List<Double> values = history.subList(history.size() - period, history.size());
-        
         if (type.equals("sma")) {
+            if (history.size() < period) return Double.NaN;
+            java.util.List<Double> values = history.subList(history.size() - period, history.size());
             double sum = 0;
             for (double v : values) sum += v;
             return sum / period;
         } else if (type.equals("ema")) {
+            if (history.size() < period) return Double.NaN;
+            java.util.List<Double> values = history.subList(history.size() - period, history.size());
             double multiplier = 2.0 / (period + 1);
             double ema = values.get(0);
             for (int i = 1; i < values.size(); i++) {
                 ema = (values.get(i) - ema) * multiplier + ema;
             }
             return ema;
+        } else if (type.equals("rsi")) {
+            // RSI calculation requires period + 1 prices for changes
+            if (history.size() < period + 1) return Double.NaN;
+            
+            double avgGain = 0;
+            double avgLoss = 0;
+            
+            // Calculate initial average gain/loss
+            for (int i = history.size() - period; i < history.size(); i++) {
+                double change = history.get(i) - history.get(i - 1);
+                if (change > 0) avgGain += change;
+                else avgLoss += Math.abs(change);
+            }
+            avgGain /= period;
+            avgLoss /= period;
+            
+            if (avgLoss == 0) return 100.0;
+            double rs = avgGain / avgLoss;
+            return 100.0 - (100.0 / (1.0 + rs));
         }
         
         return Double.NaN;
+    }
+    
+    // Calculate Fibonacci retracement level
+    // Format: "fib_高点_低点_比例" e.g. "fib_100000_90000_0.618"
+    private double calculateFibLevel(String fibConfig) {
+        try {
+            String[] parts = fibConfig.split("_");
+            if (parts.length < 4) return Double.NaN;
+            double high = Double.parseDouble(parts[1]);
+            double low = Double.parseDouble(parts[2]);
+            double ratio = Double.parseDouble(parts[3]);
+            return high - (high - low) * ratio;
+        } catch (Exception e) {
+            return Double.NaN;
+        }
     }
     
     // Also check simple price alerts from ticker data
@@ -708,20 +742,39 @@ public class FloatingWindowService extends Service {
             );
             channel.setDescription("价格预警通知");
             channel.enableVibration(true);
+            channel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
             getSystemService(NotificationManager.class).createNotificationChannel(channel);
         }
         
-        Notification notification = new NotificationCompat.Builder(this, channelId)
+        // Create intent to open app when notification is clicked
+        Intent openIntent = getPackageManager().getLaunchIntentForPackage(getPackageName());
+        android.app.PendingIntent pendingIntent = null;
+        if (openIntent != null) {
+            openIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            pendingIntent = android.app.PendingIntent.getActivity(
+                this, id, openIntent, 
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE
+            );
+        }
+        
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, channelId)
             .setContentTitle(title)
             .setContentText(message)
             .setStyle(new NotificationCompat.BigTextStyle().bigText(message))
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setAutoCancel(true)
-            .build();
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .setAutoCancel(true);
+        
+        if (pendingIntent != null) {
+            builder.setContentIntent(pendingIntent);
+            builder.setFullScreenIntent(pendingIntent, true); // Heads-up style
+        }
         
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        if (nm != null) nm.notify(id, notification);
+        if (nm != null) nm.notify(id, builder.build());
     }
 
     @Override

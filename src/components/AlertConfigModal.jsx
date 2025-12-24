@@ -56,9 +56,26 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
         let finalTargetValue = targetValue;
 
         if (targetType === 'indicator') {
-            const key = `${indicatorType.toLowerCase()}${indicatorPeriod}`;
-            finalTarget = key;
-            finalTargetValue = key;
+            if (indicatorType === 'rsi') {
+                // RSI: targetValue is the threshold (70, 80, 30, 20)
+                finalTargetValue = `rsi${indicatorPeriod}`;
+                finalTarget = parseFloat(targetValue) || 70;
+            } else if (indicatorType === 'fib') {
+                // Fibonacci: targetValue is "high_low_ratio", target calculated from that
+                finalTargetValue = `fib_${targetValue}`;
+                const parts = targetValue.split('_');
+                if (parts.length >= 3) {
+                    const high = parseFloat(parts[0]);
+                    const low = parseFloat(parts[1]);
+                    const ratio = parseFloat(parts[2]);
+                    finalTarget = high - (high - low) * ratio;
+                }
+            } else {
+                // SMA/EMA: standard format
+                const key = `${indicatorType.toLowerCase()}${indicatorPeriod}`;
+                finalTarget = key;
+                finalTargetValue = key;
+            }
         } else {
             if (!targetValue) return;
             finalTarget = parseFloat(targetValue);
@@ -150,13 +167,65 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                                             <select value={indicatorType} onChange={e => setIndicatorType(e.target.value)}>
                                                 <option value="sma">SMA 移动均线</option>
                                                 <option value="ema">EMA 指数均线</option>
+                                                <option value="rsi">RSI 相对强弱</option>
+                                                <option value="fib">斐波那契回撤</option>
                                             </select>
-                                            <select value={indicatorPeriod} onChange={e => setIndicatorPeriod(e.target.value)}>
-                                                <option value="7">7</option>
-                                                <option value="25">25</option>
-                                                <option value="99">99</option>
-                                            </select>
+                                            {(indicatorType === 'sma' || indicatorType === 'ema') && (
+                                                <select value={indicatorPeriod} onChange={e => setIndicatorPeriod(e.target.value)}>
+                                                    <option value="7">7</option>
+                                                    <option value="25">25</option>
+                                                    <option value="99">99</option>
+                                                </select>
+                                            )}
+                                            {indicatorType === 'rsi' && (
+                                                <select value={indicatorPeriod} onChange={e => setIndicatorPeriod(e.target.value)}>
+                                                    <option value="7">7</option>
+                                                    <option value="14">14</option>
+                                                    <option value="21">21</option>
+                                                </select>
+                                            )}
                                         </div>
+
+                                        {indicatorType === 'rsi' && (
+                                            <div className="sub-option" style={{ marginTop: '12px' }}>
+                                                <label>RSI 阈值</label>
+                                                <select value={targetValue} onChange={e => setTargetValue(e.target.value)}>
+                                                    <option value="70">超买 70</option>
+                                                    <option value="80">超买 80</option>
+                                                    <option value="30">超卖 30</option>
+                                                    <option value="20">超卖 20</option>
+                                                </select>
+                                            </div>
+                                        )}
+
+                                        {indicatorType === 'fib' && (
+                                            <>
+                                                <div className="sub-option" style={{ marginTop: '12px' }}>
+                                                    <label>高点价格</label>
+                                                    <input type="number" className="form-input" placeholder="如 100000"
+                                                        value={targetValue.split('_')[0] || ''}
+                                                        onChange={e => setTargetValue(`${e.target.value}_${targetValue.split('_')[1] || ''}_${targetValue.split('_')[2] || '0.618'}`)} />
+                                                </div>
+                                                <div className="sub-option">
+                                                    <label>低点价格</label>
+                                                    <input type="number" className="form-input" placeholder="如 90000"
+                                                        value={targetValue.split('_')[1] || ''}
+                                                        onChange={e => setTargetValue(`${targetValue.split('_')[0] || ''}_${e.target.value}_${targetValue.split('_')[2] || '0.618'}`)} />
+                                                </div>
+                                                <div className="sub-option">
+                                                    <label>回撤线</label>
+                                                    <select value={targetValue.split('_')[2] || '0.618'}
+                                                        onChange={e => setTargetValue(`${targetValue.split('_')[0] || ''}_${targetValue.split('_')[1] || ''}_${e.target.value}`)}>
+                                                        <option value="0.236">23.6%</option>
+                                                        <option value="0.382">38.2%</option>
+                                                        <option value="0.5">50%</option>
+                                                        <option value="0.618">61.8%</option>
+                                                        <option value="0.786">78.6%</option>
+                                                    </select>
+                                                </div>
+                                            </>
+                                        )}
+
                                         <div className="sub-option" style={{ marginTop: '12px' }}>
                                             <label>K线周期</label>
                                             <select value={interval} onChange={e => setInterval(e.target.value)}>
