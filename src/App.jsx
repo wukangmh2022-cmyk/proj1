@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { HashRouter, Routes, Route, useNavigate } from 'react-router-dom';
 import { useBinanceTickers } from './hooks/useBinanceTickers';
 import FloatingWidget from './plugins/FloatingWidget';
@@ -10,13 +10,30 @@ import './App.css';
 function HomePage() {
   const navigate = useNavigate();
   const [symbols, setSymbols] = useState(getSymbols());
-  const tickers = useBinanceTickers(symbols);
-
   const [showAddModal, setShowAddModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [newSymbol, setNewSymbol] = useState('');
   const [floatingActive, setFloatingActive] = useState(false);
   const [config, setConfig] = useState(getFloatingConfig());
+  const floatingActiveRef = useRef(false);
+
+  // Update ref when state changes
+  useEffect(() => {
+    floatingActiveRef.current = floatingActive;
+  }, [floatingActive]);
+
+  // Callback for ticker updates - only sends to widget if active
+  const handleTickerUpdate = useCallback((symbol, data) => {
+    if (!floatingActiveRef.current || !Capacitor.isNativePlatform()) return;
+
+    FloatingWidget.update({
+      symbol: symbol,
+      price: data.price.toFixed(2),
+      change: data.changePercent.toFixed(2)
+    }).catch(() => { }); // Ignore if not running
+  }, []);
+
+  const tickers = useBinanceTickers(symbols, handleTickerUpdate);
 
   const handleAddSymbol = () => {
     if (newSymbol.trim()) {
@@ -45,10 +62,20 @@ function HomePage() {
         await FloatingWidget.requestPermission();
         return;
       }
+
       await FloatingWidget.start();
       setFloatingActive(true);
+
+      // Apply current config immediately
+      const currentConfig = getFloatingConfig();
+      await FloatingWidget.updateConfig({
+        fontSize: currentConfig.fontSize,
+        opacity: currentConfig.opacity,
+        showSymbol: currentConfig.showSymbol
+      });
     } catch (e) {
       console.error(e);
+      alert('Failed to start: ' + e.message);
     }
   };
 
@@ -66,7 +93,7 @@ function HomePage() {
     setConfig(newConfig);
     saveFloatingConfig(newConfig);
 
-    // Sync config to native layer
+    // Sync config to native layer if floating is active
     if (Capacitor.isNativePlatform() && floatingActive) {
       try {
         await FloatingWidget.updateConfig({

@@ -1,10 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import FloatingWidget from '../plugins/FloatingWidget';
-import { Capacitor } from '@capacitor/core';
 
 const BINANCE_WS_URL = 'wss://stream.binance.com:9443/stream';
 
-export const useBinanceTickers = (symbols = []) => {
+export const useBinanceTickers = (symbols = [], onUpdate = null) => {
     const [tickers, setTickers] = useState({});
     const wsRef = useRef(null);
     const reconnectTimeoutRef = useRef(null);
@@ -33,23 +31,20 @@ export const useBinanceTickers = (symbols = []) => {
                     lastUpdateRef.current = Date.now();
                     const { s: symbol, c: price, p: changePrice, P: changePercent } = message.data;
 
+                    const tickerData = {
+                        price: parseFloat(price),
+                        change: parseFloat(changePrice),
+                        changePercent: parseFloat(changePercent)
+                    };
+
                     setTickers(prev => ({
                         ...prev,
-                        [symbol]: {
-                            price: parseFloat(price),
-                            change: parseFloat(changePrice),
-                            changePercent: parseFloat(changePercent)
-                        }
+                        [symbol]: tickerData
                     }));
 
-                    // Send updates to native floating widget (only if active & platform is native)
-                    // For simplicity, we send the first symbol's data
-                    if (Capacitor.isNativePlatform() && symbol === symbols[0]) {
-                        FloatingWidget.update({
-                            symbol: symbol,
-                            price: parseFloat(price).toFixed(2),
-                            change: parseFloat(changePercent).toFixed(2)
-                        }).catch(() => { }); // Ignore errors if widget not started
+                    // Call optional callback (for floating widget updates)
+                    if (onUpdate && symbol === symbols[0]) {
+                        onUpdate(symbol, tickerData);
                     }
                 }
             } catch (err) {
