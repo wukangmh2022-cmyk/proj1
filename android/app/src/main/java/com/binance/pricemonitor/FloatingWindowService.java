@@ -213,8 +213,8 @@ public class FloatingWindowService extends Service {
                 double changePercent = ((closePrice - openPrice) / openPrice) * 100;
                 
                 priceDataMap.put(symbol, new String[]{
-                    close, 
-                    String.valueOf(changePercent)
+                    formatPrice(closePrice), 
+                    String.format("%.2f", changePercent) // Change always 2 decimals
                 });
                 
                 // Update UI on main thread
@@ -227,6 +227,15 @@ public class FloatingWindowService extends Service {
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+    
+    // Smart formatting to satisfy "0.01% of price" precision
+    private String formatPrice(double price) {
+        if (price == 0) return "0.00";
+        if (price >= 1000) return String.format(java.util.Locale.US, "%.2f", price);
+        if (price >= 1) return String.format(java.util.Locale.US, "%.4f", price);
+        if (price >= 0.0001) return String.format(java.util.Locale.US, "%.6f", price).replaceAll("0*$", "").replaceAll("\\.$", "");
+        return String.format(java.util.Locale.US, "%.8f", price).replaceAll("0*$", "").replaceAll("\\.$", "");
     }
     
     private boolean isSymbolVisible(String symbol) {
@@ -297,15 +306,19 @@ public class FloatingWindowService extends Service {
             changeTv.setTextColor(Color.WHITE);
         } else {
             try {
-                double changeVal = Double.parseDouble(change);
-                if (Double.isNaN(changeVal)) {
-                    changeTv.setText("--%");
-                    changeTv.setTextColor(Color.WHITE);
-                } else {
-                    changeTv.setText(String.format("%.2f%%", changeVal));
-                    int color = changeVal < 0 ? 0xFFFF4444 : 0xFF00CC88;
-                    changeTv.setTextColor(color);
-                }
+                // Change is already formatted as string, but we need double for color
+                 // But wait, "data[1]" in map is now "1.23".
+                 // In previous code it was string.
+                 // Let's parse it safely.
+                 // Wait, formatPrice might return string like "1.23".
+                 
+                 // In handleMessage: String.format("%.2f", changePercent) -> "1.23"
+                 
+                double changeVal = Double.parseDouble(change); // "1.23" -> 1.23
+                changeTv.setText(change + "%"); // "1.23%"
+                int color = changeVal < 0 ? 0xFFFF4444 : 0xFF00CC88;
+                changeTv.setTextColor(color);
+                
             } catch (NumberFormatException e) {
                 changeTv.setText("--%");
                 changeTv.setTextColor(Color.WHITE);
