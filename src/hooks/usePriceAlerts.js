@@ -1,13 +1,25 @@
 import { useState, useEffect, useRef } from 'react';
 import { LocalNotifications } from '@capacitor/local-notifications';
-import { Haptics, ImpactStyle } from '@capacitor/haptics';
+import { Haptics } from '@capacitor/haptics';
 import { Toast } from '@capacitor/toast';
 import { getAlerts, saveAlert, addAlertHistory } from '../utils/alert_storage';
 import { Capacitor } from '@capacitor/core';
+import { useBinanceCandles } from './useBinanceCandles';
 
 export const usePriceAlerts = (tickers) => {
     const [alerts, setAlerts] = useState([]);
-    const pendingAlertsRef = useRef({}); // Tracks delay timers: { alertId: { startTime, timerId } }
+    const pendingAlertsRef = useRef({}); // Tracks delay timers
+    const lastProcessedCandleRef = useRef({}); // Tracks processed candle times to avoid duplicate triggers
+
+    // 1. Identify symbols that need K-line data (Pro alerts)
+    const activeProSymbols = alerts
+        .filter(a => a.active && (a.targetType === 'indicator' || a.confirmation === 'candle_close'))
+        .map(a => a.symbol);
+
+    const uniqueProSymbols = [...new Set(activeProSymbols)];
+
+    // 2. Fetch Candle Data for Pro Alerts (Default 1m for now, ideally dynamic)
+    const candleData = useBinanceCandles(uniqueProSymbols, '1m');
 
     // Load alerts on mount
     useEffect(() => {
@@ -23,96 +35,125 @@ export const usePriceAlerts = (tickers) => {
         setAlerts(getAlerts());
     };
 
-    // Check alerts whenever tickers update
+    // Check alerts logic
     useEffect(() => {
-        if (!tickers || Object.keys(tickers).length === 0) return;
-
         alerts.forEach(alert => {
             if (!alert.active) return;
 
-            const ticker = tickers[alert.symbol];
-            if (!ticker) return;
+            const symbol = alert.symbol;
+            let currentPrice, targetPrice, isConditionMet = false;
+            let shouldCheck = true;
 
-            const currentPrice = ticker.price;
-            const targetPrice = parseFloat(alert.target);
+            // --- DATA SOURCE SELECTION ---
+            if (alert.targetType === 'indicator' || alert.confirmation === 'candle_close') {
+                // Use Candle Data
+                const data = candleData[symbol];
+                if (!data) return; // Wait for data
 
-            // Determine logic based on condition
-            // If condition is 'crossing_up', we check if price >= target
-            // If condition is 'crossing_down', we check if price <= target
-            // We assume the alert was set when price was on the other side.
+                currentPrice = data.close;
 
-            let isConditionMet = false;
+                if (alert.targetType === 'indicator') {
+                    // targetValue string acts as key, e.g. 'sma7'
+                    targetPrice = data[alert.targetValue];
+                    if (!targetPrice) return; // Indicator not ready
+                } else {
+                    targetPrice = parseFloat(alert.target);
+                }
+
+                // Candle Confirmation Logic
+                if (alert.confirmation === 'candle_close') {
+                    // Only check if candle just closed
+                    if (!data.isClosed) {
+                        shouldCheck = false;
+                    } else {
+                        // Avoid double trigger for same candle
+                        const lastTime = lastProcessedCandleRef.current[alert.id];
+                        if (lastTime === data.kline.t) {
+                            shouldCheck = false;
+                        } else {
+                            // Mark this candle as processed for this alert
+                            lastProcessedCandleRef.current[alert.id] = data.kline.t;
+                        }
+                    }
+                }
+
+            } else {
+                // simple miniTicker data
+                const ticker = tickers[symbol];
+                if (!ticker) return;
+                currentPrice = ticker.price;
+                targetPrice = parseFloat(alert.target);
+            }
+
+            if (!shouldCheck) return;
+
+            // --- CONDITION CHECK ---
             if (alert.condition === 'crossing_up') {
                 isConditionMet = currentPrice >= targetPrice;
             } else if (alert.condition === 'crossing_down') {
                 isConditionMet = currentPrice <= targetPrice;
             }
 
+            // --- TRIGGER LOGIC ---
             if (isConditionMet) {
-                // If Delay is set (e.g. 5 sec), we verify persistence
-                if (alert.delaySeconds > 0) {
+                // If Delay is set (and not using candle close which is instant)
+                if (alert.delaySeconds > 0 && alert.confirmation !== 'candle_close') {
                     if (!pendingAlertsRef.current[alert.id]) {
-                        // Start timer
                         pendingAlertsRef.current[alert.id] = {
                             startTime: Date.now(),
                             timerId: setTimeout(() => {
-                                triggerAlert(alert, currentPrice);
+                                triggerAlert(alert, currentPrice, targetPrice);
                                 delete pendingAlertsRef.current[alert.id];
                             }, alert.delaySeconds * 1000)
                         };
-                        console.log(`Alert ${alert.id} condition met. Waiting ${alert.delaySeconds}s...`);
+                        console.log(`Alert ${alert.id} waiting ${alert.delaySeconds}s...`);
                     }
                 } else {
-                    // Immediate trigger
-                    triggerAlert(alert, currentPrice);
+                    // Immediate trigger (or Candle Close trigger)
+                    triggerAlert(alert, currentPrice, targetPrice);
                 }
             } else {
-                // Condition NOT met (price reverted)
+                // Condition NOT met
                 if (pendingAlertsRef.current[alert.id]) {
-                    // Cancel pending timer
-                    console.log(`Alert ${alert.id} reverted. Cancelling...`);
                     clearTimeout(pendingAlertsRef.current[alert.id].timerId);
                     delete pendingAlertsRef.current[alert.id];
                 }
             }
         });
-    }, [tickers, alerts]);
+    }, [tickers, candleData, alerts]);
 
-    const triggerAlert = async (alert, currentPrice) => {
+    const triggerAlert = async (alert, currentPrice, targetPrice) => {
         // 1. Deactivate alert (one-time trigger)
         alert.active = false;
         saveAlert(alert);
         refreshAlerts();
 
         // 2. Log History
-        const message = `${alert.symbol} ${alert.condition === 'crossing_up' ? 'rose above' : 'fell below'} ${alert.target}. Price: ${currentPrice}`;
+        const targetStr = alert.targetType === 'indicator' ? alert.targetValue.toUpperCase() : targetPrice;
+        const conditionStr = alert.condition === 'crossing_up' ? 'rose above' : 'fell below';
+        const message = `${alert.symbol} ${conditionStr} ${targetStr}. Price: ${currentPrice}`;
+
         addAlertHistory({
             symbol: alert.symbol,
             message: message,
-            target: alert.target,
+            target: targetStr,
             price: currentPrice
         });
 
         // 3. Native Actions
         if (Capacitor.isNativePlatform()) {
             if (alert.actions.toast) {
-                await Toast.show({
-                    text: message,
-                    duration: 'long'
-                });
+                await Toast.show({ text: message, duration: 'long' });
             }
 
             if (alert.actions.notification) {
                 await LocalNotifications.schedule({
                     notifications: [{
-                        title: 'Binance Alert Triggered',
+                        title: 'Binance Alert',
                         body: message,
                         id: Math.floor(Math.random() * 100000),
                         schedule: { at: new Date(Date.now() + 100) },
-                        sound: null,
-                        attachments: null,
-                        actionTypeId: "",
-                        extra: null
+                        sound: null
                     }]
                 });
             }
@@ -128,10 +169,8 @@ export const usePriceAlerts = (tickers) => {
             }
         } else {
             // Web fallback
-            if (alert.actions.toast) {
-                alert(message);
-            }
             console.log('Alert Triggered:', message);
+            if (alert.actions.toast) alert(message);
         }
     };
 

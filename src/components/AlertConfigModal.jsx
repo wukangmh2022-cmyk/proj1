@@ -1,17 +1,23 @@
 import { useState, useEffect } from 'react';
 import { getAlerts, saveAlert, removeAlert, getAlertHistory } from '../utils/alert_storage';
-import '../App.css'; // Reuse existing styles
+import '../App.css';
 
 export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
-    const [target, setTarget] = useState(currentPrice || '');
+    const [targetType, setTargetType] = useState('price'); // 'price' or 'indicator'
+    const [targetValue, setTargetValue] = useState(currentPrice || ''); // For price: "95000", For indicator: "sma7"
+    const [indicatorType, setIndicatorType] = useState('sma');
+    const [indicatorPeriod, setIndicatorPeriod] = useState(7);
+
+    const [confirmation, setConfirmation] = useState('immediate'); // 'immediate', 'time_delay', 'candle_close'
     const [delay, setDelay] = useState(0);
+
     const [actions, setActions] = useState({
         toast: true,
         notification: true,
-        vibration: 'once' // none, once, continuous
+        vibration: 'once'
     });
 
-    const [activeTab, setActiveTab] = useState('new'); // 'new', 'list', 'history'
+    const [activeTab, setActiveTab] = useState('new');
     const [myAlerts, setMyAlerts] = useState([]);
     const [history, setHistory] = useState([]);
 
@@ -25,19 +31,37 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
     };
 
     const handleCreate = () => {
-        if (!target) return;
+        // Construct target key 
+        let finalTarget = targetValue;
+        let finalTargetValue = targetValue;
+
+        // Construct indicator key if needed
+        if (targetType === 'indicator') {
+            const key = `${indicatorType.toLowerCase()}${indicatorPeriod}`;
+            finalTarget = key; // Display Name / Logic Key
+            finalTargetValue = key;
+        } else {
+            if (!targetValue) return;
+            finalTarget = parseFloat(targetValue);
+            finalTargetValue = finalTarget;
+        }
 
         // Auto-determine direction
-        const price = parseFloat(currentPrice);
-        const targetVal = parseFloat(target);
-        const condition = targetVal > price ? 'crossing_up' : 'crossing_down';
+        let condition = 'crossing_up';
+        if (targetType === 'price' && currentPrice > finalTarget) {
+            condition = 'crossing_down';
+        }
 
+        // Create Alert Object
         const newAlert = {
             id: crypto.randomUUID(),
             symbol,
-            target: targetVal,
+            targetType, // 'price' or 'indicator'
+            target: finalTarget, // "95000" or "sma7"
+            targetValue: finalTargetValue, // same
             condition,
-            delaySeconds: parseInt(delay),
+            confirmation, // 'immediate', 'time_delay', 'candle_close'
+            delaySeconds: confirmation === 'time_delay' ? parseInt(delay) : 0,
             actions,
             active: true,
             createdAt: Date.now()
@@ -46,7 +70,6 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
         saveAlert(newAlert);
         loadData();
         setActiveTab('list');
-        setTarget(currentPrice); // Reset input
     };
 
     const handleDelete = (id) => {
@@ -58,7 +81,7 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
         <div className="modal-overlay" onClick={onClose}>
             <div className="modal alert-modal" onClick={e => e.stopPropagation()}>
                 <div className="modal-header">
-                    <h2>🔔 {symbol} Alerts</h2>
+                    <h2>🔔 {symbol} Pro Alerts</h2>
                     <button className="close-btn" onClick={onClose}>×</button>
                 </div>
 
@@ -71,25 +94,63 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                 <div className="modal-content">
                     {activeTab === 'new' && (
                         <div className="new-alert-form">
+
+                            {/* Target Config */}
                             <div className="input-group">
-                                <label>Target Price (Current: {currentPrice})</label>
-                                <input type="number" value={target} onChange={e => setTarget(e.target.value)} />
+                                <label>Trigger Target</label>
+                                <div className="radio-group" style={{ display: 'flex', gap: '10px', marginBottom: '8px' }}>
+                                    <label style={{ display: 'flex', alignItems: 'center' }}>
+                                        <input type="radio" checked={targetType === 'price'} onChange={() => setTargetType('price')} /> Price
+                                    </label>
+                                    <label style={{ display: 'flex', alignItems: 'center' }}>
+                                        <input type="radio" checked={targetType === 'indicator'} onChange={() => setTargetType('indicator')} /> Indicator
+                                    </label>
+                                </div>
+
+                                {targetType === 'price' ? (
+                                    <input
+                                        type="number"
+                                        placeholder={`Current: ${currentPrice}`}
+                                        value={targetValue}
+                                        onChange={e => setTargetValue(e.target.value)}
+                                    />
+                                ) : (
+                                    <div className="indicator-config" style={{ display: 'flex', gap: '10px' }}>
+                                        <select value={indicatorType} onChange={e => setIndicatorType(e.target.value)} style={{ flex: 1, padding: '8px', background: '#333', color: 'white', border: 'none' }}>
+                                            <option value="sma">SMA</option>
+                                            <option value="ema">EMA</option>
+                                        </select>
+                                        <select value={indicatorPeriod} onChange={e => setIndicatorPeriod(e.target.value)} style={{ flex: 1, padding: '8px', background: '#333', color: 'white', border: 'none' }}>
+                                            <option value="7">7</option>
+                                            <option value="25">25</option>
+                                            <option value="99">99</option>
+                                        </select>
+                                    </div>
+                                )}
                             </div>
 
+                            {/* Confirmation Config */}
                             <div className="input-group">
-                                <label>Delay Confirmation (Seconds)</label>
-                                <div className="range-wrap">
-                                    <input
-                                        type="range"
-                                        min="0"
-                                        max="60"
-                                        step="5"
-                                        value={delay}
-                                        onChange={e => setDelay(e.target.value)}
-                                    />
-                                    <span>{delay}s</span>
-                                </div>
-                                <small>Alert only fires if price stays beyond target for {delay}s</small>
+                                <label>Confirmation Mode</label>
+                                <select value={confirmation} onChange={e => setConfirmation(e.target.value)} style={{ width: '100%', padding: '10px', background: '#333', color: 'white', marginBottom: '8px' }}>
+                                    <option value="immediate">Immediate (Touch)</option>
+                                    <option value="time_delay">Time Delay (Seconds)</option>
+                                    <option value="candle_close">Candle Close (1m)</option>
+                                </select>
+
+                                {confirmation === 'time_delay' && (
+                                    <div className="range-wrap">
+                                        <input
+                                            type="range"
+                                            min="5"
+                                            max="60"
+                                            step="5"
+                                            value={delay}
+                                            onChange={e => setDelay(e.target.value)}
+                                        />
+                                        <span>{delay}s</span>
+                                    </div>
+                                )}
                             </div>
 
                             <div className="actions-config">
@@ -129,10 +190,11 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                                     <div key={alert.id} className="alert-item">
                                         <div className="alert-info">
                                             <span className="condition">
-                                                {alert.condition === 'crossing_up' ? '↗️ Cross Above' : '↘️ Cross Below'}
+                                                {alert.targetType === 'indicator' ? `📈 ${alert.targetValue.toUpperCase()}` : `💲 ${alert.target}`}
                                             </span>
-                                            <span className="target-price">${alert.target}</span>
-                                            {alert.delaySeconds > 0 && <span className="badge-delay">⏳ {alert.delaySeconds}s</span>}
+                                            <span className="target-price" style={{ fontSize: '12px', color: '#888' }}>
+                                                {alert.confirmation === 'candle_close' ? '🕯️ On Close' : alert.delaySeconds > 0 ? `⏳ ${alert.delaySeconds}s` : '⚡ Immediate'}
+                                            </span>
                                         </div>
                                         <button className="btn-delete" onClick={() => handleDelete(alert.id)}>🗑️</button>
                                     </div>
