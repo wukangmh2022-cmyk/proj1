@@ -36,6 +36,32 @@ public class FloatingWidgetPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void setSymbols(PluginCall call) {
+        com.getcapacitor.JSArray jsArray = call.getArray("symbols");
+        java.util.ArrayList<String> symbols = new java.util.ArrayList<>();
+        try {
+            for (int i = 0; i < jsArray.length(); i++) {
+                symbols.add(jsArray.getString(i));
+            }
+        } catch (Exception e) {
+            call.reject("Invalid symbol list");
+            return;
+        }
+
+        Context context = getContext();
+        Intent intent = new Intent(context, FloatingWindowService.class);
+        intent.setAction(FloatingWindowService.ACTION_SET_SYMBOLS);
+        intent.putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST, symbols);
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent);
+        } else {
+            context.startService(intent);
+        }
+        call.resolve();
+    }
+
+    @PluginMethod
     public void update(PluginCall call) {
         String symbol = call.getString("symbol");
         String price = call.getString("price");

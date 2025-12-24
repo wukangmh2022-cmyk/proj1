@@ -27,6 +27,11 @@ public class FloatingWindowService extends Service {
     private TextView changeText;
     private WindowManager.LayoutParams params;
     
+    // Data storage
+    private java.util.List<String> symbolList = new java.util.ArrayList<>();
+    private java.util.Map<String, String[]> priceDataMap = new java.util.concurrent.ConcurrentHashMap<>();
+    private int currentIndex = 0;
+    
     // Config values
     private float fontSize = 14f;
     private float opacity = 0.85f;
@@ -34,12 +39,15 @@ public class FloatingWindowService extends Service {
     
     public static final String ACTION_UPDATE = "UPDATE_DATA";
     public static final String ACTION_CONFIG = "UPDATE_CONFIG";
+    public static final String ACTION_SET_SYMBOLS = "SET_SYMBOLS";
+    
     public static final String EXTRA_SYMBOL = "SYMBOL";
     public static final String EXTRA_PRICE = "PRICE";
     public static final String EXTRA_CHANGE = "CHANGE";
     public static final String EXTRA_FONT_SIZE = "FONT_SIZE";
     public static final String EXTRA_OPACITY = "OPACITY";
     public static final String EXTRA_SHOW_SYMBOL = "SHOW_SYMBOL";
+    public static final String EXTRA_SYMBOL_LIST = "SYMBOL_LIST";
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -72,10 +80,11 @@ public class FloatingWindowService extends Service {
             windowManager.addView(floatingView, params);
         }
 
-        // Drag listener
+        // Drag and Click listener
         floatingView.setOnTouchListener(new View.OnTouchListener() {
             private int initialX, initialY;
             private float initialTouchX, initialTouchY;
+            private long startClickTime;
 
             @Override
             public boolean onTouch(View v, MotionEvent event) {
@@ -85,7 +94,20 @@ public class FloatingWindowService extends Service {
                         initialY = params.y;
                         initialTouchX = event.getRawX();
                         initialTouchY = event.getRawY();
+                        startClickTime = System.currentTimeMillis();
                         return true;
+                        
+                    case MotionEvent.ACTION_UP:
+                        long clickDuration = System.currentTimeMillis() - startClickTime;
+                        float dx = event.getRawX() - initialTouchX;
+                        float dy = event.getRawY() - initialTouchY;
+                        
+                        // Check if it was a click (short duration, small movement)
+                        if (clickDuration < 200 && Math.abs(dx) < 10 && Math.abs(dy) < 10) {
+                            showNextSymbol();
+                        }
+                        return true;
+
                     case MotionEvent.ACTION_MOVE:
                         params.x = initialX + (int) (event.getRawX() - initialTouchX);
                         params.y = initialY + (int) (event.getRawY() - initialTouchY);
@@ -103,7 +125,26 @@ public class FloatingWindowService extends Service {
         
         String action = intent.getAction();
         
-        // Handle config update
+        if (ACTION_SET_SYMBOLS.equals(action)) {
+            java.util.ArrayList<String> received = intent.getStringArrayListExtra(EXTRA_SYMBOL_LIST);
+            if (received != null) {
+                // Preserve current symbol if possible
+                String currentSymbol = (symbolList.size() > 0 && currentIndex < symbolList.size()) 
+                    ? symbolList.get(currentIndex) : null;
+                
+                symbolList = received;
+                
+                // Try to find old current symbol in new list
+                currentIndex = 0;
+                if (currentSymbol != null) {
+                    int idx = symbolList.indexOf(currentSymbol);
+                    if (idx >= 0) currentIndex = idx;
+                }
+                updateUI();
+            }
+            return START_STICKY;
+        }
+
         if (ACTION_CONFIG.equals(action)) {
             fontSize = intent.getFloatExtra(EXTRA_FONT_SIZE, 14f);
             opacity = intent.getFloatExtra(EXTRA_OPACITY, 0.85f);
@@ -112,20 +153,58 @@ public class FloatingWindowService extends Service {
             return START_STICKY;
         }
         
-        // Handle data update
         if (ACTION_UPDATE.equals(action)) {
             String symbol = intent.getStringExtra(EXTRA_SYMBOL);
             String price = intent.getStringExtra(EXTRA_PRICE);
             String change = intent.getStringExtra(EXTRA_CHANGE);
-
-            if (priceText != null) {
-                String displayText = showSymbol ? 
-                    (symbol != null ? symbol + ": $" : "$") + (price != null ? price : "--") :
-                    "$" + (price != null ? price : "--");
-                priceText.setText(displayText);
-            }
             
-            if (changeText != null && change != null) {
+            if (symbol != null) {
+                // Store data
+                priceDataMap.put(symbol, new String[]{price, change});
+                
+                // Also add to symbol list if not present (auto-discovery if setSymbols missed)
+                if (!symbolList.contains(symbol)) {
+                    symbolList.add(symbol);
+                }
+                
+                // Update UI ONLY if this is the currently displayed symbol
+                if (symbolList.size() > 0 && currentIndex < symbolList.size()) {
+                    if (symbol.equals(symbolList.get(currentIndex))) {
+                        updateUI();
+                    }
+                }
+            }
+        }
+        return START_STICKY;
+    }
+    
+    private void showNextSymbol() {
+        if (symbolList.isEmpty()) return;
+        currentIndex = (currentIndex + 1) % symbolList.size();
+        updateUI();
+    }
+    
+    private void updateUI() {
+        if (symbolList.isEmpty()) return;
+        if (currentIndex >= symbolList.size()) currentIndex = 0;
+        
+        String symbol = symbolList.get(currentIndex);
+        String[] data = priceDataMap.get(symbol);
+        String price = (data != null) ? data[0] : "--";
+        String change = (data != null) ? data[1] : null; // Pass raw value instead of formatted
+
+        if (priceText != null) {
+            String displayText = showSymbol ? 
+                (symbol != null ? symbol + ": $" : "$") + (price != null ? price : "--") :
+                "$" + (price != null ? price : "--");
+            priceText.setText(displayText);
+        }
+        
+        if (changeText != null) {
+            if (change == null) {
+                 changeText.setText("--%");
+                 changeText.setTextColor(0xFFFFFFFF);
+            } else {
                 try {
                     double changeVal = Double.parseDouble(change);
                     if (Double.isNaN(changeVal)) {
@@ -142,7 +221,6 @@ public class FloatingWindowService extends Service {
                 }
             }
         }
-        return START_STICKY;
     }
     
     private void applyConfig() {

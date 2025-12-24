@@ -20,7 +20,12 @@ function HomePage() {
   // Update ref when state changes
   useEffect(() => {
     floatingActiveRef.current = floatingActive;
-  }, [floatingActive]);
+
+    // Sync symbols list to native if active
+    if (floatingActive && Capacitor.isNativePlatform()) {
+      FloatingWidget.setSymbols({ symbols }).catch(console.error);
+    }
+  }, [floatingActive, symbols]);
 
   // Callback for ticker updates - only sends to widget if active
   const handleTickerUpdate = useCallback((symbol, data) => {
@@ -66,6 +71,9 @@ function HomePage() {
       await FloatingWidget.start();
       setFloatingActive(true);
       floatingActiveRef.current = true; // Update ref immediately to prevent race conditions
+
+      // Sync symbols list
+      await FloatingWidget.setSymbols({ symbols });
 
       // Apply current config immediately
       const currentConfig = getFloatingConfig();
