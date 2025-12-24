@@ -88,6 +88,7 @@ public class FloatingWidgetPlugin extends Plugin {
         float fontSize = call.getFloat("fontSize", 14f);
         float opacity = call.getFloat("opacity", 0.85f);
         boolean showSymbol = call.getBoolean("showSymbol", true);
+        int itemsPerPage = call.getInt("itemsPerPage", 1);
 
         Context context = getContext();
         Intent intent = new Intent(context, FloatingWindowService.class);
@@ -95,6 +96,7 @@ public class FloatingWidgetPlugin extends Plugin {
         intent.putExtra(FloatingWindowService.EXTRA_FONT_SIZE, fontSize);
         intent.putExtra(FloatingWindowService.EXTRA_OPACITY, opacity);
         intent.putExtra(FloatingWindowService.EXTRA_SHOW_SYMBOL, showSymbol);
+        intent.putExtra(FloatingWindowService.EXTRA_ITEMS_PER_PAGE, itemsPerPage);
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             context.startForegroundService(intent);

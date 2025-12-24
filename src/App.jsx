@@ -80,7 +80,8 @@ function HomePage() {
       await FloatingWidget.updateConfig({
         fontSize: currentConfig.fontSize,
         opacity: currentConfig.opacity,
-        showSymbol: currentConfig.showSymbol
+        showSymbol: currentConfig.showSymbol,
+        itemsPerPage: currentConfig.itemsPerPage
       });
     } catch (e) {
       console.error(e);
@@ -109,7 +110,8 @@ function HomePage() {
         await FloatingWidget.updateConfig({
           fontSize: newConfig.fontSize,
           opacity: newConfig.opacity,
-          showSymbol: newConfig.showSymbol
+          showSymbol: newConfig.showSymbol,
+          itemsPerPage: newConfig.itemsPerPage
         });
       } catch (e) {
         console.error('Failed to update config', e);

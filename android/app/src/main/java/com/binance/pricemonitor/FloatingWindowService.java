@@ -23,8 +23,7 @@ public class FloatingWindowService extends Service {
     private WindowManager windowManager;
     private View floatingView;
     private LinearLayout container;
-    private TextView priceText;
-    private TextView changeText;
+    private LinearLayout itemsContainer;
     private WindowManager.LayoutParams params;
     
     // Data storage
@@ -36,6 +35,7 @@ public class FloatingWindowService extends Service {
     private float fontSize = 14f;
     private float opacity = 0.85f;
     private boolean showSymbol = true;
+    private int itemsPerPage = 1;
     
     public static final String ACTION_UPDATE = "UPDATE_DATA";
     public static final String ACTION_CONFIG = "UPDATE_CONFIG";
@@ -48,6 +48,7 @@ public class FloatingWindowService extends Service {
     public static final String EXTRA_OPACITY = "OPACITY";
     public static final String EXTRA_SHOW_SYMBOL = "SHOW_SYMBOL";
     public static final String EXTRA_SYMBOL_LIST = "SYMBOL_LIST";
+    public static final String EXTRA_ITEMS_PER_PAGE = "ITEMS_PER_PAGE"; // New extra
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -61,8 +62,7 @@ public class FloatingWindowService extends Service {
 
         floatingView = LayoutInflater.from(this).inflate(R.layout.floating_widget, null);
         container = floatingView.findViewById(R.id.floating_container);
-        priceText = floatingView.findViewById(R.id.floating_price_text);
-        changeText = floatingView.findViewById(R.id.floating_change_text);
+        itemsContainer = floatingView.findViewById(R.id.items_container); // New container for list items
 
         params = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
@@ -104,7 +104,7 @@ public class FloatingWindowService extends Service {
                         
                         // Check if it was a click (short duration, small movement)
                         if (clickDuration < 200 && Math.abs(dx) < 10 && Math.abs(dy) < 10) {
-                            showNextSymbol();
+                            showNextPage();
                         }
                         return true;
 
@@ -128,14 +128,12 @@ public class FloatingWindowService extends Service {
         if (ACTION_SET_SYMBOLS.equals(action)) {
             java.util.ArrayList<String> received = intent.getStringArrayListExtra(EXTRA_SYMBOL_LIST);
             if (received != null) {
-                // Preserve current symbol if possible
                 String currentSymbol = (symbolList.size() > 0 && currentIndex < symbolList.size()) 
                     ? symbolList.get(currentIndex) : null;
                 
                 symbolList = received;
-                
-                // Try to find old current symbol in new list
                 currentIndex = 0;
+                
                 if (currentSymbol != null) {
                     int idx = symbolList.indexOf(currentSymbol);
                     if (idx >= 0) currentIndex = idx;
@@ -149,7 +147,9 @@ public class FloatingWindowService extends Service {
             fontSize = intent.getFloatExtra(EXTRA_FONT_SIZE, 14f);
             opacity = intent.getFloatExtra(EXTRA_OPACITY, 0.85f);
             showSymbol = intent.getBooleanExtra(EXTRA_SHOW_SYMBOL, true);
+            itemsPerPage = intent.getIntExtra(EXTRA_ITEMS_PER_PAGE, 1); // Get itemsPerPage
             applyConfig();
+            updateUI(); // Re-render UI with new item count
             return START_STICKY;
         }
         
@@ -159,83 +159,121 @@ public class FloatingWindowService extends Service {
             String change = intent.getStringExtra(EXTRA_CHANGE);
             
             if (symbol != null) {
-                // Store data
                 priceDataMap.put(symbol, new String[]{price, change});
-                
-                // Also add to symbol list if not present (auto-discovery if setSymbols missed)
                 if (!symbolList.contains(symbol)) {
                     symbolList.add(symbol);
                 }
-                
-                // Update UI ONLY if this is the currently displayed symbol
-                if (symbolList.size() > 0 && currentIndex < symbolList.size()) {
-                    if (symbol.equals(symbolList.get(currentIndex))) {
-                        updateUI();
-                    }
+                // Check if the updated symbol is currently visible
+                if (isSymbolVisible(symbol)) {
+                    updateUI();
                 }
             }
         }
         return START_STICKY;
     }
     
-    private void showNextSymbol() {
+    private boolean isSymbolVisible(String symbol) {
+        if (symbolList.isEmpty()) return false;
+        
+        // Calculate page index logic
+        // We paginate by itemsPerPage. currentIndex is the starting index of the page.
+        // But our currentIndex logic was previously single-item. 
+        // Let's adjust: "currentIndex" will be the index of the first item on the current page.
+        
+        for (int i = 0; i < itemsPerPage; i++) {
+            int idx = (currentIndex + i) % symbolList.size();
+            if (symbol.equals(symbolList.get(idx))) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    private void showNextPage() {
         if (symbolList.isEmpty()) return;
-        currentIndex = (currentIndex + 1) % symbolList.size();
+        currentIndex = (currentIndex + itemsPerPage) % symbolList.size();
         updateUI();
     }
     
     private void updateUI() {
-        if (symbolList.isEmpty()) return;
-        if (currentIndex >= symbolList.size()) currentIndex = 0;
+        if (itemsContainer == null) return;
+        itemsContainer.removeAllViews(); // Clear existing views
         
-        String symbol = symbolList.get(currentIndex);
-        String[] data = priceDataMap.get(symbol);
-        String price = (data != null) ? data[0] : "--";
-        String change = (data != null) ? data[1] : null; // Pass raw value instead of formatted
-
-        if (priceText != null) {
-            String displayText = showSymbol ? 
-                (symbol != null ? symbol + ": $" : "$") + (price != null ? price : "--") :
-                "$" + (price != null ? price : "--");
-            priceText.setText(displayText);
+        if (symbolList.isEmpty()) {
+            addLoadingView();
+            return;
         }
-        
-        if (changeText != null) {
-            if (change == null) {
-                 changeText.setText("--%");
-                 changeText.setTextColor(0xFFFFFFFF);
-            } else {
-                try {
-                    double changeVal = Double.parseDouble(change);
-                    if (Double.isNaN(changeVal)) {
-                        changeText.setText("--%");
-                        changeText.setTextColor(0xFFFFFFFF);
-                    } else {
-                        changeText.setText(String.format("%.2f%%", changeVal));
-                        int color = changeVal < 0 ? 0xFFFF4444 : 0xFF00CC88;
-                        changeText.setTextColor(color);
-                    }
-                } catch (NumberFormatException e) {
-                    changeText.setText("--%");
-                    changeText.setTextColor(0xFFFFFFFF);
-                }
-            }
+
+        // Add views for each item in the current page
+        for (int i = 0; i < itemsPerPage; i++) {
+            int idx = (currentIndex + i) % symbolList.size();
+            String symbol = symbolList.get(idx);
+            String[] data = priceDataMap.get(symbol);
+            addTickerView(symbol, data);
+            
+            // If total symbols < itemsPerPage, don't duplicate
+            if (i >= symbolList.size() - 1) break; 
         }
     }
     
+    private void addLoadingView() {
+        TextView tv = new TextView(this);
+        tv.setText("Waiting for data...");
+        tv.setTextColor(Color.WHITE);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize);
+        itemsContainer.addView(tv);
+    }
+
+    private void addTickerView(String symbol, String[] data) {
+        String price = (data != null) ? data[0] : "--";
+        String change = (data != null) ? data[1] : null;
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        row.setPadding(0, 0, 0, 10); // Spacing between items
+
+        TextView priceTv = new TextView(this);
+        String displayText = showSymbol ? 
+            (symbol != null ? symbol + ": $" : "$") + (price != null ? price : "--") :
+            "$" + (price != null ? price : "--");
+        priceTv.setText(displayText);
+        priceTv.setTextColor(Color.WHITE);
+        priceTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize);
+        priceTv.setTypeface(null, android.graphics.Typeface.BOLD);
+        row.addView(priceTv);
+
+        TextView changeTv = new TextView(this);
+        if (change == null) {
+            changeTv.setText("--%");
+            changeTv.setTextColor(Color.WHITE);
+        } else {
+            try {
+                double changeVal = Double.parseDouble(change);
+                if (Double.isNaN(changeVal)) {
+                    changeTv.setText("--%");
+                    changeTv.setTextColor(Color.WHITE);
+                } else {
+                    changeTv.setText(String.format("%.2f%%", changeVal));
+                    int color = changeVal < 0 ? 0xFFFF4444 : 0xFF00CC88;
+                    changeTv.setTextColor(color);
+                }
+            } catch (NumberFormatException e) {
+                changeTv.setText("--%");
+                changeTv.setTextColor(Color.WHITE);
+            }
+        }
+        changeTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize - 2);
+        row.addView(changeTv);
+
+        itemsContainer.addView(row);
+    }
+    
     private void applyConfig() {
-        if (priceText != null) {
-            priceText.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize);
-        }
-        if (changeText != null) {
-            changeText.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize - 2);
-        }
         if (container != null) {
             int alpha = (int) (opacity * 255);
             int bgColor = Color.argb(alpha, 0, 0, 0);
             container.setBackgroundColor(bgColor);
         }
-        // Force layout update to accommodate new text sizes
         if (windowManager != null && floatingView != null && params != null) {
             windowManager.updateViewLayout(floatingView, params);
         }
