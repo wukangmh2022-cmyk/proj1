@@ -64,15 +64,19 @@ function HomePage() {
     };
   }, [showAddModal, showSettings, alertModalSymbol, isEditMode]);
 
+  // Start native data service on mount (for Android)
+  useEffect(() => {
+    if (Capacitor.isNativePlatform()) {
+      FloatingWidget.startData({ symbols }).catch(console.error);
+    }
+  }, [symbols]); // Re-start when symbols change
+
   useEffect(() => {
     floatingActiveRef.current = floatingActive;
-    if (floatingActive && Capacitor.isNativePlatform()) {
-      FloatingWidget.setSymbols({ symbols }).catch(console.error);
-    }
-  }, [floatingActive, symbols]);
+  }, [floatingActive]);
 
-  // Data source: native when floating active, WebSocket otherwise
-  const tickers = useBinanceTickers(symbols, floatingActive);
+  // Data source: native on Android (service started above), WebSocket on web
+  const tickers = useBinanceTickers(symbols);
   usePriceAlerts(tickers);
 
   const handleAddSymbol = () => {

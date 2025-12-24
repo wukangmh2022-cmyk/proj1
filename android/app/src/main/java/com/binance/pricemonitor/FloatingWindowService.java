@@ -44,12 +44,17 @@ public class FloatingWindowService extends Service {
 
     public static final String ACTION_CONFIG = "UPDATE_CONFIG";
     public static final String ACTION_SET_SYMBOLS = "SET_SYMBOLS";
+    public static final String ACTION_START_DATA = "START_DATA"; // Start WS without showing window
+    public static final String ACTION_SHOW_WINDOW = "SHOW_WINDOW";
+    public static final String ACTION_HIDE_WINDOW = "HIDE_WINDOW";
     
     public static final String EXTRA_FONT_SIZE = "FONT_SIZE";
     public static final String EXTRA_OPACITY = "OPACITY";
     public static final String EXTRA_SHOW_SYMBOL = "SHOW_SYMBOL";
     public static final String EXTRA_SYMBOL_LIST = "SYMBOL_LIST";
     public static final String EXTRA_ITEMS_PER_PAGE = "ITEMS_PER_PAGE";
+
+    private boolean windowVisible = false;
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -60,7 +65,8 @@ public class FloatingWindowService extends Service {
     public void onCreate() {
         super.onCreate();
         startForegroundService();
-
+        
+        // Prepare floating view but don't show yet
         floatingView = LayoutInflater.from(this).inflate(R.layout.floating_widget, null);
         container = floatingView.findViewById(R.id.floating_container);
         itemsContainer = floatingView.findViewById(R.id.items_container);
@@ -77,11 +83,13 @@ public class FloatingWindowService extends Service {
         params.y = 100;
 
         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
-        if (windowManager != null) {
-            windowManager.addView(floatingView, params);
-        }
-
-        // Drag and Click listener
+        // DO NOT add view here - wait for SHOW_WINDOW action
+        
+        // Setup touch listener for floating view
+        setupTouchListener();
+    }
+    
+    private void setupTouchListener() {
         floatingView.setOnTouchListener(new View.OnTouchListener() {
             private int initialX, initialY;
             private float initialTouchX, initialTouchY;
@@ -111,7 +119,9 @@ public class FloatingWindowService extends Service {
                     case MotionEvent.ACTION_MOVE:
                         params.x = initialX + (int) (event.getRawX() - initialTouchX);
                         params.y = initialY + (int) (event.getRawY() - initialTouchY);
-                        windowManager.updateViewLayout(floatingView, params);
+                        if (windowVisible && windowManager != null) {
+                            windowManager.updateViewLayout(floatingView, params);
+                        }
                         return true;
                 }
                 return false;
@@ -124,6 +134,36 @@ public class FloatingWindowService extends Service {
         if (intent == null) return START_STICKY;
         
         String action = intent.getAction();
+        
+        // Start data service (WebSocket) without showing window
+        if (ACTION_START_DATA.equals(action)) {
+            java.util.ArrayList<String> received = intent.getStringArrayListExtra(EXTRA_SYMBOL_LIST);
+            if (received != null && !received.isEmpty()) {
+                symbolList = received;
+                connectWebSocket();
+            }
+            return START_STICKY;
+        }
+        
+        // Show floating window
+        if (ACTION_SHOW_WINDOW.equals(action)) {
+            if (!windowVisible && windowManager != null) {
+                windowManager.addView(floatingView, params);
+                windowVisible = true;
+                applyConfig();
+                updateUI();
+            }
+            return START_STICKY;
+        }
+        
+        // Hide floating window (but keep service and WebSocket running)
+        if (ACTION_HIDE_WINDOW.equals(action)) {
+            if (windowVisible && windowManager != null) {
+                windowManager.removeView(floatingView);
+                windowVisible = false;
+            }
+            return START_STICKY;
+        }
         
         if (ACTION_SET_SYMBOLS.equals(action)) {
             java.util.ArrayList<String> received = intent.getStringArrayListExtra(EXTRA_SYMBOL_LIST);
@@ -138,8 +178,8 @@ public class FloatingWindowService extends Service {
                     int idx = symbolList.indexOf(currentSymbol);
                     if (idx >= 0) currentIndex = idx;
                 }
-                updateUI();
-                connectWebSocket(); // Reconnect with new symbols
+                if (windowVisible) updateUI();
+                connectWebSocket();
             }
             return START_STICKY;
         }
@@ -150,7 +190,7 @@ public class FloatingWindowService extends Service {
             showSymbol = intent.getBooleanExtra(EXTRA_SHOW_SYMBOL, true);
             itemsPerPage = intent.getIntExtra(EXTRA_ITEMS_PER_PAGE, 1);
             applyConfig();
-            updateUI();
+            if (windowVisible) updateUI();
             return START_STICKY;
         }
         

@@ -6,10 +6,10 @@ const BINANCE_WS_URL = 'wss://stream.binance.com:9443/stream';
 
 /**
  * Hook to get real-time ticker data.
- * @param {string[]} symbols - Array of symbols to track
- * @param {boolean} useNativeData - If true and on native, uses data from FloatingWidget Service
+ * On Android: receives data from native Service (must call FloatingWidget.startData first)
+ * On Web: uses WebSocket directly
  */
-export const useBinanceTickers = (symbols = [], useNativeData = false) => {
+export const useBinanceTickers = (symbols = []) => {
     const [tickers, setTickers] = useState({});
     const wsRef = useRef(null);
     const reconnectTimeoutRef = useRef(null);
@@ -17,24 +17,20 @@ export const useBinanceTickers = (symbols = [], useNativeData = false) => {
     const lastUpdateRef = useRef(Date.now());
     const listenerRef = useRef(null);
 
-    // Determine if we should use native data
-    const shouldUseNative = Capacitor.isNativePlatform() && useNativeData;
+    const isNative = Capacitor.isNativePlatform();
 
-    // ===== NATIVE MODE (Only when floating window is active) =====
-    // Receive data from native Service via Plugin events
+    // ===== NATIVE MODE: Always listen to native events =====
     useEffect(() => {
-        if (!shouldUseNative) return;
+        if (!isNative) return;
 
-        // Subscribe to native ticker updates
         listenerRef.current = FloatingWidget.addListener('tickerUpdate', (data) => {
             const { symbol, price, changePercent } = data;
 
-            // Calculate change from current/previous state (or just use percent)
             setTickers(prev => ({
                 ...prev,
                 [symbol]: {
                     price: price,
-                    change: 0, // Not directly available from broadcast, but percent is.
+                    change: 0,
                     changePercent: changePercent
                 }
             }));
@@ -45,11 +41,11 @@ export const useBinanceTickers = (symbols = [], useNativeData = false) => {
                 listenerRef.current.remove();
             }
         };
-    }, [shouldUseNative]); // Only run once
+    }, [isNative]);
 
-    // ===== WEB MODE (or Native without floating) =====
+    // ===== WEB MODE =====
     const connect = () => {
-        if (shouldUseNative) return; // Skip, using native data
+        if (isNative) return; // Use native data on Android
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
         if (wsRef.current) wsRef.current.close();
 
@@ -107,7 +103,7 @@ export const useBinanceTickers = (symbols = [], useNativeData = false) => {
     };
 
     useEffect(() => {
-        if (shouldUseNative) return; // Use native data instead
+        if (isNative) return; // Use native data on Android
         if (symbols.length === 0) return;
 
         connect();
@@ -132,8 +128,7 @@ export const useBinanceTickers = (symbols = [], useNativeData = false) => {
                 wsRef.current.close();
             }
         };
-    }, [JSON.stringify(symbols), shouldUseNative]);
+    }, [JSON.stringify(symbols), isNative]);
 
     return tickers;
 };
-

@@ -40,9 +40,37 @@ public class FloatingWidgetPlugin extends Plugin {
     }
 
     @PluginMethod
-    public void start(PluginCall call) {
+    public void startData(PluginCall call) {
+        com.getcapacitor.JSArray jsArray = call.getArray("symbols");
+        java.util.ArrayList<String> symbols = new java.util.ArrayList<>();
+        try {
+            for (int i = 0; i < jsArray.length(); i++) {
+                symbols.add(jsArray.getString(i));
+            }
+        } catch (Exception e) {
+            call.reject("Invalid symbol list");
+            return;
+        }
+
         Context context = getContext();
         Intent intent = new Intent(context, FloatingWindowService.class);
+        intent.setAction(FloatingWindowService.ACTION_START_DATA);
+        intent.putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST, symbols);
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent);
+        } else {
+            context.startService(intent);
+        }
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void start(PluginCall call) {
+        // Now "start" means show the floating window
+        Context context = getContext();
+        Intent intent = new Intent(context, FloatingWindowService.class);
+        intent.setAction(FloatingWindowService.ACTION_SHOW_WINDOW);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             context.startForegroundService(intent);
         } else {
@@ -53,9 +81,15 @@ public class FloatingWidgetPlugin extends Plugin {
 
     @PluginMethod
     public void stop(PluginCall call) {
+        // Now "stop" means hide the floating window (service keeps running)
         Context context = getContext();
         Intent intent = new Intent(context, FloatingWindowService.class);
-        context.stopService(intent);
+        intent.setAction(FloatingWindowService.ACTION_HIDE_WINDOW);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent);
+        } else {
+            context.startService(intent);
+        }
         call.resolve();
     }
 
