@@ -145,17 +145,30 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                                         onChange={e => setTargetValue(e.target.value)}
                                     />
                                 ) : (
-                                    <div className="indicator-row">
-                                        <select value={indicatorType} onChange={e => setIndicatorType(e.target.value)}>
-                                            <option value="sma">SMA 移动均线</option>
-                                            <option value="ema">EMA 指数均线</option>
-                                        </select>
-                                        <select value={indicatorPeriod} onChange={e => setIndicatorPeriod(e.target.value)}>
-                                            <option value="7">7</option>
-                                            <option value="25">25</option>
-                                            <option value="99">99</option>
-                                        </select>
-                                    </div>
+                                    <>
+                                        <div className="indicator-row">
+                                            <select value={indicatorType} onChange={e => setIndicatorType(e.target.value)}>
+                                                <option value="sma">SMA 移动均线</option>
+                                                <option value="ema">EMA 指数均线</option>
+                                            </select>
+                                            <select value={indicatorPeriod} onChange={e => setIndicatorPeriod(e.target.value)}>
+                                                <option value="7">7</option>
+                                                <option value="25">25</option>
+                                                <option value="99">99</option>
+                                            </select>
+                                        </div>
+                                        <div className="sub-option" style={{ marginTop: '12px' }}>
+                                            <label>K线周期</label>
+                                            <select value={interval} onChange={e => setInterval(e.target.value)}>
+                                                <option value="1m">1分钟</option>
+                                                <option value="5m">5分钟</option>
+                                                <option value="15m">15分钟</option>
+                                                <option value="1h">1小时</option>
+                                                <option value="4h">4小时</option>
+                                                <option value="1d">1天</option>
+                                            </select>
+                                        </div>
+                                    </>
                                 )}
                             </div>
 
@@ -184,7 +197,7 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                                 </div>
 
                                 {/* Sub-options */}
-                                {(confirmation === 'candle_close' || targetType === 'indicator') && (
+                                {confirmation === 'candle_close' && targetType === 'price' && (
                                     <div className="sub-option">
                                         <label>K线周期</label>
                                         <select value={interval} onChange={e => setInterval(e.target.value)}>
