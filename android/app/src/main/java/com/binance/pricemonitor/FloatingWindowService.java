@@ -194,6 +194,15 @@ public class FloatingWindowService extends Service {
             return START_STICKY;
         }
         
+        // Sync alerts from JS
+        if (ACTION_SYNC_ALERTS.equals(action)) {
+            String alertsJson = intent.getStringExtra(EXTRA_ALERTS_JSON);
+            if (alertsJson != null) {
+                syncAlerts(alertsJson);
+            }
+            return START_STICKY;
+        }
+        
         return START_STICKY;
     }
     
@@ -272,6 +281,9 @@ public class FloatingWindowService extends Service {
                 if (tickerListener != null) {
                     tickerListener.onTickerUpdate(symbol, closePrice, changePercent);
                 }
+                
+                // Check simple price alerts
+                checkPriceAlerts(symbol, closePrice);
                 
                 // Update UI on main thread
                 new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
@@ -392,9 +404,305 @@ public class FloatingWindowService extends Service {
             int bgColor = Color.argb(alpha, 0, 0, 0);
             container.setBackgroundColor(bgColor);
         }
-        if (windowManager != null && floatingView != null && params != null) {
-            windowManager.updateViewLayout(floatingView, params);
+        if (windowManager != null && floatingView != null && params != null && windowVisible) {
+            try {
+                windowManager.updateViewLayout(floatingView, params);
+            } catch (Exception e) {
+                // View may not be attached
+            }
         }
+    }
+
+    // ============================================
+    // K-LINE WEBSOCKET & ALERT SYSTEM
+    // ============================================
+    
+    public static final String ACTION_SYNC_ALERTS = "SYNC_ALERTS";
+    public static final String EXTRA_ALERTS_JSON = "ALERTS_JSON";
+    
+    private okhttp3.WebSocket klineWebSocket;
+    private java.util.List<AlertConfig> alerts = new java.util.ArrayList<>();
+    private java.util.Map<String, java.util.List<Double>> candleHistory = new java.util.concurrent.ConcurrentHashMap<>();
+    private java.util.Map<String, Long> lastCandleTime = new java.util.concurrent.ConcurrentHashMap<>();
+    private java.util.Set<String> triggeredAlerts = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+    
+    // Alert configuration class
+    public static class AlertConfig {
+        public String id;
+        public String symbol;
+        public String targetType; // "price" or "indicator"
+        public double target; // price value or 0 if indicator
+        public String targetValue; // "sma7", "ema25", etc. for indicator type
+        public String condition; // "crossing_up", "crossing_down"
+        public String confirmation; // "immediate", "time_delay", "candle_close"
+        public String interval; // "1m", "5m", etc.
+        public int delaySeconds;
+        public int delayCandles;
+        public boolean active;
+    }
+    
+    public void syncAlerts(String alertsJson) {
+        try {
+            com.google.gson.reflect.TypeToken<java.util.List<AlertConfig>> typeToken = 
+                new com.google.gson.reflect.TypeToken<java.util.List<AlertConfig>>() {};
+            alerts = gson.fromJson(alertsJson, typeToken.getType());
+            
+            // Clear triggered cache for new alerts
+            triggeredAlerts.clear();
+            
+            // Connect to K-line streams if needed
+            connectKlineWebSocket();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+    
+    private void connectKlineWebSocket() {
+        if (klineWebSocket != null) {
+            klineWebSocket.cancel();
+            klineWebSocket = null;
+        }
+        
+        // Collect all needed kline streams from alerts
+        java.util.Set<String> streams = new java.util.HashSet<>();
+        for (AlertConfig alert : alerts) {
+            if (alert.active && (alert.targetType.equals("indicator") || alert.confirmation.equals("candle_close"))) {
+                String interval = alert.interval != null ? alert.interval : "1m";
+                streams.add(alert.symbol.toLowerCase() + "@kline_" + interval);
+            }
+        }
+        
+        if (streams.isEmpty()) return;
+        
+        String streamPath = String.join("/", streams);
+        String url = "wss://stream.binance.com:9443/stream?streams=" + streamPath;
+        
+        okhttp3.Request request = new okhttp3.Request.Builder().url(url).build();
+        klineWebSocket = client.newWebSocket(request, new okhttp3.WebSocketListener() {
+            @Override
+            public void onMessage(okhttp3.WebSocket webSocket, String text) {
+                handleKlineMessage(text);
+            }
+            
+            @Override
+            public void onFailure(okhttp3.WebSocket webSocket, Throwable t, okhttp3.Response response) {
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                    connectKlineWebSocket();
+                }, 5000);
+            }
+        });
+        
+        // Also fetch initial history
+        fetchKlineHistory(streams);
+    }
+    
+    private void fetchKlineHistory(java.util.Set<String> streams) {
+        for (String stream : streams) {
+            // stream format: btcusdt@kline_1m
+            String[] parts = stream.split("@kline_");
+            if (parts.length != 2) continue;
+            String symbol = parts[0].toUpperCase();
+            String interval = parts[1];
+            String key = symbol + "_" + interval;
+            
+            new Thread(() -> {
+                try {
+                    String urlStr = "https://api.binance.com/api/v3/klines?symbol=" + symbol + "&interval=" + interval + "&limit=100";
+                    java.net.URL url = new java.net.URL(urlStr);
+                    java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(url.openStream()));
+                    StringBuilder sb = new StringBuilder();
+                    String line;
+                    while ((line = reader.readLine()) != null) sb.append(line);
+                    reader.close();
+                    
+                    com.google.gson.JsonArray arr = com.google.gson.JsonParser.parseString(sb.toString()).getAsJsonArray();
+                    java.util.List<Double> closes = new java.util.ArrayList<>();
+                    for (int i = 0; i < arr.size(); i++) {
+                        closes.add(arr.get(i).getAsJsonArray().get(4).getAsDouble()); // Close price
+                    }
+                    candleHistory.put(key, closes);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }).start();
+        }
+    }
+    
+    private void handleKlineMessage(String text) {
+        try {
+            com.google.gson.JsonObject json = com.google.gson.JsonParser.parseString(text).getAsJsonObject();
+            if (!json.has("data")) return;
+            
+            com.google.gson.JsonObject data = json.getAsJsonObject("data");
+            if (!data.has("e") || !data.get("e").getAsString().equals("kline")) return;
+            
+            String symbol = data.get("s").getAsString();
+            com.google.gson.JsonObject k = data.getAsJsonObject("k");
+            String interval = k.get("i").getAsString();
+            double close = k.get("c").getAsDouble();
+            boolean isClosed = k.get("x").getAsBoolean();
+            long openTime = k.get("t").getAsLong();
+            
+            String key = symbol + "_" + interval;
+            
+            // Update candle history
+            java.util.List<Double> history = candleHistory.get(key);
+            if (history == null) {
+                history = new java.util.ArrayList<>();
+                candleHistory.put(key, history);
+            }
+            
+            Long lastTime = lastCandleTime.get(key);
+            if (isClosed && (lastTime == null || lastTime != openTime)) {
+                history.add(close);
+                if (history.size() > 100) history.remove(0);
+                lastCandleTime.put(key, openTime);
+                
+                // Check alerts on candle close
+                checkAlertsForKline(symbol, interval, close, history, true);
+            } else if (!isClosed) {
+                // Live update for immediate alerts
+                checkAlertsForKline(symbol, interval, close, history, false);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+    
+    private void checkAlertsForKline(String symbol, String interval, double close, java.util.List<Double> history, boolean isClosed) {
+        for (AlertConfig alert : alerts) {
+            if (!alert.active || !alert.symbol.equals(symbol)) continue;
+            if (triggeredAlerts.contains(alert.id)) continue;
+            
+            String alertInterval = alert.interval != null ? alert.interval : "1m";
+            if (!alertInterval.equals(interval)) continue;
+            
+            double targetValue;
+            
+            // Determine target
+            if (alert.targetType.equals("indicator")) {
+                targetValue = calculateIndicator(alert.targetValue, history);
+                if (Double.isNaN(targetValue)) continue;
+            } else {
+                targetValue = alert.target;
+            }
+            
+            // Check confirmation mode
+            if (alert.confirmation.equals("candle_close") && !isClosed) continue;
+            
+            // Check condition
+            boolean conditionMet = false;
+            if (alert.condition.equals("crossing_up") && close >= targetValue) {
+                conditionMet = true;
+            } else if (alert.condition.equals("crossing_down") && close <= targetValue) {
+                conditionMet = true;
+            }
+            
+            if (conditionMet) {
+                triggerAlert(alert, close, targetValue);
+            }
+        }
+    }
+    
+    private double calculateIndicator(String indicator, java.util.List<Double> history) {
+        if (history == null || history.isEmpty()) return Double.NaN;
+        
+        String type = indicator.replaceAll("[0-9]", "").toLowerCase();
+        int period;
+        try {
+            period = Integer.parseInt(indicator.replaceAll("[a-zA-Z]", ""));
+        } catch (Exception e) {
+            period = 7;
+        }
+        
+        if (history.size() < period) return Double.NaN;
+        
+        java.util.List<Double> values = history.subList(history.size() - period, history.size());
+        
+        if (type.equals("sma")) {
+            double sum = 0;
+            for (double v : values) sum += v;
+            return sum / period;
+        } else if (type.equals("ema")) {
+            double multiplier = 2.0 / (period + 1);
+            double ema = values.get(0);
+            for (int i = 1; i < values.size(); i++) {
+                ema = (values.get(i) - ema) * multiplier + ema;
+            }
+            return ema;
+        }
+        
+        return Double.NaN;
+    }
+    
+    // Also check simple price alerts from ticker data
+    public void checkPriceAlerts(String symbol, double price) {
+        for (AlertConfig alert : alerts) {
+            if (!alert.active || !alert.symbol.equals(symbol)) continue;
+            if (triggeredAlerts.contains(alert.id)) continue;
+            if (!alert.targetType.equals("price")) continue;
+            if (!alert.confirmation.equals("immediate")) continue;
+            
+            boolean conditionMet = false;
+            if (alert.condition.equals("crossing_up") && price >= alert.target) {
+                conditionMet = true;
+            } else if (alert.condition.equals("crossing_down") && price <= alert.target) {
+                conditionMet = true;
+            }
+            
+            if (conditionMet) {
+                triggerAlert(alert, price, alert.target);
+            }
+        }
+    }
+    
+    private void triggerAlert(AlertConfig alert, double currentPrice, double targetValue) {
+        triggeredAlerts.add(alert.id);
+        
+        String direction = alert.condition.equals("crossing_up") ? "↑ 突破" : "↓ 跌破";
+        String targetStr = alert.targetType.equals("indicator") 
+            ? alert.targetValue.toUpperCase() 
+            : String.format("$%.2f", targetValue);
+        String message = alert.symbol + " " + direction + " " + targetStr + "\n当前: $" + String.format("%.2f", currentPrice);
+        
+        // Send notification
+        sendNotification(alert.symbol + " 预警触发", message, alert.id.hashCode());
+        
+        // Vibrate
+        try {
+            android.os.Vibrator v = (android.os.Vibrator) getSystemService(android.content.Context.VIBRATOR_SERVICE);
+            if (v != null) v.vibrate(500);
+        } catch (Exception e) {}
+        
+        // Notify plugin to update JS (mark as inactive)
+        if (tickerListener != null) {
+            // Could add a separate listener for alert triggers
+        }
+    }
+    
+    private void sendNotification(String title, String message, int id) {
+        String channelId = "alert_channel";
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                channelId, "价格预警", NotificationManager.IMPORTANCE_HIGH
+            );
+            channel.setDescription("价格预警通知");
+            channel.enableVibration(true);
+            getSystemService(NotificationManager.class).createNotificationChannel(channel);
+        }
+        
+        Notification notification = new NotificationCompat.Builder(this, channelId)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setStyle(new NotificationCompat.BigTextStyle().bigText(message))
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .build();
+        
+        NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        if (nm != null) nm.notify(id, notification);
     }
 
     @Override
@@ -403,8 +711,13 @@ public class FloatingWindowService extends Service {
         if (webSocket != null) {
             webSocket.cancel();
         }
-        if (floatingView != null && windowManager != null) {
-            windowManager.removeView(floatingView);
+        if (klineWebSocket != null) {
+            klineWebSocket.cancel();
+        }
+        if (floatingView != null && windowManager != null && windowVisible) {
+            try {
+                windowManager.removeView(floatingView);
+            } catch (Exception e) {}
         }
     }
 
@@ -421,7 +734,7 @@ public class FloatingWindowService extends Service {
 
         Notification notification = new NotificationCompat.Builder(this, channelId)
                 .setContentTitle("Binance Monitor")
-                .setContentText("Getting live prices...")
+                .setContentText("后台监控价格中...")
                 .setSmallIcon(android.R.drawable.sym_def_app_icon)
                 .build();
 
@@ -432,3 +745,4 @@ public class FloatingWindowService extends Service {
         }
     }
 }
+

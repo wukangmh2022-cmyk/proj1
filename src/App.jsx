@@ -6,6 +6,7 @@ import { usePriceAlerts } from './hooks/usePriceAlerts';
 import FloatingWidget from './plugins/FloatingWidget';
 import { Capacitor } from '@capacitor/core';
 import { getSymbols, addSymbol, removeSymbol, saveSymbols, getFloatingConfig, saveFloatingConfig } from './utils/storage';
+import { getAlerts } from './utils/alert_storage';
 import ChartPage from './components/ChartPage';
 import AlertConfigModal from './components/AlertConfigModal';
 import './App.css';
@@ -64,12 +65,26 @@ function HomePage() {
     };
   }, [showAddModal, showSettings, alertModalSymbol, isEditMode]);
 
-  // Start native data service on mount (for Android)
+  // Start native data service and sync alerts on mount (for Android)
   useEffect(() => {
     if (Capacitor.isNativePlatform()) {
       FloatingWidget.startData({ symbols }).catch(console.error);
+      // Initial alert sync
+      const allAlerts = getAlerts();
+      FloatingWidget.syncAlerts({ alerts: allAlerts }).catch(console.error);
     }
-  }, [symbols]); // Re-start when symbols change
+  }, [symbols]); // Re-start/sync when symbols change
+
+  // Sync alerts to native whenever alert modal closes (might have changed)
+  useEffect(() => {
+    if (!alertModalSymbol && Capacitor.isNativePlatform()) {
+      // Import alerts and sync to native
+      import('./utils/alert_storage').then(({ getAlerts }) => {
+        const allAlerts = getAlerts();
+        FloatingWidget.syncAlerts({ alerts: allAlerts }).catch(console.error);
+      });
+    }
+  }, [alertModalSymbol]);
 
   useEffect(() => {
     floatingActiveRef.current = floatingActive;

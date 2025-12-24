@@ -66,6 +66,24 @@ public class FloatingWidgetPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void syncAlerts(PluginCall call) {
+        com.getcapacitor.JSArray jsArray = call.getArray("alerts");
+        String alertsJson = jsArray != null ? jsArray.toString() : "[]";
+        
+        Context context = getContext();
+        Intent intent = new Intent(context, FloatingWindowService.class);
+        intent.setAction(FloatingWindowService.ACTION_SYNC_ALERTS);
+        intent.putExtra(FloatingWindowService.EXTRA_ALERTS_JSON, alertsJson);
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent);
+        } else {
+            context.startService(intent);
+        }
+        call.resolve();
+    }
+
+    @PluginMethod
     public void start(PluginCall call) {
         // Now "start" means show the floating window
         Context context = getContext();
