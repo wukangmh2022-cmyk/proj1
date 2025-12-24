@@ -50,25 +50,29 @@ body {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 24px;
-  padding: 16px 20px;
+  padding: 12px 16px;
   background: var(--bg-card);
   backdrop-filter: var(--glass-blur);
   border-radius: 16px;
   border: 1px solid var(--border-color);
+  gap: 12px;
 }
 
 .header h1 {
   margin: 0;
-  font-size: 1.5rem;
+  font-size: 1.2rem;
   background: linear-gradient(90deg, var(--accent-gold), #ff9f43);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .header-actions {
   display: flex;
-  gap: 10px;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 /* Buttons */

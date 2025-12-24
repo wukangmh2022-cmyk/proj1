@@ -184,7 +184,7 @@ function HomePage() {
     }}>
       {/* Header */}
       <div className="header">
-        <h1>₿ 实时行情</h1>
+        <h1>实时</h1>
         <div className="header-actions">
           {isEditMode ? (
             <button className="btn btn-primary" onClick={() => setIsEditMode(false)}>完成</button>
