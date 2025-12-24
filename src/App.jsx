@@ -158,12 +158,11 @@ function HomePage() {
                     setAlertModalSymbol(symbol);
                   }}
                 >🔔</button>
+                <button
+                  className="remove-btn"
+                  onClick={(e) => handleRemoveSymbol(symbol, e)}
+                >×</button>
               </div>
-
-              <button
-                className="remove-btn"
-                onClick={(e) => handleRemoveSymbol(symbol, e)}
-              >×</button>
               <div className="symbol">{symbol}</div>
               <div className="price">${price}</div>
               <div className={`change ${isPositive ? 'up' : 'down'}`}>
