@@ -94,6 +94,8 @@ public class FloatingWindowService extends Service {
             private int initialX, initialY;
             private float initialTouchX, initialTouchY;
             private long startClickTime;
+            private long lastClickTime = 0;
+            private static final long DOUBLE_CLICK_THRESHOLD = 300; // ms
 
             @Override
             public boolean onTouch(View v, MotionEvent event) {
@@ -112,7 +114,16 @@ public class FloatingWindowService extends Service {
                         float dy = event.getRawY() - initialTouchY;
                         
                         if (clickDuration < 200 && Math.abs(dx) < 10 && Math.abs(dy) < 10) {
-                            showNextPage();
+                            long now = System.currentTimeMillis();
+                            if (now - lastClickTime < DOUBLE_CLICK_THRESHOLD) {
+                                // Double click - open main app
+                                openMainApp();
+                                lastClickTime = 0;
+                            } else {
+                                // Single click - show next page
+                                lastClickTime = now;
+                                showNextPage();
+                            }
                         }
                         return true;
 
@@ -127,6 +138,14 @@ public class FloatingWindowService extends Service {
                 return false;
             }
         });
+    }
+    
+    private void openMainApp() {
+        Intent intent = getPackageManager().getLaunchIntentForPackage(getPackageName());
+        if (intent != null) {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            startActivity(intent);
+        }
     }
 
     @Override
