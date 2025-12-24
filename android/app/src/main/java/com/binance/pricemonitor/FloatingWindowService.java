@@ -2,13 +2,16 @@ package com.binance.pricemonitor;
 
 import android.app.Service;
 import android.content.Intent;
+import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.os.IBinder;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.os.Build;
 import android.app.Notification;
@@ -19,12 +22,24 @@ import androidx.core.app.NotificationCompat;
 public class FloatingWindowService extends Service {
     private WindowManager windowManager;
     private View floatingView;
+    private LinearLayout container;
     private TextView priceText;
     private TextView changeText;
+    private WindowManager.LayoutParams params;
+    
+    // Config values
+    private float fontSize = 14f;
+    private float opacity = 0.85f;
+    private boolean showSymbol = true;
+    
     public static final String ACTION_UPDATE = "UPDATE_DATA";
+    public static final String ACTION_CONFIG = "UPDATE_CONFIG";
     public static final String EXTRA_SYMBOL = "SYMBOL";
     public static final String EXTRA_PRICE = "PRICE";
     public static final String EXTRA_CHANGE = "CHANGE";
+    public static final String EXTRA_FONT_SIZE = "FONT_SIZE";
+    public static final String EXTRA_OPACITY = "OPACITY";
+    public static final String EXTRA_SHOW_SYMBOL = "SHOW_SYMBOL";
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -37,10 +52,11 @@ public class FloatingWindowService extends Service {
         startForegroundService();
 
         floatingView = LayoutInflater.from(this).inflate(R.layout.floating_widget, null);
+        container = floatingView.findViewById(R.id.floating_container);
         priceText = floatingView.findViewById(R.id.floating_price_text);
         changeText = floatingView.findViewById(R.id.floating_change_text);
 
-        final WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+        params = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY : WindowManager.LayoutParams.TYPE_PHONE,
@@ -56,12 +72,10 @@ public class FloatingWindowService extends Service {
             windowManager.addView(floatingView, params);
         }
 
-        // Add drag listener
+        // Drag listener
         floatingView.setOnTouchListener(new View.OnTouchListener() {
-            private int initialX;
-            private int initialY;
-            private float initialTouchX;
-            private float initialTouchY;
+            private int initialX, initialY;
+            private float initialTouchX, initialTouchY;
 
             @Override
             public boolean onTouch(View v, MotionEvent event) {
@@ -85,23 +99,40 @@ public class FloatingWindowService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent != null && ACTION_UPDATE.equals(intent.getAction())) {
+        if (intent == null) return START_STICKY;
+        
+        String action = intent.getAction();
+        
+        // Handle config update
+        if (ACTION_CONFIG.equals(action)) {
+            fontSize = intent.getFloatExtra(EXTRA_FONT_SIZE, 14f);
+            opacity = intent.getFloatExtra(EXTRA_OPACITY, 0.85f);
+            showSymbol = intent.getBooleanExtra(EXTRA_SHOW_SYMBOL, true);
+            applyConfig();
+            return START_STICKY;
+        }
+        
+        // Handle data update
+        if (ACTION_UPDATE.equals(action)) {
             String symbol = intent.getStringExtra(EXTRA_SYMBOL);
             String price = intent.getStringExtra(EXTRA_PRICE);
             String change = intent.getStringExtra(EXTRA_CHANGE);
 
-            if (priceText != null && symbol != null) {
-                priceText.setText(symbol + ": $" + (price != null ? price : "--"));
+            if (priceText != null) {
+                String displayText = showSymbol ? 
+                    (symbol != null ? symbol + ": $" : "$") + (price != null ? price : "--") :
+                    "$" + (price != null ? price : "--");
+                priceText.setText(displayText);
             }
+            
             if (changeText != null && change != null) {
-                // Check for NaN or invalid values
                 try {
                     double changeVal = Double.parseDouble(change);
                     if (Double.isNaN(changeVal)) {
                         changeText.setText("--%");
                         changeText.setTextColor(0xFFFFFFFF);
                     } else {
-                        changeText.setText(change + "%");
+                        changeText.setText(String.format("%.2f%%", changeVal));
                         int color = changeVal < 0 ? 0xFFFF4444 : 0xFF00CC88;
                         changeText.setTextColor(color);
                     }
@@ -112,6 +143,20 @@ public class FloatingWindowService extends Service {
             }
         }
         return START_STICKY;
+    }
+    
+    private void applyConfig() {
+        if (priceText != null) {
+            priceText.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize);
+        }
+        if (changeText != null) {
+            changeText.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize - 2);
+        }
+        if (container != null) {
+            int alpha = (int) (opacity * 255);
+            int bgColor = Color.argb(alpha, 0, 0, 0);
+            container.setBackgroundColor(bgColor);
+        }
     }
 
     @Override

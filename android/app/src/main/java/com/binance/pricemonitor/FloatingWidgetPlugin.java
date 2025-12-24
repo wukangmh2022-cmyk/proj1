@@ -1,6 +1,5 @@
 package com.binance.pricemonitor;
 
-import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
@@ -49,7 +48,28 @@ public class FloatingWidgetPlugin extends Plugin {
         intent.putExtra(FloatingWindowService.EXTRA_PRICE, price);
         intent.putExtra(FloatingWindowService.EXTRA_CHANGE, change);
         
-        // Starting service with intent delivers the extra data to onStartCommand
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent);
+        } else {
+            context.startService(intent);
+        }
+        
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void updateConfig(PluginCall call) {
+        float fontSize = call.getFloat("fontSize", 14f);
+        float opacity = call.getFloat("opacity", 0.85f);
+        boolean showSymbol = call.getBoolean("showSymbol", true);
+
+        Context context = getContext();
+        Intent intent = new Intent(context, FloatingWindowService.class);
+        intent.setAction(FloatingWindowService.ACTION_CONFIG);
+        intent.putExtra(FloatingWindowService.EXTRA_FONT_SIZE, fontSize);
+        intent.putExtra(FloatingWindowService.EXTRA_OPACITY, opacity);
+        intent.putExtra(FloatingWindowService.EXTRA_SHOW_SYMBOL, showSymbol);
+        
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             context.startForegroundService(intent);
         } else {

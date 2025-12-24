@@ -61,10 +61,23 @@ function HomePage() {
     }
   };
 
-  const updateConfig = (key, value) => {
+  const updateConfig = async (key, value) => {
     const newConfig = { ...config, [key]: value };
     setConfig(newConfig);
     saveFloatingConfig(newConfig);
+
+    // Sync config to native layer
+    if (Capacitor.isNativePlatform() && floatingActive) {
+      try {
+        await FloatingWidget.updateConfig({
+          fontSize: newConfig.fontSize,
+          opacity: newConfig.opacity,
+          showSymbol: newConfig.showSymbol
+        });
+      } catch (e) {
+        console.error('Failed to update config', e);
+      }
+    }
   };
 
   return (
