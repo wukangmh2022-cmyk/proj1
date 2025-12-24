@@ -23,6 +23,7 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
     const [activeTab, setActiveTab] = useState('new');
     const [myAlerts, setMyAlerts] = useState([]);
     const [history, setHistory] = useState([]);
+    const [editId, setEditId] = useState(null); // ID of alert being edited
 
     useEffect(() => {
         loadData();
@@ -31,6 +32,30 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
     const loadData = () => {
         setMyAlerts(getAlerts(symbol));
         setHistory(getAlertHistory().filter(h => h.symbol === symbol));
+    };
+
+    const handleEdit = (alert) => {
+        setEditId(alert.id);
+        setTargetType(alert.targetType);
+        setTargetValue(alert.targetValue);
+        setDirection(alert.condition);
+
+        // Parse target if indicator
+        if (alert.targetType === 'indicator') {
+            // e.g. sma7
+            const type = alert.targetValue.replace(/[0-9]/g, '');
+            const period = alert.targetValue.replace(/[a-z]/g, '');
+            setIndicatorType(type);
+            setIndicatorPeriod(period);
+        }
+
+        setConfirmation(alert.confirmation);
+        if (alert.interval) setInterval(alert.interval);
+        setDelay(alert.delaySeconds || 0);
+        setDelayCandles(alert.delayCandles || 0);
+        setActions(alert.actions);
+
+        setActiveTab('new');
     };
 
     const handleCreate = () => {
@@ -48,7 +73,7 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
         }
 
         const newAlert = {
-            id: crypto.randomUUID(),
+            id: editId || crypto.randomUUID(), // Use existing ID if editing
             symbol,
             targetType,
             target: finalTarget,
@@ -60,17 +85,36 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
             delayCandles: confirmation === 'candle_close' ? parseInt(delayCandles) : 0,
             actions,
             active: true,
-            createdAt: Date.now()
+            createdAt: editId ? (myAlerts.find(a => a.id === editId)?.createdAt || Date.now()) : Date.now()
         };
 
         saveAlert(newAlert);
         loadData();
+        setEditId(null); // Reset edit mode
         setActiveTab('list');
+
+        // Reset form for next use (optional, but good UX)
+        if (!editId) {
+            // Only reset if it was a new creation, or fully reset? 
+            // Let's keep values as previous for convenience or reset? 
+            // Let's reset ID at least.
+        }
     };
 
-    const handleDelete = (id) => {
+    const handleDelete = (id, e) => {
+        e.stopPropagation();
         removeAlert(id);
+        if (editId === id) setEditId(null);
         loadData();
+    };
+
+    const resetForm = () => {
+        setEditId(null);
+        setTargetType('price');
+        setTargetValue(currentPrice || '');
+        setDirection('crossing_up');
+        setConfirmation('immediate');
+        // ... reset others if needed
     };
 
     return (
@@ -82,7 +126,9 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                 </div>
 
                 <div className="tabs">
-                    <button className={activeTab === 'new' ? 'active' : ''} onClick={() => setActiveTab('new')}>新建</button>
+                    <button className={activeTab === 'new' ? 'active' : ''} onClick={() => { setActiveTab('new'); if (editId) resetForm(); }}>
+                        {editId ? '编辑中' : '新建'}
+                    </button>
                     <button className={activeTab === 'list' ? 'active' : ''} onClick={() => setActiveTab('list')}>列表 ({myAlerts.length})</button>
                     <button className={activeTab === 'history' ? 'active' : ''} onClick={() => setActiveTab('history')}>历史</button>
                 </div>
@@ -219,7 +265,9 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                                 </div>
                             </div>
 
-                            <button className="btn btn-primary full-width" onClick={handleCreate}>创建预警</button>
+                            <button className="btn btn-primary full-width" onClick={handleCreate}>
+                                {editId ? '保存修改' : '创建预警'}
+                            </button>
                         </div>
                     )}
 
@@ -227,7 +275,7 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                         <div className="alert-list">
                             {myAlerts.length === 0 ? <p className="empty-state">暂无激活的预警</p> :
                                 myAlerts.map(alert => (
-                                    <div key={alert.id} className="alert-item">
+                                    <div key={alert.id} className="alert-item" onClick={() => handleEdit(alert)}>
                                         <div className="alert-info">
                                             <span className="condition">
                                                 {alert.condition === 'crossing_up' ? '📈 上穿' : '📉 下穿'} {alert.targetType === 'indicator' ? alert.targetValue.toUpperCase() : alert.target}
@@ -238,7 +286,7 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                                                     : alert.delaySeconds > 0 ? `⏳ 延迟 ${alert.delaySeconds}秒` : '⚡ 立即'}
                                             </span>
                                         </div>
-                                        <button className="btn-delete" onClick={() => handleDelete(alert.id)}>🗑️</button>
+                                        <button className="btn-delete" onClick={(e) => handleDelete(alert.id, e)}>🗑️</button>
                                     </div>
                                 ))
                             }

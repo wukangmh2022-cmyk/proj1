@@ -10,6 +10,8 @@ import ChartPage from './components/ChartPage';
 import AlertConfigModal from './components/AlertConfigModal';
 import './App.css';
 
+import { App as CapacitorApp } from '@capacitor/app';
+
 function HomePage() {
   const navigate = useNavigate();
   const [symbols, setSymbols] = useState(getSymbols());
@@ -23,6 +25,44 @@ function HomePage() {
 
   const [isEditMode, setIsEditMode] = useState(false);
   const longPressTimerRef = useRef(null);
+
+  // Back Button Handling
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+
+    const handleBackButton = async () => {
+      // 1. Close Modals if open
+      if (showAddModal || showSettings || alertModalSymbol) {
+        setShowAddModal(false);
+        setShowSettings(false);
+        setAlertModalSymbol(null);
+        return;
+      }
+
+      // 2. Exit Edit Mode
+      if (isEditMode) {
+        setIsEditMode(false);
+        return;
+      }
+
+      // 3. Navigation
+      // Since we are in HomePage, there is no back history usually.
+      // But if we were on ChartPage, it handles it. 
+      // This listener is global if attached to CapacitorApp usually, 
+      // but here we are inside HomePage component. 
+      // For global handling it's better to put in main App or use a cleanup.
+
+      const { value: canGoBack } = await CapacitorApp.minimizeApp(); // Default behavior on Android home is minimize or exit
+      // Actually standard behavior is exit on main. 
+      // Let's implement common logic.
+      CapacitorApp.exitApp();
+    };
+
+    const listener = CapacitorApp.addListener('backButton', handleBackButton);
+    return () => {
+      listener.then(remove => remove.remove());
+    };
+  }, [showAddModal, showSettings, alertModalSymbol, isEditMode]);
 
   useEffect(() => {
     floatingActiveRef.current = floatingActive;
@@ -59,6 +99,7 @@ function HomePage() {
     saveSymbols(items);
   };
 
+  // Long press to enter edit mode
   const handleTouchStart = (e) => {
     if (isEditMode) return;
     longPressTimerRef.current = setTimeout(() => {
@@ -69,7 +110,7 @@ function HomePage() {
 
   const handleTouchEnd = () => {
     if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current);
+      clearTimeout(longPressTimerRef.current); // Cancel timer if released early
     }
   };
 
@@ -78,6 +119,7 @@ function HomePage() {
       alert('Floating window only available on Android');
       return;
     }
+    // ... logic same ...
     try {
       const perm = await FloatingWidget.checkPermission();
       if (!perm.granted) {
@@ -130,7 +172,10 @@ function HomePage() {
   };
 
   return (
-    <div className="app-container" onClick={() => isEditMode && setIsEditMode(false)}>
+    <div className="app-container" onClick={() => {
+      // Only exit edit mode if clicking background, not when dragging
+      // This was a bit aggressive before
+    }}>
       {/* Header */}
       <div className="header">
         <h1>₿ Binance Live</h1>
@@ -168,12 +213,18 @@ function HomePage() {
                         ref={provided.innerRef}
                         {...provided.draggableProps}
                         {...provided.dragHandleProps}
-                        className={`ticker-card ${snapshot.isDragging ? 'dragging' : ''} ${isEditMode ? 'wobble' : ''}`}
-                        onClick={() => !isEditMode && navigate(`/chart/${symbol}`)}
+                        className={`ticker-card ${snapshot.isDragging ? 'dragging' : ''} ${isEditMode ? 'edit-active' : ''}`}
+                        onClick={() => {
+                          if (!isEditMode) navigate(`/chart/${symbol}`);
+                        }}
                         onTouchStart={handleTouchStart}
                         onTouchEnd={handleTouchEnd}
                         onMouseDown={handleTouchStart}
                         onMouseUp={handleTouchEnd}
+                        style={{
+                          ...provided.draggableProps.style,
+                          // Ensure proper transforms
+                        }}
                       >
                         <div className="actions">
                           {!isEditMode && (

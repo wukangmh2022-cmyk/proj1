@@ -221,22 +221,11 @@ body {
   border-color: var(--accent-gold);
 }
 
-.wobble {
-  animation: wobble 0.3s infinite ease-in-out;
-}
+/* Removed wobble animation */
 
-@keyframes wobble {
-  0% {
-    transform: rotate(-1deg);
-  }
-
-  50% {
-    transform: rotate(1.5deg);
-  }
-
-  100% {
-    transform: rotate(-1deg);
-  }
+.ticker-card.edit-active {
+  border-color: var(--accent-gold);
+  border-style: dashed;
 }
 
 .btn-bell {
