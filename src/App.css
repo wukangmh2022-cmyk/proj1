@@ -13,6 +13,16 @@
 
 * {
   box-sizing: border-box;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+input,
+textarea {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 body {
@@ -362,6 +372,8 @@ body {
 .chart-container {
   flex: 1;
   padding: 16px;
+  min-height: 400px;
+  height: calc(100vh - 100px);
 }
 
 /* Loading */
