@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { HashRouter, Routes, Route, useNavigate } from 'react-router-dom';
 import { useBinanceTickers } from './hooks/useBinanceTickers';
+import { usePriceAlerts } from './hooks/usePriceAlerts';
 import FloatingWidget from './plugins/FloatingWidget';
 import { Capacitor } from '@capacitor/core';
 import { getSymbols, addSymbol, removeSymbol, getFloatingConfig, saveFloatingConfig } from './utils/storage';
 import ChartPage from './components/ChartPage';
+import AlertConfigModal from './components/AlertConfigModal';
 import './App.css';
 
 function HomePage() {
@@ -12,6 +14,7 @@ function HomePage() {
   const [symbols, setSymbols] = useState(getSymbols());
   const [showAddModal, setShowAddModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [alertModalSymbol, setAlertModalSymbol] = useState(null); // Track which symbol's alert modal is open
   const [newSymbol, setNewSymbol] = useState('');
   const [floatingActive, setFloatingActive] = useState(false);
   const [config, setConfig] = useState(getFloatingConfig());
@@ -39,6 +42,9 @@ function HomePage() {
   }, []);
 
   const tickers = useBinanceTickers(symbols, handleTickerUpdate);
+
+  // Activate Price Alerts Hook
+  usePriceAlerts(tickers);
 
   const handleAddSymbol = () => {
     if (newSymbol.trim()) {
@@ -144,6 +150,16 @@ function HomePage() {
               className="ticker-card"
               onClick={() => navigate(`/chart/${symbol}`)}
             >
+              <div className="actions">
+                <button
+                  className="btn-bell"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setAlertModalSymbol(symbol);
+                  }}
+                >🔔</button>
+              </div>
+
               <button
                 className="remove-btn"
                 onClick={(e) => handleRemoveSymbol(symbol, e)}
@@ -249,6 +265,15 @@ function HomePage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Alert Config Modal */}
+      {alertModalSymbol && (
+        <AlertConfigModal
+          symbol={alertModalSymbol}
+          currentPrice={tickers[alertModalSymbol]?.price}
+          onClose={() => setAlertModalSymbol(null)}
+        />
       )}
     </div>
   );

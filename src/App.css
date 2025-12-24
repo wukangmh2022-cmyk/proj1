@@ -386,6 +386,167 @@ body {
   color: var(--text-secondary);
 }
 
+/* Alert Modal Styles */
+.alert-modal {
+  min-width: 350px;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.tabs {
+  display: flex;
+  margin-bottom: 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.tabs button {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: #888;
+  padding: 10px;
+  cursor: pointer;
+}
+
+.tabs button.active {
+  color: #FCD535;
+  border-bottom: 2px solid #FCD535;
+}
+
+.input-group {
+  margin-bottom: 16px;
+}
+
+.input-group label {
+  display: block;
+  margin-bottom: 8px;
+  color: #ccc;
+}
+
+.input-group input[type="number"] {
+  width: 100%;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #fff;
+}
+
+.range-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.range-wrap input {
+  flex: 1;
+}
+
+.actions-config {
+  background: rgba(255, 255, 255, 0.05);
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+
+.actions-config label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: #ddd;
+}
+
+.vibration-select {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.vibration-select select {
+  background: #333;
+  color: white;
+  border: none;
+  padding: 5px;
+  border-radius: 4px;
+}
+
+.full-width {
+  width: 100%;
+  padding: 12px;
+}
+
+.alert-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.alert-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.badge-delay {
+  font-size: 10px;
+  background: #444;
+  padding: 2px 6px;
+  border-radius: 4px;
+  width: fit-content;
+  margin-top: 4px;
+}
+
+.btn-delete {
+  background: transparent;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.history-item {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 10px 0;
+}
+
+.history-item .time {
+  color: #888;
+  font-size: 12px;
+}
+
+.history-item .msg {
+  color: #fff;
+}
+
+.ticker-card .actions {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: flex;
+  gap: 5px;
+}
+
+.btn-bell {
+  background: transparent;
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.btn-bell:hover {
+  opacity: 1;
+}
+
 .loading::after {
   content: '';
   width: 24px;
