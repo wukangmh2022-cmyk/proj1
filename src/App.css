@@ -194,8 +194,8 @@ body {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: rgba(255, 71, 87, 0.2);
-  color: var(--accent-red);
+  background: rgba(255, 71, 87, 0.8);
+  color: #fff;
   border: none;
   cursor: pointer;
   opacity: 0;
@@ -208,6 +208,43 @@ body {
 
 .ticker-card:hover .remove-btn {
   opacity: 1;
+}
+
+.ticker-card .remove-btn.visible {
+  opacity: 1;
+}
+
+.ticker-card.dragging {
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+  transform: scale(1.05);
+  z-index: 100;
+  border-color: var(--accent-gold);
+}
+
+.wobble {
+  animation: wobble 0.3s infinite ease-in-out;
+}
+
+@keyframes wobble {
+  0% {
+    transform: rotate(-1deg);
+  }
+
+  50% {
+    transform: rotate(1.5deg);
+  }
+
+  100% {
+    transform: rotate(-1deg);
+  }
+}
+
+.btn-bell {
+  background: transparent;
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+  opacity: 0.6;
 }
 
 /* Modal */

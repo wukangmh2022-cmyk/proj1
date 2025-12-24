@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { HashRouter, Routes, Route, useNavigate } from 'react-router-dom';
+import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { useBinanceTickers } from './hooks/useBinanceTickers';
 import { usePriceAlerts } from './hooks/usePriceAlerts';
 import FloatingWidget from './plugins/FloatingWidget';
 import { Capacitor } from '@capacitor/core';
-import { getSymbols, addSymbol, removeSymbol, getFloatingConfig, saveFloatingConfig } from './utils/storage';
+import { getSymbols, addSymbol, removeSymbol, saveSymbols, getFloatingConfig, saveFloatingConfig } from './utils/storage';
 import ChartPage from './components/ChartPage';
 import AlertConfigModal from './components/AlertConfigModal';
 import './App.css';
@@ -14,36 +15,32 @@ function HomePage() {
   const [symbols, setSymbols] = useState(getSymbols());
   const [showAddModal, setShowAddModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [alertModalSymbol, setAlertModalSymbol] = useState(null); // Track which symbol's alert modal is open
+  const [alertModalSymbol, setAlertModalSymbol] = useState(null);
   const [newSymbol, setNewSymbol] = useState('');
   const [floatingActive, setFloatingActive] = useState(false);
   const [config, setConfig] = useState(getFloatingConfig());
   const floatingActiveRef = useRef(false);
 
-  // Update ref when state changes
+  const [isEditMode, setIsEditMode] = useState(false);
+  const longPressTimerRef = useRef(null);
+
   useEffect(() => {
     floatingActiveRef.current = floatingActive;
-
-    // Sync symbols list to native if active
     if (floatingActive && Capacitor.isNativePlatform()) {
       FloatingWidget.setSymbols({ symbols }).catch(console.error);
     }
   }, [floatingActive, symbols]);
 
-  // Callback for ticker updates - only sends to widget if active
   const handleTickerUpdate = useCallback((symbol, data) => {
     if (!floatingActiveRef.current || !Capacitor.isNativePlatform()) return;
-
     FloatingWidget.update({
       symbol: symbol,
       price: data.price.toFixed(2),
       change: data.changePercent.toFixed(2)
-    }).catch(() => { }); // Ignore if not running
+    }).catch(() => { });
   }, []);
 
   const tickers = useBinanceTickers(symbols, handleTickerUpdate);
-
-  // Activate Price Alerts Hook
   usePriceAlerts(tickers);
 
   const handleAddSymbol = () => {
@@ -61,27 +58,44 @@ function HomePage() {
     setSymbols([...updated]);
   };
 
+  const handleDragEnd = (result) => {
+    if (!result.destination) return;
+    const items = Array.from(symbols);
+    const [reorderedItem] = items.splice(result.source.index, 1);
+    items.splice(result.destination.index, 0, reorderedItem);
+    setSymbols(items);
+    saveSymbols(items);
+  };
+
+  const handleTouchStart = (e) => {
+    if (isEditMode) return;
+    longPressTimerRef.current = setTimeout(() => {
+      setIsEditMode(true);
+      if (navigator.vibrate) navigator.vibrate(50);
+    }, 800);
+  };
+
+  const handleTouchEnd = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+    }
+  };
+
   const startFloating = async () => {
     if (!Capacitor.isNativePlatform()) {
       alert('Floating window only available on Android');
       return;
     }
-
     try {
       const perm = await FloatingWidget.checkPermission();
       if (!perm.granted) {
         await FloatingWidget.requestPermission();
         return;
       }
-
       await FloatingWidget.start();
       setFloatingActive(true);
-      floatingActiveRef.current = true; // Update ref immediately to prevent race conditions
-
-      // Sync symbols list
+      floatingActiveRef.current = true;
       await FloatingWidget.setSymbols({ symbols });
-
-      // Apply current config immediately
       const currentConfig = getFloatingConfig();
       await FloatingWidget.updateConfig({
         fontSize: currentConfig.fontSize,
@@ -97,7 +111,7 @@ function HomePage() {
 
   const stopFloating = async () => {
     try {
-      floatingActiveRef.current = false; // Stop updates immediately
+      floatingActiveRef.current = false;
       await FloatingWidget.stop();
       setFloatingActive(false);
     } catch (e) {
@@ -109,8 +123,6 @@ function HomePage() {
     const newConfig = { ...config, [key]: value };
     setConfig(newConfig);
     saveFloatingConfig(newConfig);
-
-    // Sync config to native layer if floating is active
     if (Capacitor.isNativePlatform() && floatingActive) {
       try {
         await FloatingWidget.updateConfig({
@@ -126,70 +138,104 @@ function HomePage() {
   };
 
   return (
-    <div className="app-container">
+    <div className="app-container" onClick={() => isEditMode && setIsEditMode(false)}>
       {/* Header */}
       <div className="header">
         <h1>₿ Binance Live</h1>
         <div className="header-actions">
-          <button className="btn btn-secondary btn-icon" onClick={() => setShowSettings(true)}>⚙</button>
-          <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>+ Add</button>
+          {isEditMode ? (
+            <button className="btn btn-primary" onClick={() => setIsEditMode(false)}>Done</button>
+          ) : (
+            <>
+              <button className="btn btn-secondary btn-icon" onClick={() => setShowSettings(true)}>⚙</button>
+              <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>+ Add</button>
+            </>
+          )}
         </div>
       </div>
 
-      {/* Ticker Grid */}
-      <div className="ticker-grid">
-        {symbols.map(symbol => {
-          const data = tickers[symbol];
-          const price = data ? data.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--';
-          const change = data ? data.changePercent.toFixed(2) : '0.00';
-          const isPositive = data ? data.changePercent >= 0 : true;
-
-          return (
+      {/* Ticker Grid with DND */}
+      <DragDropContext onDragEnd={handleDragEnd}>
+        <Droppable droppableId="symbols-grid" direction="horizontal" isCombineEnabled={false}>
+          {(provided) => (
             <div
-              key={symbol}
-              className="ticker-card"
-              onClick={() => navigate(`/chart/${symbol}`)}
+              className={`ticker-grid ${isEditMode ? 'edit-mode' : ''}`}
+              {...provided.droppableProps}
+              ref={provided.innerRef}
             >
-              <div className="actions">
-                <button
-                  className="btn-bell"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setAlertModalSymbol(symbol);
-                  }}
-                >🔔</button>
-                <button
-                  className="remove-btn"
-                  onClick={(e) => handleRemoveSymbol(symbol, e)}
-                >×</button>
-              </div>
-              <div className="symbol">{symbol}</div>
-              <div className="price">${price}</div>
-              <div className={`change ${isPositive ? 'up' : 'down'}`}>
-                {isPositive ? '+' : ''}{change}%
-              </div>
+              {symbols.map((symbol, index) => {
+                const data = tickers[symbol];
+                const price = data ? data.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--';
+                const change = data ? data.changePercent.toFixed(2) : '0.00';
+                const isPositive = data ? data.changePercent >= 0 : true;
+
+                return (
+                  <Draggable key={symbol} draggableId={symbol} index={index} isDragDisabled={!isEditMode}>
+                    {(provided, snapshot) => (
+                      <div
+                        ref={provided.innerRef}
+                        {...provided.draggableProps}
+                        {...provided.dragHandleProps}
+                        className={`ticker-card ${snapshot.isDragging ? 'dragging' : ''} ${isEditMode ? 'wobble' : ''}`}
+                        onClick={() => !isEditMode && navigate(`/chart/${symbol}`)}
+                        onTouchStart={handleTouchStart}
+                        onTouchEnd={handleTouchEnd}
+                        onMouseDown={handleTouchStart}
+                        onMouseUp={handleTouchEnd}
+                      >
+                        <div className="actions">
+                          {!isEditMode && (
+                            <button
+                              className="btn-bell"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setAlertModalSymbol(symbol);
+                              }}
+                            >🔔</button>
+                          )}
+                          {isEditMode && (
+                            <button
+                              className="remove-btn visible"
+                              onClick={(e) => handleRemoveSymbol(symbol, e)}
+                            >×</button>
+                          )}
+                        </div>
+
+                        <div className="symbol">{symbol}</div>
+                        <div className="price">${price}</div>
+                        <div className={`change ${isPositive ? 'up' : 'down'}`}>
+                          {isPositive ? '+' : ''}{change}%
+                        </div>
+                      </div>
+                    )}
+                  </Draggable>
+                );
+              })}
+              {provided.placeholder}
             </div>
-          );
-        })}
-      </div>
+          )}
+        </Droppable>
+      </DragDropContext>
 
       {/* Floating Controls */}
-      <div className="floating-controls">
-        {!floatingActive ? (
-          <button className="btn btn-primary" onClick={startFloating}>
-            🔲 Enable Overlay
+      {!isEditMode && (
+        <div className="floating-controls">
+          {!floatingActive ? (
+            <button className="btn btn-primary" onClick={startFloating}>
+              🔲 Enable Overlay
+            </button>
+          ) : (
+            <button className="btn btn-danger" onClick={stopFloating}>
+              ✕ Disable Overlay
+            </button>
+          )}
+          <button className="btn btn-secondary" onClick={() => setShowSettings(true)}>
+            ⚙ Settings
           </button>
-        ) : (
-          <button className="btn btn-danger" onClick={stopFloating}>
-            ✕ Disable Overlay
-          </button>
-        )}
-        <button className="btn btn-secondary" onClick={() => setShowSettings(true)}>
-          ⚙ Settings
-        </button>
-      </div>
+        </div>
+      )}
 
-      {/* Add Symbol Modal */}
+      {/* Modals ... (Rest remains same) */}
       {showAddModal && (
         <div className="modal-overlay" onClick={() => setShowAddModal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
@@ -209,56 +255,27 @@ function HomePage() {
         </div>
       )}
 
-      {/* Settings Modal */}
       {showSettings && (
         <div className="modal-overlay" onClick={() => setShowSettings(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <h2>Floating Window Settings</h2>
-
             <div className="settings-group">
-              <label>
-                Show Symbol Name
-                <input
-                  type="checkbox"
-                  checked={config.showSymbol}
-                  onChange={e => updateConfig('showSymbol', e.target.checked)}
-                />
+              <label>Show Symbol Name
+                <input type="checkbox" checked={config.showSymbol} onChange={e => updateConfig('showSymbol', e.target.checked)} />
               </label>
             </div>
-
             <div className="settings-group">
               <label>Font Size: {config.fontSize}px</label>
-              <input
-                type="range"
-                min="10"
-                max="24"
-                value={config.fontSize}
-                onChange={e => updateConfig('fontSize', parseInt(e.target.value))}
-              />
+              <input type="range" min="10" max="24" value={config.fontSize} onChange={e => updateConfig('fontSize', parseInt(e.target.value))} />
             </div>
-
             <div className="settings-group">
               <label>Background Opacity: {Math.round(config.opacity * 100)}%</label>
-              <input
-                type="range"
-                min="20"
-                max="100"
-                value={config.opacity * 100}
-                onChange={e => updateConfig('opacity', parseInt(e.target.value) / 100)}
-              />
+              <input type="range" min="20" max="100" value={config.opacity * 100} onChange={e => updateConfig('opacity', parseInt(e.target.value) / 100)} />
             </div>
-
             <div className="settings-group">
               <label>Items Per Page: {config.itemsPerPage}</label>
-              <input
-                type="range"
-                min="1"
-                max="5"
-                value={config.itemsPerPage}
-                onChange={e => updateConfig('itemsPerPage', parseInt(e.target.value))}
-              />
+              <input type="range" min="1" max="5" value={config.itemsPerPage} onChange={e => updateConfig('itemsPerPage', parseInt(e.target.value))} />
             </div>
-
             <div className="modal-actions">
               <button className="btn btn-primary" onClick={() => setShowSettings(false)}>Done</button>
             </div>
@@ -266,7 +283,6 @@ function HomePage() {
         </div>
       )}
 
-      {/* Alert Config Modal */}
       {alertModalSymbol && (
         <AlertConfigModal
           symbol={alertModalSymbol}

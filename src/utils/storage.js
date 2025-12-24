@@ -15,6 +15,7 @@ export const getSymbols = () => {
 
 export const saveSymbols = (symbols) => {
     localStorage.setItem(SYMBOLS_KEY, JSON.stringify(symbols));
+    return symbols;
 };
 
 export const addSymbol = (symbol) => {
