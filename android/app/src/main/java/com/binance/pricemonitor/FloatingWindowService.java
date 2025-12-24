@@ -91,12 +91,24 @@ public class FloatingWindowService extends Service {
             String change = intent.getStringExtra(EXTRA_CHANGE);
 
             if (priceText != null && symbol != null) {
-                priceText.setText(symbol + ": " + price);
+                priceText.setText(symbol + ": $" + (price != null ? price : "--"));
             }
             if (changeText != null && change != null) {
-                changeText.setText(change + "%");
-                int color = change.startsWith("-") ? 0xFFFF0000 : 0xFF00FF00;
-                changeText.setTextColor(color);
+                // Check for NaN or invalid values
+                try {
+                    double changeVal = Double.parseDouble(change);
+                    if (Double.isNaN(changeVal)) {
+                        changeText.setText("--%");
+                        changeText.setTextColor(0xFFFFFFFF);
+                    } else {
+                        changeText.setText(change + "%");
+                        int color = changeVal < 0 ? 0xFFFF4444 : 0xFF00CC88;
+                        changeText.setTextColor(color);
+                    }
+                } catch (NumberFormatException e) {
+                    changeText.setText("--%");
+                    changeText.setTextColor(0xFFFFFFFF);
+                }
             }
         }
         return START_STICKY;
