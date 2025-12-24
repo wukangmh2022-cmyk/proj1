@@ -157,6 +157,10 @@ public class FloatingWindowService extends Service {
             int bgColor = Color.argb(alpha, 0, 0, 0);
             container.setBackgroundColor(bgColor);
         }
+        // Force layout update to accommodate new text sizes
+        if (windowManager != null && floatingView != null && params != null) {
+            windowManager.updateViewLayout(floatingView, params);
+        }
     }
 
     @Override

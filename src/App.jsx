@@ -65,6 +65,7 @@ function HomePage() {
 
       await FloatingWidget.start();
       setFloatingActive(true);
+      floatingActiveRef.current = true; // Update ref immediately to prevent race conditions
 
       // Apply current config immediately
       const currentConfig = getFloatingConfig();
@@ -81,6 +82,7 @@ function HomePage() {
 
   const stopFloating = async () => {
     try {
+      floatingActiveRef.current = false; // Stop updates immediately
       await FloatingWidget.stop();
       setFloatingActive(false);
     } catch (e) {

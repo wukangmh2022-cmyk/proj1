@@ -29,12 +29,17 @@ export const useBinanceTickers = (symbols = [], onUpdate = null) => {
                 const message = JSON.parse(event.data);
                 if (message.data) {
                     lastUpdateRef.current = Date.now();
-                    const { s: symbol, c: price, p: changePrice, P: changePercent } = message.data;
+                    const { s: symbol, c: closeStr, o: openStr } = message.data;
+
+                    const price = parseFloat(closeStr);
+                    const openPrice = parseFloat(openStr);
+                    const changePrice = price - openPrice;
+                    const changePercent = openPrice > 0 ? (changePrice / openPrice) * 100 : 0;
 
                     const tickerData = {
-                        price: parseFloat(price),
-                        change: parseFloat(changePrice),
-                        changePercent: parseFloat(changePercent)
+                        price: price,
+                        change: changePrice,
+                        changePercent: changePercent
                     };
 
                     setTickers(prev => ({
