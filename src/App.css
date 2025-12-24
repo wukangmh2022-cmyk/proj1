@@ -216,9 +216,50 @@ body {
 
 .ticker-card.dragging {
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
-  transform: scale(1.05);
   z-index: 100;
   border-color: var(--accent-gold);
+  /* No scale transform as requested */
+}
+
+/* Drag Handle */
+.drag-handle {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 44px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 4px;
+  cursor: grab;
+  background: rgba(255, 255, 255, 0.05);
+  /* Slight highlight */
+  border-left: 1px solid var(--border-color);
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
+.drag-handle div {
+  width: 18px;
+  height: 2px;
+  background-color: var(--text-secondary);
+  border-radius: 2px;
+}
+
+/* Edit Mode Layout */
+.ticker-card.edit-active {
+  padding-right: 50px;
+  /* Make room for handle */
+}
+
+/* Adjust Actions Position in Edit Mode */
+.ticker-card.edit-active .actions {
+  right: 50px;
+  /* Shift Remove button left of handle */
 }
 
 /* Removed wobble animation */

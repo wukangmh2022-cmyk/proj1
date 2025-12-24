@@ -99,20 +99,7 @@ function HomePage() {
     saveSymbols(items);
   };
 
-  // Long press to enter edit mode
-  const handleTouchStart = (e) => {
-    if (isEditMode) return;
-    longPressTimerRef.current = setTimeout(() => {
-      setIsEditMode(true);
-      if (navigator.vibrate) navigator.vibrate(50);
-    }, 800);
-  };
-
-  const handleTouchEnd = () => {
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current); // Cancel timer if released early
-    }
-  };
+  // Drag handling logic is now explicit via Edit Mode and Handle
 
   const startFloating = async () => {
     if (!Capacitor.isNativePlatform()) {
@@ -184,6 +171,7 @@ function HomePage() {
             <button className="btn btn-primary" onClick={() => setIsEditMode(false)}>Done</button>
           ) : (
             <>
+              <button className="btn btn-secondary" onClick={() => setIsEditMode(true)}>Edit</button>
               <button className="btn btn-secondary btn-icon" onClick={() => setShowSettings(true)}>⚙</button>
               <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>+ Add</button>
             </>
@@ -193,7 +181,7 @@ function HomePage() {
 
       {/* Ticker Grid with DND */}
       <DragDropContext onDragEnd={handleDragEnd}>
-        <Droppable droppableId="symbols-grid" direction="horizontal" isCombineEnabled={false}>
+        <Droppable droppableId="symbols-grid" direction="vertical" isCombineEnabled={false}>
           {(provided) => (
             <div
               className={`ticker-grid ${isEditMode ? 'edit-mode' : ''}`}
@@ -212,20 +200,26 @@ function HomePage() {
                       <div
                         ref={provided.innerRef}
                         {...provided.draggableProps}
-                        {...provided.dragHandleProps}
                         className={`ticker-card ${snapshot.isDragging ? 'dragging' : ''} ${isEditMode ? 'edit-active' : ''}`}
                         onClick={() => {
+                          // In edit mode, maybe clicking does nothing or deletes?
+                          // User said 'click cannot enter edit' previously. 
+                          // Let's allow navigation ONLY if NOT in edit mode.
                           if (!isEditMode) navigate(`/chart/${symbol}`);
                         }}
-                        onTouchStart={handleTouchStart}
-                        onTouchEnd={handleTouchEnd}
-                        onMouseDown={handleTouchStart}
-                        onMouseUp={handleTouchEnd}
                         style={{
                           ...provided.draggableProps.style,
-                          // Ensure proper transforms
                         }}
                       >
+                        {/* Drag Handle (Visible only in Edit Mode) */}
+                        {isEditMode && (
+                          <div className="drag-handle" {...provided.dragHandleProps}>
+                            <div></div>
+                            <div></div>
+                            <div></div>
+                          </div>
+                        )}
+
                         <div className="actions">
                           {!isEditMode && (
                             <button
@@ -244,10 +238,12 @@ function HomePage() {
                           )}
                         </div>
 
-                        <div className="symbol">{symbol}</div>
-                        <div className="price">${price}</div>
-                        <div className={`change ${isPositive ? 'up' : 'down'}`}>
-                          {isPositive ? '+' : ''}{change}%
+                        <div className="card-content">
+                          <div className="symbol">{symbol}</div>
+                          <div className="price">${price}</div>
+                          <div className={`change ${isPositive ? 'up' : 'down'}`}>
+                            {isPositive ? '+' : ''}{change}%
+                          </div>
                         </div>
                       </div>
                     )}
