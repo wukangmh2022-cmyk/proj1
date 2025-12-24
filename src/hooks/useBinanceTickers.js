@@ -48,7 +48,7 @@ export const useBinanceTickers = (symbols = [], onUpdate = null) => {
                     }));
 
                     // Call optional callback (for floating widget updates)
-                    if (onUpdate && symbol === symbols[0]) {
+                    if (onUpdate) {
                         onUpdate(symbol, tickerData);
                     }
                 }
