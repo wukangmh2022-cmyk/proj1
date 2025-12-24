@@ -1,18 +1,18 @@
 import { useState, useEffect } from 'react';
 import { getAlerts, saveAlert, removeAlert, getAlertHistory } from '../utils/alert_storage';
-import '../App.css';
+import './AlertConfigModal.css';
 
 export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
-    const [targetType, setTargetType] = useState('price'); // 'price' or 'indicator'
+    const [targetType, setTargetType] = useState('price');
     const [targetValue, setTargetValue] = useState(currentPrice || '');
-    const [direction, setDirection] = useState('crossing_up'); // 'crossing_up', 'crossing_down'
+    const [direction, setDirection] = useState('crossing_up');
     const [indicatorType, setIndicatorType] = useState('sma');
     const [indicatorPeriod, setIndicatorPeriod] = useState(7);
 
-    const [confirmation, setConfirmation] = useState('immediate'); // 'immediate', 'time_delay', 'candle_close'
-    const [interval, setInterval] = useState('1m'); // New: 1m, 5m, etc.
-    const [delay, setDelay] = useState(0); // For time delay (seconds)
-    const [delayCandles, setDelayCandles] = useState(0); // For candle delay (count)
+    const [confirmation, setConfirmation] = useState('immediate');
+    const [interval, setInterval] = useState('1m');
+    const [delay, setDelay] = useState(10);
+    const [delayCandles, setDelayCandles] = useState(0);
 
     const [actions, setActions] = useState({
         toast: true,
@@ -23,7 +23,7 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
     const [activeTab, setActiveTab] = useState('new');
     const [myAlerts, setMyAlerts] = useState([]);
     const [history, setHistory] = useState([]);
-    const [editId, setEditId] = useState(null); // ID of alert being edited
+    const [editId, setEditId] = useState(null);
 
     useEffect(() => {
         loadData();
@@ -39,22 +39,15 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
         setTargetType(alert.targetType);
         setTargetValue(alert.targetValue);
         setDirection(alert.condition);
-
-        // Parse target if indicator
         if (alert.targetType === 'indicator') {
-            // e.g. sma7
-            const type = alert.targetValue.replace(/[0-9]/g, '');
-            const period = alert.targetValue.replace(/[a-z]/g, '');
-            setIndicatorType(type);
-            setIndicatorPeriod(period);
+            setIndicatorType(alert.targetValue.replace(/[0-9]/g, ''));
+            setIndicatorPeriod(alert.targetValue.replace(/[a-z]/g, ''));
         }
-
         setConfirmation(alert.confirmation);
         if (alert.interval) setInterval(alert.interval);
-        setDelay(alert.delaySeconds || 0);
+        setDelay(alert.delaySeconds || 10);
         setDelayCandles(alert.delayCandles || 0);
         setActions(alert.actions);
-
         setActiveTab('new');
     };
 
@@ -73,7 +66,7 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
         }
 
         const newAlert = {
-            id: editId || crypto.randomUUID(), // Use existing ID if editing
+            id: editId || crypto.randomUUID(),
             symbol,
             targetType,
             target: finalTarget,
@@ -90,15 +83,8 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
 
         saveAlert(newAlert);
         loadData();
-        setEditId(null); // Reset edit mode
+        setEditId(null);
         setActiveTab('list');
-
-        // Reset form for next use (optional, but good UX)
-        if (!editId) {
-            // Only reset if it was a new creation, or fully reset? 
-            // Let's keep values as previous for convenience or reset? 
-            // Let's reset ID at least.
-        }
     };
 
     const handleDelete = (id, e) => {
@@ -114,54 +100,57 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
         setTargetValue(currentPrice || '');
         setDirection('crossing_up');
         setConfirmation('immediate');
-        // ... reset others if needed
     };
 
     return (
-        <div className="modal-overlay" onClick={onClose}>
-            <div className="modal alert-modal" onClick={e => e.stopPropagation()}>
-                <div className="modal-header">
-                    <h2>🔔 {symbol} 预警配置</h2>
-                    <button className="close-btn" onClick={onClose}>×</button>
+        <div className="alert-overlay" onClick={onClose}>
+            <div className="alert-panel" onClick={e => e.stopPropagation()}>
+                {/* Header */}
+                <div className="alert-header">
+                    <span className="alert-symbol">🔔 {symbol}</span>
+                    <button className="alert-close" onClick={onClose}>×</button>
                 </div>
 
-                <div className="tabs">
+                {/* Tabs */}
+                <div className="alert-tabs">
                     <button className={activeTab === 'new' ? 'active' : ''} onClick={() => { setActiveTab('new'); if (editId) resetForm(); }}>
-                        {editId ? '编辑中' : '新建'}
+                        {editId ? '编辑' : '新建'}
                     </button>
-                    <button className={activeTab === 'list' ? 'active' : ''} onClick={() => setActiveTab('list')}>列表 ({myAlerts.length})</button>
-                    <button className={activeTab === 'history' ? 'active' : ''} onClick={() => setActiveTab('history')}>历史</button>
+                    <button className={activeTab === 'list' ? 'active' : ''} onClick={() => setActiveTab('list')}>
+                        预警 ({myAlerts.length})
+                    </button>
+                    <button className={activeTab === 'history' ? 'active' : ''} onClick={() => setActiveTab('history')}>
+                        历史
+                    </button>
                 </div>
 
-                <div className="modal-content">
+                {/* Content (Scrollable) */}
+                <div className="alert-body">
                     {activeTab === 'new' && (
-                        <div className="new-alert-form">
-                            {/* Target Config */}
-                            <div className="input-group">
-                                <label>触发目标</label>
-                                <div className="radio-group" style={{ display: 'flex', gap: '15px', marginBottom: '10px' }}>
-                                    <label style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                                        <input type="radio" checked={targetType === 'price'} onChange={() => setTargetType('price')} /> 价格
-                                    </label>
-                                    <label style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                                        <input type="radio" checked={targetType === 'indicator'} onChange={() => setTargetType('indicator')} /> 技术指标
-                                    </label>
+                        <div className="alert-form">
+                            {/* Section: Target */}
+                            <div className="form-section">
+                                <div className="section-title">触发目标</div>
+                                <div className="toggle-group">
+                                    <button className={targetType === 'price' ? 'active' : ''} onClick={() => setTargetType('price')}>💲 价格</button>
+                                    <button className={targetType === 'indicator' ? 'active' : ''} onClick={() => setTargetType('indicator')}>📊 技术指标</button>
                                 </div>
 
                                 {targetType === 'price' ? (
                                     <input
                                         type="number"
-                                        placeholder={`当前: ${currentPrice}`}
+                                        className="form-input"
+                                        placeholder={`当前价格: ${currentPrice}`}
                                         value={targetValue}
                                         onChange={e => setTargetValue(e.target.value)}
                                     />
                                 ) : (
-                                    <div className="indicator-config" style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
-                                        <select value={indicatorType} onChange={e => setIndicatorType(e.target.value)} style={{ flex: 1 }}>
-                                            <option value="sma">SMA (移动平均)</option>
-                                            <option value="ema">EMA (指数平均)</option>
+                                    <div className="indicator-row">
+                                        <select value={indicatorType} onChange={e => setIndicatorType(e.target.value)}>
+                                            <option value="sma">SMA 移动均线</option>
+                                            <option value="ema">EMA 指数均线</option>
                                         </select>
-                                        <select value={indicatorPeriod} onChange={e => setIndicatorPeriod(e.target.value)} style={{ width: '80px' }}>
+                                        <select value={indicatorPeriod} onChange={e => setIndicatorPeriod(e.target.value)}>
                                             <option value="7">7</option>
                                             <option value="25">25</option>
                                             <option value="99">99</option>
@@ -170,139 +159,137 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                                 )}
                             </div>
 
-                            {/* Direction Config */}
-                            <div className="input-group">
-                                <label>触发方向</label>
-                                <div className="radio-group" style={{ display: 'flex', gap: '15px' }}>
-                                    <label style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                                        <input type="radio" checked={direction === 'crossing_up'} onChange={() => setDirection('crossing_up')} /> 📈 上穿 (涨破)
-                                    </label>
-                                    <label style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                                        <input type="radio" checked={direction === 'crossing_down'} onChange={() => setDirection('crossing_down')} /> 📉 下穿 (跌破)
-                                    </label>
+                            {/* Section: Direction */}
+                            <div className="form-section">
+                                <div className="section-title">触发方向</div>
+                                <div className="toggle-group">
+                                    <button className={direction === 'crossing_up' ? 'active up' : ''} onClick={() => setDirection('crossing_up')}>📈 上穿</button>
+                                    <button className={direction === 'crossing_down' ? 'active down' : ''} onClick={() => setDirection('crossing_down')}>📉 下穿</button>
                                 </div>
                             </div>
 
-                            {/* Confirmation Config */}
-                            <div className="input-group">
-                                <label>确认模式</label>
-                                <select value={confirmation} onChange={e => setConfirmation(e.target.value)} style={{ width: '100%', marginBottom: '10px' }}>
-                                    <option value="immediate">⚡ 立即触发 (触碰即报)</option>
-                                    <option value="time_delay">⏳ 时间延迟 (防止插针)</option>
-                                    <option value="candle_close">🕯️ K线收盘确认 (稳健)</option>
-                                </select>
+                            {/* Section: Confirmation */}
+                            <div className="form-section">
+                                <div className="section-title">确认模式</div>
+                                <div className="toggle-group vertical">
+                                    <button className={confirmation === 'immediate' ? 'active' : ''} onClick={() => setConfirmation('immediate')}>
+                                        ⚡ 立即 <span className="hint">触碰即报</span>
+                                    </button>
+                                    <button className={confirmation === 'time_delay' ? 'active' : ''} onClick={() => setConfirmation('time_delay')}>
+                                        ⏳ 延迟 <span className="hint">防止插针</span>
+                                    </button>
+                                    <button className={confirmation === 'candle_close' ? 'active' : ''} onClick={() => setConfirmation('candle_close')}>
+                                        🕯️ K线确认 <span className="hint">收盘确认</span>
+                                    </button>
+                                </div>
 
-                                {/* Sub-settings: Interval */}
+                                {/* Sub-options */}
                                 {(confirmation === 'candle_close' || targetType === 'indicator') && (
-                                    <div style={{ marginBottom: '10px' }}>
-                                        <label style={{ fontSize: '12px', color: '#888' }}>K线周期</label>
-                                        <select value={interval} onChange={e => setInterval(e.target.value)} style={{ width: '100%' }}>
-                                            <option value="1m">1 分钟</option>
-                                            <option value="5m">5 分钟</option>
-                                            <option value="15m">15 分钟</option>
-                                            <option value="1h">1 小时</option>
-                                            <option value="4h">4 小时</option>
-                                            <option value="1d">1 天</option>
+                                    <div className="sub-option">
+                                        <label>K线周期</label>
+                                        <select value={interval} onChange={e => setInterval(e.target.value)}>
+                                            <option value="1m">1分钟</option>
+                                            <option value="5m">5分钟</option>
+                                            <option value="15m">15分钟</option>
+                                            <option value="1h">1小时</option>
+                                            <option value="4h">4小时</option>
+                                            <option value="1d">1天</option>
                                         </select>
                                     </div>
                                 )}
 
-                                {/* Sub-settings: Time Delay */}
                                 {confirmation === 'time_delay' && (
-                                    <div className="range-wrap">
-                                        <input
-                                            type="range"
-                                            min="5"
-                                            max="60"
-                                            step="5"
-                                            value={delay}
-                                            onChange={e => setDelay(e.target.value)}
-                                        />
-                                        <span>{delay}秒</span>
+                                    <div className="sub-option">
+                                        <label>延迟时间</label>
+                                        <div className="slider-row">
+                                            <input type="range" min="5" max="60" step="5" value={delay} onChange={e => setDelay(e.target.value)} />
+                                            <span className="slider-value">{delay}秒</span>
+                                        </div>
                                     </div>
                                 )}
 
-                                {/* Sub-settings: Candle Delay */}
                                 {confirmation === 'candle_close' && (
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                        <label style={{ fontSize: '12px', color: '#888', flex: 1 }}>延迟确认 (根K线)</label>
-                                        <input
-                                            type="number"
-                                            min="0"
-                                            max="10"
-                                            value={delayCandles}
-                                            onChange={e => setDelayCandles(e.target.value)}
-                                            style={{ width: '60px', padding: '5px' }}
-                                        />
-                                        <span style={{ fontSize: '12px', color: '#666' }}>0=本根收盘</span>
+                                    <div className="sub-option">
+                                        <label>延迟K根</label>
+                                        <div className="stepper">
+                                            <button onClick={() => setDelayCandles(Math.max(0, delayCandles - 1))}>−</button>
+                                            <span>{delayCandles}</span>
+                                            <button onClick={() => setDelayCandles(Math.min(10, delayCandles + 1))}>+</button>
+                                        </div>
+                                        <span className="hint-inline">0 = 本根收盘</span>
                                     </div>
                                 )}
                             </div>
 
-                            <div className="actions-config">
-                                <label>
-                                    <input
-                                        type="checkbox"
-                                        checked={actions.toast}
-                                        onChange={e => setActions({ ...actions, toast: e.target.checked })}
-                                    /> 弹窗提示 (Toast)
-                                </label>
-                                <label>
-                                    <input
-                                        type="checkbox"
-                                        checked={actions.notification}
-                                        onChange={e => setActions({ ...actions, notification: e.target.checked })}
-                                    /> 通知栏推送
-                                </label>
-
-                                <div className="vibration-select">
-                                    <label>震动反馈:</label>
+                            {/* Section: Actions */}
+                            <div className="form-section">
+                                <div className="section-title">触发后动作</div>
+                                <div className="action-toggles">
+                                    <label className={actions.toast ? 'checked' : ''}>
+                                        <input type="checkbox" checked={actions.toast} onChange={e => setActions({ ...actions, toast: e.target.checked })} />
+                                        <span>弹窗</span>
+                                    </label>
+                                    <label className={actions.notification ? 'checked' : ''}>
+                                        <input type="checkbox" checked={actions.notification} onChange={e => setActions({ ...actions, notification: e.target.checked })} />
+                                        <span>通知</span>
+                                    </label>
+                                </div>
+                                <div className="vibration-row">
+                                    <label>震动:</label>
                                     <select value={actions.vibration} onChange={e => setActions({ ...actions, vibration: e.target.value })}>
                                         <option value="none">无</option>
-                                        <option value="once">短震动 (一次)</option>
-                                        <option value="continuous">长震动 (持续)</option>
+                                        <option value="once">短</option>
+                                        <option value="continuous">长</option>
                                     </select>
                                 </div>
                             </div>
 
-                            <button className="btn btn-primary full-width" onClick={handleCreate}>
-                                {editId ? '保存修改' : '创建预警'}
+                            {/* Submit Button */}
+                            <button className="submit-btn" onClick={handleCreate}>
+                                {editId ? '✓ 保存修改' : '+ 创建预警'}
                             </button>
                         </div>
                     )}
 
                     {activeTab === 'list' && (
                         <div className="alert-list">
-                            {myAlerts.length === 0 ? <p className="empty-state">暂无激活的预警</p> :
+                            {myAlerts.length === 0 ? (
+                                <div className="empty-state">暂无预警，点击"新建"添加</div>
+                            ) : (
                                 myAlerts.map(alert => (
-                                    <div key={alert.id} className="alert-item" onClick={() => handleEdit(alert)}>
-                                        <div className="alert-info">
-                                            <span className="condition">
-                                                {alert.condition === 'crossing_up' ? '📈 上穿' : '📉 下穿'} {alert.targetType === 'indicator' ? alert.targetValue.toUpperCase() : alert.target}
+                                    <div key={alert.id} className="list-item" onClick={() => handleEdit(alert)}>
+                                        <div className="item-main">
+                                            <span className={`direction-tag ${alert.condition === 'crossing_up' ? 'up' : 'down'}`}>
+                                                {alert.condition === 'crossing_up' ? '↑' : '↓'}
                                             </span>
-                                            <span className="target-price" style={{ fontSize: '12px', color: '#888' }}>
-                                                {alert.confirmation === 'candle_close'
-                                                    ? `🕯️ ${alert.interval} 收盘${alert.delayCandles > 0 ? ` +${alert.delayCandles}根` : ''}`
-                                                    : alert.delaySeconds > 0 ? `⏳ 延迟 ${alert.delaySeconds}秒` : '⚡ 立即'}
+                                            <span className="item-target">
+                                                {alert.targetType === 'indicator' ? alert.targetValue.toUpperCase() : `$${alert.target}`}
                                             </span>
                                         </div>
-                                        <button className="btn-delete" onClick={(e) => handleDelete(alert.id, e)}>🗑️</button>
+                                        <div className="item-meta">
+                                            {alert.confirmation === 'candle_close'
+                                                ? `${alert.interval} 收盘`
+                                                : alert.delaySeconds > 0 ? `${alert.delaySeconds}秒` : '即时'}
+                                        </div>
+                                        <button className="item-delete" onClick={(e) => handleDelete(alert.id, e)}>×</button>
                                     </div>
                                 ))
-                            }
+                            )}
                         </div>
                     )}
 
                     {activeTab === 'history' && (
-                        <div className="history-list">
-                            {history.length === 0 ? <p className="empty-state">暂无历史记录</p> :
+                        <div className="history-list-v2">
+                            {history.length === 0 ? (
+                                <div className="empty-state">暂无历史记录</div>
+                            ) : (
                                 history.map((log, i) => (
-                                    <div key={i} className="history-item">
-                                        <div className="time">{new Date(log.timestamp).toLocaleTimeString()}</div>
-                                        <div className="msg">{log.message}</div>
+                                    <div key={i} className="history-item-v2">
+                                        <span className="history-time">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                                        <span className="history-msg">{log.message}</span>
                                     </div>
                                 ))
-                            }
+                            )}
                         </div>
                     )}
                 </div>
