@@ -1,22 +1,55 @@
 import { useState, useEffect, useRef } from 'react';
+import { Capacitor } from '@capacitor/core';
+import FloatingWidget from '../plugins/FloatingWidget';
 
 const BINANCE_WS_URL = 'wss://stream.binance.com:9443/stream';
 
-export const useBinanceTickers = (symbols = [], onUpdate = null) => {
+export const useBinanceTickers = (symbols = []) => {
     const [tickers, setTickers] = useState({});
     const wsRef = useRef(null);
     const reconnectTimeoutRef = useRef(null);
     const watchdogIntervalRef = useRef(null);
     const lastUpdateRef = useRef(Date.now());
+    const listenerRef = useRef(null);
 
+    // ===== NATIVE MODE (Android) =====
+    // Receive data from native Service via Plugin events
+    useEffect(() => {
+        if (!Capacitor.isNativePlatform()) return;
+
+        // Subscribe to native ticker updates
+        listenerRef.current = FloatingWidget.addListener('tickerUpdate', (data) => {
+            const { symbol, price, changePercent } = data;
+
+            // Calculate change from current/previous state (or just use percent)
+            setTickers(prev => ({
+                ...prev,
+                [symbol]: {
+                    price: price,
+                    change: 0, // Not directly available from broadcast, but percent is.
+                    changePercent: changePercent
+                }
+            }));
+        });
+
+        return () => {
+            if (listenerRef.current) {
+                listenerRef.current.remove();
+            }
+        };
+    }, []); // Only run once
+
+    // ===== WEB MODE (Fallback) =====
+    // Use WebSocket directly when not on native platform
     const connect = () => {
+        if (Capacitor.isNativePlatform()) return; // Skip on native
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
         if (wsRef.current) wsRef.current.close();
 
         const streams = symbols.map(s => `${s.toLowerCase()}@miniTicker`).join('/');
         const url = `${BINANCE_WS_URL}?streams=${streams}`;
 
-        console.log('Connecting to Binance WS...');
+        console.log('Connecting to Binance WS (Web Mode)...');
         wsRef.current = new WebSocket(url);
 
         wsRef.current.onopen = () => {
@@ -36,21 +69,14 @@ export const useBinanceTickers = (symbols = [], onUpdate = null) => {
                     const changePrice = price - openPrice;
                     const changePercent = openPrice > 0 ? (changePrice / openPrice) * 100 : 0;
 
-                    const tickerData = {
-                        price: price,
-                        change: changePrice,
-                        changePercent: changePercent
-                    };
-
                     setTickers(prev => ({
                         ...prev,
-                        [symbol]: tickerData
+                        [symbol]: {
+                            price: price,
+                            change: changePrice,
+                            changePercent: changePercent
+                        }
                     }));
-
-                    // Call optional callback (for floating widget updates)
-                    if (onUpdate) {
-                        onUpdate(symbol, tickerData);
-                    }
                 }
             } catch (err) {
                 console.error('Parse Error', err);
@@ -74,6 +100,7 @@ export const useBinanceTickers = (symbols = [], onUpdate = null) => {
     };
 
     useEffect(() => {
+        if (Capacitor.isNativePlatform()) return; // Skip WS on native
         if (symbols.length === 0) return;
 
         connect();
@@ -102,3 +129,4 @@ export const useBinanceTickers = (symbols = [], onUpdate = null) => {
 
     return tickers;
 };
+

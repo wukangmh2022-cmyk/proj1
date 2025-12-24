@@ -217,6 +217,14 @@ public class FloatingWindowService extends Service {
                     String.format("%.2f", changePercent) // Change always 2 decimals
                 });
                 
+                // Broadcast ticker update for Plugin (to forward to WebView)
+                Intent tickerIntent = new Intent("com.binance.pricemonitor.TICKER_UPDATE");
+                tickerIntent.putExtra("symbol", symbol);
+                tickerIntent.putExtra("price", closePrice);
+                tickerIntent.putExtra("changePercent", changePercent);
+                androidx.localbroadcastmanager.content.LocalBroadcastManager
+                    .getInstance(this).sendBroadcast(tickerIntent);
+                
                 // Update UI on main thread
                 new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
                     if (isSymbolVisible(symbol)) {
