@@ -7,8 +7,9 @@ android {
         applicationId "com.binance.pricemonitor"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        // Auto-increment versionCode using timestamp (allows direct update without uninstall)
+        versionCode ((new Date().getTime() / 1000).intValue())
+        versionName "1.0.${(new Date().getTime() / 1000).intValue()}"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
