@@ -31,16 +31,8 @@ function HomePage() {
     }
   }, [floatingActive, symbols]);
 
-  const handleTickerUpdate = useCallback((symbol, data) => {
-    if (!floatingActiveRef.current || !Capacitor.isNativePlatform()) return;
-    FloatingWidget.update({
-      symbol: symbol,
-      price: data.price.toFixed(2),
-      change: data.changePercent.toFixed(2)
-    }).catch(() => { });
-  }, []);
-
-  const tickers = useBinanceTickers(symbols, handleTickerUpdate);
+  // Ticker updates are now handled natively by the Android Service
+  const tickers = useBinanceTickers(symbols);
   usePriceAlerts(tickers);
 
   const handleAddSymbol = () => {

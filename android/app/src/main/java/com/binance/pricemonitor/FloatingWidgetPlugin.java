@@ -62,25 +62,6 @@ public class FloatingWidgetPlugin extends Plugin {
     }
 
     @PluginMethod
-    public void update(PluginCall call) {
-        String symbol = call.getString("symbol");
-        String price = call.getString("price");
-        String change = call.getString("change");
-
-        Context context = getContext();
-        Intent intent = new Intent(context, FloatingWindowService.class);
-        intent.setAction(FloatingWindowService.ACTION_UPDATE);
-        intent.putExtra(FloatingWindowService.EXTRA_SYMBOL, symbol);
-        intent.putExtra(FloatingWindowService.EXTRA_PRICE, price);
-        intent.putExtra(FloatingWindowService.EXTRA_CHANGE, change);
-        
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(intent);
-        } else {
-            context.startService(intent);
-        }
-        
-        call.resolve();
     }
 
     @PluginMethod

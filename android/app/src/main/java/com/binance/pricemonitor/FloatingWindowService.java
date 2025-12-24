@@ -37,18 +37,19 @@ public class FloatingWindowService extends Service {
     private boolean showSymbol = true;
     private int itemsPerPage = 1;
     
-    public static final String ACTION_UPDATE = "UPDATE_DATA";
+    // WebSocket
+    private okhttp3.WebSocket webSocket;
+    private okhttp3.OkHttpClient client = new okhttp3.OkHttpClient();
+    private com.google.gson.Gson gson = new com.google.gson.Gson();
+
     public static final String ACTION_CONFIG = "UPDATE_CONFIG";
     public static final String ACTION_SET_SYMBOLS = "SET_SYMBOLS";
     
-    public static final String EXTRA_SYMBOL = "SYMBOL";
-    public static final String EXTRA_PRICE = "PRICE";
-    public static final String EXTRA_CHANGE = "CHANGE";
     public static final String EXTRA_FONT_SIZE = "FONT_SIZE";
     public static final String EXTRA_OPACITY = "OPACITY";
     public static final String EXTRA_SHOW_SYMBOL = "SHOW_SYMBOL";
     public static final String EXTRA_SYMBOL_LIST = "SYMBOL_LIST";
-    public static final String EXTRA_ITEMS_PER_PAGE = "ITEMS_PER_PAGE"; // New extra
+    public static final String EXTRA_ITEMS_PER_PAGE = "ITEMS_PER_PAGE";
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -62,7 +63,7 @@ public class FloatingWindowService extends Service {
 
         floatingView = LayoutInflater.from(this).inflate(R.layout.floating_widget, null);
         container = floatingView.findViewById(R.id.floating_container);
-        itemsContainer = floatingView.findViewById(R.id.items_container); // New container for list items
+        itemsContainer = floatingView.findViewById(R.id.items_container);
 
         params = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
@@ -102,7 +103,6 @@ public class FloatingWindowService extends Service {
                         float dx = event.getRawX() - initialTouchX;
                         float dy = event.getRawY() - initialTouchY;
                         
-                        // Check if it was a click (short duration, small movement)
                         if (clickDuration < 200 && Math.abs(dx) < 10 && Math.abs(dy) < 10) {
                             showNextPage();
                         }
@@ -139,6 +139,7 @@ public class FloatingWindowService extends Service {
                     if (idx >= 0) currentIndex = idx;
                 }
                 updateUI();
+                connectWebSocket(); // Reconnect with new symbols
             }
             return START_STICKY;
         }
@@ -147,39 +148,89 @@ public class FloatingWindowService extends Service {
             fontSize = intent.getFloatExtra(EXTRA_FONT_SIZE, 14f);
             opacity = intent.getFloatExtra(EXTRA_OPACITY, 0.85f);
             showSymbol = intent.getBooleanExtra(EXTRA_SHOW_SYMBOL, true);
-            itemsPerPage = intent.getIntExtra(EXTRA_ITEMS_PER_PAGE, 1); // Get itemsPerPage
+            itemsPerPage = intent.getIntExtra(EXTRA_ITEMS_PER_PAGE, 1);
             applyConfig();
-            updateUI(); // Re-render UI with new item count
+            updateUI();
             return START_STICKY;
         }
         
-        if (ACTION_UPDATE.equals(action)) {
-            String symbol = intent.getStringExtra(EXTRA_SYMBOL);
-            String price = intent.getStringExtra(EXTRA_PRICE);
-            String change = intent.getStringExtra(EXTRA_CHANGE);
-            
-            if (symbol != null) {
-                priceDataMap.put(symbol, new String[]{price, change});
-                if (!symbolList.contains(symbol)) {
-                    symbolList.add(symbol);
-                }
-                // Check if the updated symbol is currently visible
-                if (isSymbolVisible(symbol)) {
-                    updateUI();
+        return START_STICKY;
+    }
+    
+    private void connectWebSocket() {
+        if (webSocket != null) {
+            webSocket.cancel(); // Use cancel to immediately stop
+            webSocket = null;
+        }
+        
+        if (symbolList.isEmpty()) return;
+
+        StringBuilder streams = new StringBuilder();
+        for (String s : symbolList) {
+            streams.append(s.toLowerCase()).append("@miniTicker/");
+        }
+        // Remove trailing slash
+        if (streams.length() > 0) streams.setLength(streams.length() - 1);
+        
+        String url = "wss://stream.binance.com:9443/stream?streams=" + streams.toString();
+        
+        okhttp3.Request request = new okhttp3.Request.Builder().url(url).build();
+        webSocket = client.newWebSocket(request, new okhttp3.WebSocketListener() {
+            @Override
+            public void onOpen(okhttp3.WebSocket webSocket, okhttp3.Response response) {
+                // Connected
+            }
+
+            @Override
+            public void onMessage(okhttp3.WebSocket webSocket, String text) {
+                handleMessage(text);
+            }
+
+            @Override
+            public void onFailure(okhttp3.WebSocket webSocket, Throwable t, okhttp3.Response response) {
+                // Retry logic could be added here
+                try {
+                    Thread.sleep(3000);
+                    connectWebSocket();
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
                 }
             }
+        });
+    }
+    
+    private void handleMessage(String text) {
+        try {
+            com.google.gson.JsonObject json = com.google.gson.JsonParser.parseString(text).getAsJsonObject();
+            if (json.has("data")) {
+                com.google.gson.JsonObject data = json.getAsJsonObject("data");
+                String symbol = data.get("s").getAsString();
+                String close = data.get("c").getAsString();
+                
+                // Calculate change percent
+                double closePrice = Double.parseDouble(close);
+                double openPrice = Double.parseDouble(data.get("o").getAsString());
+                double changePercent = ((closePrice - openPrice) / openPrice) * 100;
+                
+                priceDataMap.put(symbol, new String[]{
+                    close, 
+                    String.valueOf(changePercent)
+                });
+                
+                // Update UI on main thread
+                new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+                    if (isSymbolVisible(symbol)) {
+                         updateUI();
+                    }
+                });
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
         }
-        return START_STICKY;
     }
     
     private boolean isSymbolVisible(String symbol) {
         if (symbolList.isEmpty()) return false;
-        
-        // Calculate page index logic
-        // We paginate by itemsPerPage. currentIndex is the starting index of the page.
-        // But our currentIndex logic was previously single-item. 
-        // Let's adjust: "currentIndex" will be the index of the first item on the current page.
-        
         for (int i = 0; i < itemsPerPage; i++) {
             int idx = (currentIndex + i) % symbolList.size();
             if (symbol.equals(symbolList.get(idx))) {
@@ -197,28 +248,26 @@ public class FloatingWindowService extends Service {
     
     private void updateUI() {
         if (itemsContainer == null) return;
-        itemsContainer.removeAllViews(); // Clear existing views
+        itemsContainer.removeAllViews();
         
         if (symbolList.isEmpty()) {
             addLoadingView();
             return;
         }
 
-        // Add views for each item in the current page
         for (int i = 0; i < itemsPerPage; i++) {
             int idx = (currentIndex + i) % symbolList.size();
             String symbol = symbolList.get(idx);
             String[] data = priceDataMap.get(symbol);
             addTickerView(symbol, data);
             
-            // If total symbols < itemsPerPage, don't duplicate
             if (i >= symbolList.size() - 1) break; 
         }
     }
     
     private void addLoadingView() {
         TextView tv = new TextView(this);
-        tv.setText("Waiting for data...");
+        tv.setText("Waiting...");
         tv.setTextColor(Color.WHITE);
         tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize);
         itemsContainer.addView(tv);
@@ -230,7 +279,7 @@ public class FloatingWindowService extends Service {
 
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.VERTICAL);
-        row.setPadding(0, 0, 0, 10); // Spacing between items
+        row.setPadding(0, 0, 0, 10);
 
         TextView priceTv = new TextView(this);
         String displayText = showSymbol ? 
@@ -282,6 +331,9 @@ public class FloatingWindowService extends Service {
     @Override
     public void onDestroy() {
         super.onDestroy();
+        if (webSocket != null) {
+            webSocket.cancel();
+        }
         if (floatingView != null && windowManager != null) {
             windowManager.removeView(floatingView);
         }
@@ -300,7 +352,7 @@ public class FloatingWindowService extends Service {
 
         Notification notification = new NotificationCompat.Builder(this, channelId)
                 .setContentTitle("Binance Monitor")
-                .setContentText("Floating window active")
+                .setContentText("Getting live prices...")
                 .setSmallIcon(android.R.drawable.sym_def_app_icon)
                 .build();
 
