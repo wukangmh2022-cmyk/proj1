@@ -164,20 +164,25 @@ body {
   color: var(--text-secondary);
   margin-bottom: 8px;
   font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .ticker-card .price {
-  font-size: 1.4rem;
+  font-size: 1.2rem;
   font-weight: 700;
   margin-bottom: 6px;
+  white-space: nowrap;
 }
 
 .ticker-card .change {
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   font-weight: 600;
   padding: 4px 8px;
   border-radius: 6px;
   display: inline-block;
+  white-space: nowrap;
 }
 
 .ticker-card .change.up {

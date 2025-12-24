@@ -71,8 +71,8 @@ function HomePage() {
     }
   }, [floatingActive, symbols]);
 
-  // Ticker updates are now handled natively by the Android Service
-  const tickers = useBinanceTickers(symbols);
+  // Data source: native when floating active, WebSocket otherwise
+  const tickers = useBinanceTickers(symbols, floatingActive);
   usePriceAlerts(tickers);
 
   const handleAddSymbol = () => {
@@ -165,15 +165,15 @@ function HomePage() {
     }}>
       {/* Header */}
       <div className="header">
-        <h1>₿ Binance Live</h1>
+        <h1>₿ 实时行情</h1>
         <div className="header-actions">
           {isEditMode ? (
-            <button className="btn btn-primary" onClick={() => setIsEditMode(false)}>Done</button>
+            <button className="btn btn-primary" onClick={() => setIsEditMode(false)}>完成</button>
           ) : (
             <>
-              <button className="btn btn-secondary" onClick={() => setIsEditMode(true)}>Edit</button>
+              <button className="btn btn-secondary" onClick={() => setIsEditMode(true)}>编辑</button>
               <button className="btn btn-secondary btn-icon" onClick={() => setShowSettings(true)}>⚙</button>
-              <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>+ Add</button>
+              <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>+ 添加</button>
             </>
           )}
         </div>
@@ -261,34 +261,34 @@ function HomePage() {
         <div className="floating-controls">
           {!floatingActive ? (
             <button className="btn btn-primary" onClick={startFloating}>
-              🔲 Enable Overlay
+              🔲 开启悬浮窗
             </button>
           ) : (
             <button className="btn btn-danger" onClick={stopFloating}>
-              ✕ Disable Overlay
+              ✕ 关闭悬浮窗
             </button>
           )}
           <button className="btn btn-secondary" onClick={() => setShowSettings(true)}>
-            ⚙ Settings
+            ⚙ 设置
           </button>
         </div>
       )}
 
-      {/* Modals ... (Rest remains same) */}
+      {/* Modals */}
       {showAddModal && (
         <div className="modal-overlay" onClick={() => setShowAddModal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
-            <h2>Add Symbol</h2>
+            <h2>添加交易对</h2>
             <input
               type="text"
-              placeholder="e.g. DOGEUSDT"
+              placeholder="如 DOGEUSDT"
               value={newSymbol}
               onChange={e => setNewSymbol(e.target.value.toUpperCase())}
               autoFocus
             />
             <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={() => setShowAddModal(false)}>Cancel</button>
-              <button className="btn btn-primary" onClick={handleAddSymbol}>Add</button>
+              <button className="btn btn-secondary" onClick={() => setShowAddModal(false)}>取消</button>
+              <button className="btn btn-primary" onClick={handleAddSymbol}>添加</button>
             </div>
           </div>
         </div>
@@ -297,26 +297,26 @@ function HomePage() {
       {showSettings && (
         <div className="modal-overlay" onClick={() => setShowSettings(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
-            <h2>Floating Window Settings</h2>
+            <h2>悬浮窗设置</h2>
             <div className="settings-group">
-              <label>Show Symbol Name
+              <label>显示币种名称
                 <input type="checkbox" checked={config.showSymbol} onChange={e => updateConfig('showSymbol', e.target.checked)} />
               </label>
             </div>
             <div className="settings-group">
-              <label>Font Size: {config.fontSize}px</label>
+              <label>字体大小: {config.fontSize}px</label>
               <input type="range" min="10" max="24" value={config.fontSize} onChange={e => updateConfig('fontSize', parseInt(e.target.value))} />
             </div>
             <div className="settings-group">
-              <label>Background Opacity: {Math.round(config.opacity * 100)}%</label>
+              <label>背景透明度: {Math.round(config.opacity * 100)}%</label>
               <input type="range" min="20" max="100" value={config.opacity * 100} onChange={e => updateConfig('opacity', parseInt(e.target.value) / 100)} />
             </div>
             <div className="settings-group">
-              <label>Items Per Page: {config.itemsPerPage}</label>
+              <label>每页显示数量: {config.itemsPerPage}</label>
               <input type="range" min="1" max="5" value={config.itemsPerPage} onChange={e => updateConfig('itemsPerPage', parseInt(e.target.value))} />
             </div>
             <div className="modal-actions">
-              <button className="btn btn-primary" onClick={() => setShowSettings(false)}>Done</button>
+              <button className="btn btn-primary" onClick={() => setShowSettings(false)}>完成</button>
             </div>
           </div>
         </div>
