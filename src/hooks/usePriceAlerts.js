@@ -8,24 +8,27 @@ import { useBinanceCandles } from './useBinanceCandles';
 
 export const usePriceAlerts = (tickers) => {
     const [alerts, setAlerts] = useState([]);
-    const pendingAlertsRef = useRef({}); // Tracks delay timers
-    const lastProcessedCandleRef = useRef({}); // Tracks processed candle times to avoid duplicate triggers
+    const pendingAlertsRef = useRef({}); // Tracks time delay timers: { alertId: { timerId } }
+    const pendingCandleWaitRef = useRef({}); // Tracks candle wait: { alertId: { remainingCandles: k } }
+    const lastProcessedCandleRef = useRef({}); // Tracks processed candle times { alertId: timestamp }
 
-    // 1. Identify symbols that need K-line data (Pro alerts)
-    const activeProSymbols = alerts
+    // 1. Identify subscriptions needed
+    const subscriptions = alerts
         .filter(a => a.active && (a.targetType === 'indicator' || a.confirmation === 'candle_close'))
-        .map(a => a.symbol);
+        .map(a => ({
+            symbol: a.symbol,
+            interval: a.interval || '1m' // Default to 1m if missing
+        }));
 
-    const uniqueProSymbols = [...new Set(activeProSymbols)];
+    // Deduplicate
+    const uniqueSubs = subscriptions.filter((v, i, a) => a.findIndex(t => t.symbol === v.symbol && t.interval === v.interval) === i);
 
-    // 2. Fetch Candle Data for Pro Alerts (Default 1m for now, ideally dynamic)
-    const candleData = useBinanceCandles(uniqueProSymbols, '1m');
+    // 2. Fetch Candle Data
+    const candleData = useBinanceCandles(uniqueSubs);
 
     // Load alerts on mount
     useEffect(() => {
         setAlerts(getAlerts());
-
-        // Request notification permissions
         if (Capacitor.isNativePlatform()) {
             LocalNotifications.requestPermissions();
         }
@@ -43,11 +46,14 @@ export const usePriceAlerts = (tickers) => {
             const symbol = alert.symbol;
             let currentPrice, targetPrice, isConditionMet = false;
             let shouldCheck = true;
+            let dataKey = null;
 
             // --- DATA SOURCE SELECTION ---
             if (alert.targetType === 'indicator' || alert.confirmation === 'candle_close') {
-                // Use Candle Data
-                const data = candleData[symbol];
+                const interval = alert.interval || '1m';
+                dataKey = `${symbol}_${interval}`;
+                const data = candleData[dataKey];
+
                 if (!data) return; // Wait for data
 
                 currentPrice = data.close;
@@ -55,30 +61,27 @@ export const usePriceAlerts = (tickers) => {
                 if (alert.targetType === 'indicator') {
                     // targetValue string acts as key, e.g. 'sma7'
                     targetPrice = data[alert.targetValue];
-                    if (!targetPrice) return; // Indicator not ready
+                    if (!targetPrice) return;
                 } else {
                     targetPrice = parseFloat(alert.target);
                 }
 
                 // Candle Confirmation Logic
                 if (alert.confirmation === 'candle_close') {
-                    // Only check if candle just closed
+                    // Only check logic when candle CLOSES
                     if (!data.isClosed) {
                         shouldCheck = false;
                     } else {
-                        // Avoid double trigger for same candle
+                        // Check if we already processed this specific candle timestamp for this alert
                         const lastTime = lastProcessedCandleRef.current[alert.id];
                         if (lastTime === data.kline.t) {
                             shouldCheck = false;
-                        } else {
-                            // Mark this candle as processed for this alert
-                            lastProcessedCandleRef.current[alert.id] = data.kline.t;
                         }
                     }
                 }
 
             } else {
-                // simple miniTicker data
+                // Simple Price Alert (MiniTicker)
                 const ticker = tickers[symbol];
                 if (!ticker) return;
                 currentPrice = ticker.price;
@@ -95,28 +98,69 @@ export const usePriceAlerts = (tickers) => {
             }
 
             // --- TRIGGER LOGIC ---
-            if (isConditionMet) {
-                // If Delay is set (and not using candle close which is instant)
-                if (alert.delaySeconds > 0 && alert.confirmation !== 'candle_close') {
-                    if (!pendingAlertsRef.current[alert.id]) {
-                        pendingAlertsRef.current[alert.id] = {
-                            startTime: Date.now(),
-                            timerId: setTimeout(() => {
-                                triggerAlert(alert, currentPrice, targetPrice);
-                                delete pendingAlertsRef.current[alert.id];
-                            }, alert.delaySeconds * 1000)
-                        };
-                        console.log(`Alert ${alert.id} waiting ${alert.delaySeconds}s...`);
+            if (alert.confirmation === 'candle_close') {
+                // If we are here, candle JUST closed.
+                const candleTime = candleData[dataKey]?.kline?.t;
+
+                // If waiting for K candles
+                if (pendingCandleWaitRef.current[alert.id]) {
+                    // Decrement count
+                    pendingCandleWaitRef.current[alert.id].remaining--;
+
+                    // Mark this candle as processed
+                    lastProcessedCandleRef.current[alert.id] = candleTime;
+
+                    if (pendingCandleWaitRef.current[alert.id].remaining <= 0) {
+                        // Wait over. Check condition again? 
+                        // Usually "Wait K candles" means "Confirm signal stays valid" OR "Just delay action".
+                        // Assuming simple delay: Trigger now.
+                        // Ideally we check condition met AGAIN on this candle.
+                        if (isConditionMet) {
+                            triggerAlert(alert, currentPrice, targetPrice);
+                            delete pendingCandleWaitRef.current[alert.id];
+                        } else {
+                            // Signal lost? Cancel wait.
+                            delete pendingCandleWaitRef.current[alert.id];
+                        }
+                    }
+                    return;
+                }
+
+                if (isConditionMet) {
+                    // Condition met on close.
+                    const kDelay = alert.delayCandles || 0;
+                    if (kDelay === 0) {
+                        triggerAlert(alert, currentPrice, targetPrice);
+                        lastProcessedCandleRef.current[alert.id] = candleTime;
+                    } else {
+                        // Start waiting
+                        pendingCandleWaitRef.current[alert.id] = { remaining: kDelay };
+                        lastProcessedCandleRef.current[alert.id] = candleTime;
+                        console.log(`Alert ${alert.id} condition met. Waiting ${kDelay} candles.`);
+                    }
+                }
+
+            } else {
+                // Realtime (Immediate or Time Delay)
+                if (isConditionMet) {
+                    if (alert.delaySeconds > 0) {
+                        if (!pendingAlertsRef.current[alert.id]) {
+                            pendingAlertsRef.current[alert.id] = {
+                                timerId: setTimeout(() => {
+                                    triggerAlert(alert, currentPrice, targetPrice);
+                                    delete pendingAlertsRef.current[alert.id];
+                                }, alert.delaySeconds * 1000)
+                            };
+                        }
+                    } else {
+                        triggerAlert(alert, currentPrice, targetPrice);
                     }
                 } else {
-                    // Immediate trigger (or Candle Close trigger)
-                    triggerAlert(alert, currentPrice, targetPrice);
-                }
-            } else {
-                // Condition NOT met
-                if (pendingAlertsRef.current[alert.id]) {
-                    clearTimeout(pendingAlertsRef.current[alert.id].timerId);
-                    delete pendingAlertsRef.current[alert.id];
+                    // Condition NOT met (Reset timer)
+                    if (pendingAlertsRef.current[alert.id]) {
+                        clearTimeout(pendingAlertsRef.current[alert.id].timerId);
+                        delete pendingAlertsRef.current[alert.id];
+                    }
                 }
             }
         });
@@ -130,8 +174,9 @@ export const usePriceAlerts = (tickers) => {
 
         // 2. Log History
         const targetStr = alert.targetType === 'indicator' ? alert.targetValue.toUpperCase() : targetPrice;
-        const conditionStr = alert.condition === 'crossing_up' ? 'rose above' : 'fell below';
-        const message = `${alert.symbol} ${conditionStr} ${targetStr}. Price: ${currentPrice}`;
+        // Localized message logic could go here or in UI. Storing raw string for now.
+        const conditionStr = alert.condition === 'crossing_up' ? '上穿' : '下穿'; // Localized
+        const message = `${alert.symbol} ${conditionStr} ${targetStr}. 价格: ${currentPrice}`;
 
         addAlertHistory({
             symbol: alert.symbol,
@@ -149,7 +194,7 @@ export const usePriceAlerts = (tickers) => {
             if (alert.actions.notification) {
                 await LocalNotifications.schedule({
                     notifications: [{
-                        title: 'Binance Alert',
+                        title: '行情预警',
                         body: message,
                         id: Math.floor(Math.random() * 100000),
                         schedule: { at: new Date(Date.now() + 100) },
@@ -159,7 +204,6 @@ export const usePriceAlerts = (tickers) => {
             }
 
             if (alert.actions.vibration === 'continuous') {
-                // Simulate continuous by repeating 3 times
                 for (let i = 0; i < 3; i++) {
                     await Haptics.vibrate({ duration: 1000 });
                     await new Promise(r => setTimeout(r, 1200));
@@ -167,10 +211,6 @@ export const usePriceAlerts = (tickers) => {
             } else if (alert.actions.vibration === 'once') {
                 await Haptics.vibrate({ duration: 500 });
             }
-        } else {
-            // Web fallback
-            console.log('Alert Triggered:', message);
-            if (alert.actions.toast) alert(message);
         }
     };
 
