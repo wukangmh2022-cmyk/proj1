@@ -618,7 +618,12 @@ public class FloatingWindowService extends Service {
             
             // Determine target
             if (alert.targetType.equals("indicator")) {
-                targetValue = calculateIndicator(alert.targetValue, history);
+                if (alert.targetValue.startsWith("fib")) {
+                    targetValue = calculateFibLevel(alert.targetValue);
+                } else {
+                    targetValue = calculateIndicator(alert.targetValue, history);
+                }
+                
                 if (Double.isNaN(targetValue)) continue;
             } else {
                 targetValue = alert.target;
@@ -652,7 +657,7 @@ public class FloatingWindowService extends Service {
             period = 14; // Default for RSI
         }
         
-        if (type.equals("sma")) {
+        if (type.equals("sma") || type.equals("ma")) {
             if (history.size() < period) return Double.NaN;
             java.util.List<Double> values = history.subList(history.size() - period, history.size());
             double sum = 0;
