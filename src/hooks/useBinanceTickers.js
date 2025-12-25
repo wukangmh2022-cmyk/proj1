@@ -36,6 +36,9 @@ export const useBinanceTickers = (symbols = []) => {
             }));
         });
 
+        // Request immediate update (replay last cached data)
+        FloatingWidget.requestTickerUpdate();
+
         return () => {
             if (listenerRef.current) {
                 listenerRef.current.remove();

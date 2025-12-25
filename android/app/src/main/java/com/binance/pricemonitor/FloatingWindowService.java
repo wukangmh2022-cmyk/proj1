@@ -29,6 +29,7 @@ public class FloatingWindowService extends Service {
     // Data storage
     private java.util.List<String> symbolList = new java.util.ArrayList<>();
     private java.util.Map<String, String[]> priceDataMap = new java.util.concurrent.ConcurrentHashMap<>();
+    private java.util.Map<String, double[]> rawPriceDataMap = new java.util.concurrent.ConcurrentHashMap<>();
     private int currentIndex = 0;
     
     // Config values
@@ -46,7 +47,9 @@ public class FloatingWindowService extends Service {
     public static final String ACTION_SET_SYMBOLS = "SET_SYMBOLS";
     public static final String ACTION_START_DATA = "START_DATA"; // Start WS without showing window
     public static final String ACTION_SHOW_WINDOW = "SHOW_WINDOW";
+    public static final String ACTION_SHOW_WINDOW = "SHOW_WINDOW";
     public static final String ACTION_HIDE_WINDOW = "HIDE_WINDOW";
+    public static final String ACTION_REQUEST_UPDATE = "REQUEST_UPDATE"; // New action for immediate data
     
     public static final String EXTRA_FONT_SIZE = "FONT_SIZE";
     public static final String EXTRA_OPACITY = "OPACITY";
@@ -221,6 +224,18 @@ public class FloatingWindowService extends Service {
             }
             return START_STICKY;
         }
+
+        // Request immediate update (replay last data)
+        if (ACTION_REQUEST_UPDATE.equals(action)) {
+            if (tickerListener != null && !rawPriceDataMap.isEmpty()) {
+                for (java.util.Map.Entry<String, double[]> entry : rawPriceDataMap.entrySet()) {
+                    String symbol = entry.getKey();
+                    double[] vals = entry.getValue();
+                    tickerListener.onTickerUpdate(symbol, vals[0], vals[1]);
+                }
+            }
+            return START_STICKY;
+        }
         
         return START_STICKY;
     }
@@ -295,6 +310,9 @@ public class FloatingWindowService extends Service {
                     formatPrice(closePrice), 
                     String.format("%.2f", changePercent)
                 });
+                
+                // Store raw data for replay
+                rawPriceDataMap.put(symbol, new double[]{closePrice, changePercent});
                 
                 // Notify static listener (Plugin) about ticker update
                 if (tickerListener != null) {

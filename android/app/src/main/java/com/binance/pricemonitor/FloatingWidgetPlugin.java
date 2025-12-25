@@ -138,6 +138,22 @@ public class FloatingWidgetPlugin extends Plugin {
     }
 
 
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void requestTickerUpdate(PluginCall call) {
+        Context context = getContext();
+        Intent intent = new Intent(context, FloatingWindowService.class);
+        intent.setAction(FloatingWindowService.ACTION_REQUEST_UPDATE);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent);
+        } else {
+            context.startService(intent);
+        }
+        call.resolve();
+    }
+
     @PluginMethod
     public void updateConfig(PluginCall call) {
         float fontSize = call.getFloat("fontSize", 14f);
