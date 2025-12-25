@@ -11,6 +11,18 @@ const FIB_RATIOS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
 let idCounter = 0;
 const genId = (type) => `${type[0]}${++idCounter}`;
 
+// Helper to parse interval to seconds
+const parseInterval = (int) => {
+    if (!int) return 60;
+    const unit = int.slice(-1);
+    const val = parseInt(int);
+    if (unit === 'm') return val * 60;
+    if (unit === 'h') return val * 3600;
+    if (unit === 'd') return val * 86400;
+    if (unit === 'w') return val * 604800;
+    return 60;
+};
+
 export default function ChartPage() {
     const { symbol } = useParams();
     const navigate = useNavigate();
@@ -508,17 +520,7 @@ export default function ChartPage() {
         };
     }, [symbol, interval]);
 
-    // Helper to parse interval to seconds
-    const parseInterval = (int) => {
-        if (!int) return 60;
-        const unit = int.slice(-1);
-        const val = parseInt(int);
-        if (unit === 'm') return val * 60;
-        if (unit === 'h') return val * 3600;
-        if (unit === 'd') return val * 86400;
-        if (unit === 'w') return val * 604800;
-        return 60;
-    };
+
 
     // Helpers for Time <-> Logic interpolation
     const getLogicFromTime = (time) => {
@@ -877,9 +879,9 @@ export default function ChartPage() {
                     // Mini Toolbar
                     return (
                         <div className="mini-toolbar" style={{
-                            position: 'fixed',
-                            left: Math.min(menu.x, window.innerWidth - 120),
-                            top: Math.min(menu.y, window.innerHeight - 50),
+                            position: 'absolute',
+                            left: 10,
+                            top: 40,
                             background: '#1e222d', border: '1px solid #2a2e39', borderRadius: '30px',
                             padding: '8px 16px', display: 'flex', gap: '16px', zIndex: 100,
                             boxShadow: '0 4px 12px rgba(0,0,0,0.5)', alignItems: 'center'
