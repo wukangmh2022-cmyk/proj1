@@ -138,8 +138,7 @@ public class FloatingWidgetPlugin extends Plugin {
     }
 
 
-        call.resolve();
-    }
+
 
     @PluginMethod
     public void requestTickerUpdate(PluginCall call) {
