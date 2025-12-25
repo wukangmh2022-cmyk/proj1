@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
-import { createChart, CandlestickSeries, LineSeries } from 'lightweight-charts';
+import { createChart, CandlestickSeries, LineSeries, HistogramSeries } from 'lightweight-charts';
 import '../App.css';
 
 const DRAW_MODES = { NONE: 'none', TRENDLINE: 'trendline', CHANNEL: 'channel', RECT: 'rect', HLINE: 'hline', FIB: 'fib' };
@@ -49,10 +49,11 @@ export default function ChartPage() {
         ma1: { name: 'MA', period: 7, color: '#fcd535', width: 1, visible: true },
         ma2: { name: 'MA', period: 25, color: '#ff9f43', width: 1, visible: true },
         ma3: { name: 'MA', period: 99, color: '#a855f7', width: 1, visible: true },
+        vol: { name: 'VOL', period: 20, color: '#26a69a', downColor: '#ef5350', visible: true },
     };
     const [indicators, setIndicators] = useState(() => {
         const saved = localStorage.getItem(`chart_indicators_v2_${symbol}`);
-        return saved ? JSON.parse(saved) : DEFAULT_INDICATORS;
+        return saved ? { ...DEFAULT_INDICATORS, ...JSON.parse(saved) } : DEFAULT_INDICATORS;
     });
     const indicatorsRef = useRef(indicators); // Sync ref for callbacks
 
@@ -120,33 +121,86 @@ export default function ChartPage() {
     const handleDragStart = (e, id, index) => {
         e.stopPropagation();
         e.preventDefault();
-        setDragState({ id, index });
+
+        if (!chartRef.current || !seriesRef.current || !containerRef.current) return;
+
+        const rect = containerRef.current.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+
+        const mouseLogic = chartRef.current.timeScale().coordinateToLogical(mouseX);
+        const mousePrice = seriesRef.current.coordinateToPrice(mouseY);
+
+        if (mouseLogic === null || mousePrice === null) {
+            setDragState({ id, index, logicOffset: 0, priceOffset: 0 });
+            return;
+        }
+
+        const drawing = drawings.find(d => d.id === id);
+        if (!drawing) return;
+
+        const point = drawing.points[index];
+        const pointLogic = getLogic(point.time);
+
+        const logicOffset = (pointLogic !== null) ? pointLogic - mouseLogic : 0;
+        const priceOffset = point.price - mousePrice;
+
+        setDragState({ id, index, logicOffset, priceOffset });
     };
+
+    const rafRef = useRef(null);
 
     useEffect(() => {
         const move = (e) => {
-            if (!dragState || !containerRef.current || !chartRef.current || !seriesRef.current) return;
-            const rect = containerRef.current.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
+            if (!dragState || !containerRef.current) return;
 
-            const logic = chartRef.current.timeScale().coordinateToLogical(x);
-            const price = seriesRef.current.coordinateToPrice(y);
+            // Extract coordinates synchronously
+            const clientX = e.clientX;
+            const clientY = e.clientY;
 
-            if (logic === null || price === null) return;
-            const time = getTime(logic);
+            // Throttle: Only schedule if no frame is pending
+            if (rafRef.current) return;
 
-            setDrawings(prev => prev.map(d => {
-                if (d.id !== dragState.id) return d;
-                if (d.type === 'hline') return { ...d, price };
-                const newPoints = [...d.points];
-                if (newPoints[dragState.index]) {
-                    newPoints[dragState.index] = { ...newPoints[dragState.index], time, price };
-                }
-                return { ...d, points: newPoints };
-            }));
+            rafRef.current = requestAnimationFrame(() => {
+                rafRef.current = null; // Reset lock
+
+                if (!containerRef.current || !chartRef.current || !seriesRef.current) return;
+                const rect = containerRef.current.getBoundingClientRect();
+                const x = clientX - rect.left;
+                const y = clientY - rect.top;
+
+                const rawLogic = chartRef.current.timeScale().coordinateToLogical(x);
+                const rawPrice = seriesRef.current.coordinateToPrice(y);
+
+                if (rawLogic === null || rawPrice === null) return;
+
+                const targetLogic = rawLogic + (dragState.logicOffset || 0);
+                const targetPrice = rawPrice + (dragState.priceOffset || 0);
+
+                const time = getTime(targetLogic);
+
+                setDrawings(prev => prev.map(d => {
+                    if (d.id !== dragState.id) return d;
+                    // For HLine, only price matters
+                    if (d.type === 'hline') return { ...d, price: targetPrice };
+
+                    const newPoints = [...d.points];
+                    if (newPoints[dragState.index]) {
+                        // Update specific point
+                        newPoints[dragState.index] = { ...newPoints[dragState.index], time, price: targetPrice };
+                    }
+                    return { ...d, points: newPoints };
+                }));
+            });
         };
-        const up = () => setDragState(null);
+        const up = () => {
+            setDragState(null);
+            if (rafRef.current) {
+                cancelAnimationFrame(rafRef.current);
+                rafRef.current = null;
+            }
+        };
+
         if (dragState) {
             window.addEventListener('pointermove', move);
             window.addEventListener('pointerup', up);
@@ -154,6 +208,10 @@ export default function ChartPage() {
         return () => {
             window.removeEventListener('pointermove', move);
             window.removeEventListener('pointerup', up);
+            if (rafRef.current) {
+                cancelAnimationFrame(rafRef.current);
+                rafRef.current = null;
+            }
         };
     }, [dragState, getTime]);
     const pendingPointsRef = useRef([]);
@@ -355,8 +413,10 @@ export default function ChartPage() {
             grid: { vertLines: { color: 'rgba(255,255,255,0.05)' }, horzLines: { color: 'rgba(255,255,255,0.05)' } },
             crosshair: { mode: 1 },
             rightPriceScale: { borderColor: 'rgba(255,255,255,0.1)' },
-            timeScale: { borderColor: 'rgba(255,255,255,0.1)', timeVisible: true }
+            timeScale: { borderColor: 'rgba(255,255,255,0.1)', timeVisible: true },
         });
+
+        // Removed premature config
         const series = chart.addSeries(CandlestickSeries, {
             upColor: '#00d68f', downColor: '#ff4757', borderDownColor: '#ff4757',
             borderUpColor: '#00d68f', wickDownColor: '#ff4757', wickUpColor: '#00d68f'
@@ -364,7 +424,21 @@ export default function ChartPage() {
 
         // Add Indicator Series
         Object.entries(indicators).forEach(([key, cfg]) => {
-            const s = chart.addSeries(LineSeries, { color: cfg.color, lineWidth: cfg.width, visible: cfg.visible, crosshairMarkerVisible: false });
+            let s;
+            if (key === 'vol') {
+                s = chart.addSeries(HistogramSeries, {
+                    color: cfg.color,
+                    priceFormat: { type: 'volume' },
+                    priceScaleId: 'vol',
+                    visible: cfg.visible,
+                });
+                chart.priceScale('vol').applyOptions({
+                    scaleMargins: { top: 0.8, bottom: 0 },
+                    borderVisible: false,
+                });
+            } else {
+                s = chart.addSeries(LineSeries, { color: cfg.color, lineWidth: cfg.width, visible: cfg.visible, crosshairMarkerVisible: false });
+            }
             maSeriesRefs.current[key] = s;
         });
 
@@ -375,6 +449,9 @@ export default function ChartPage() {
         chart.subscribeCrosshairMove((p) => {
             if (!p.point) { setCursor(null); setLegendValues({}); return; }
             const price = series.coordinateToPrice(p.point.y);
+            // Default volume to empty if not found, but we can't get it from coordinateToPrice easily
+            // We rely on seriesData
+
             const c = { x: p.point.x, y: p.point.y, price, time: p.time };
             setCursor(c);
             lastCursorRef.current = c;
@@ -435,8 +512,18 @@ export default function ChartPage() {
         Object.entries(indicatorsRef.current).forEach(([key, cfg]) => {
             if (maSeriesRefs.current[key]) {
                 const s = maSeriesRefs.current[key];
-                s.applyOptions({ color: cfg.color, lineWidth: cfg.width, visible: cfg.visible });
-                s.setData(calSMA(data, cfg.period));
+                if (key === 'vol') {
+                    s.applyOptions({ visible: cfg.visible });
+                    const volData = data.map(d => ({
+                        time: d.time,
+                        value: d.volume,
+                        color: d.close >= d.open ? '#26a69a' : '#ef5350'
+                    }));
+                    s.setData(volData);
+                } else {
+                    s.applyOptions({ color: cfg.color, lineWidth: cfg.width, visible: cfg.visible });
+                    s.setData(calSMA(data, cfg.period));
+                }
             }
         });
     };
@@ -455,7 +542,7 @@ export default function ChartPage() {
             try {
                 const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=500`);
                 const data = await res.json();
-                const formatted = data.map(d => ({ time: d[0] / 1000, open: +d[1], high: +d[2], low: +d[3], close: +d[4] }));
+                const formatted = data.map(d => ({ time: d[0] / 1000, open: +d[1], high: +d[2], low: +d[3], close: +d[4], volume: +d[5] }));
                 allDataRef.current = formatted;
                 seriesRef.current.setData(formatted);
                 updateIndicators(formatted);
@@ -473,7 +560,7 @@ export default function ChartPage() {
 
             const m = JSON.parse(e.data);
             if (m.k) {
-                const k = { time: m.k.t / 1000, open: +m.k.o, high: +m.k.h, low: +m.k.l, close: +m.k.c };
+                const k = { time: m.k.t / 1000, open: +m.k.o, high: +m.k.h, low: +m.k.l, close: +m.k.c, volume: +m.k.v };
                 seriesRef.current.update(k);
                 // Sync allDataRef
                 const last = allDataRef.current[allDataRef.current.length - 1];
@@ -495,7 +582,7 @@ export default function ChartPage() {
                     const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=500&endTime=${oldestTime - 1}`);
                     const raw = await res.json();
                     if (Array.isArray(raw) && raw.length > 0) {
-                        const newData = raw.map(d => ({ time: d[0] / 1000, open: +d[1], high: +d[2], low: +d[3], close: +d[4] }));
+                        const newData = raw.map(d => ({ time: d[0] / 1000, open: +d[1], high: +d[2], low: +d[3], close: +d[4], volume: +d[5] }));
                         // Filter to avoid overlaps
                         const uniqueNew = newData.filter(d => d.time < allDataRef.current[0].time);
                         if (uniqueNew.length > 0) {
@@ -707,9 +794,9 @@ export default function ChartPage() {
                 <line x1={p1.x} y1={p1.y} x2={lx2} y2={ly2} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
 
                 {/* Main line */}
-                <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke={color} strokeWidth={sel ? 3 : 2} pointerEvents="none" />
+                <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke={color} strokeWidth={sel ? (d.width || 2) + 1 : (d.width || 2)} pointerEvents="none" />
                 {/* Parallel line */}
-                <line x1={lx1} y1={ly1} x2={lx2} y2={ly2} stroke={color} strokeWidth={sel ? 3 : 2} pointerEvents="none" />
+                <line x1={lx1} y1={ly1} x2={lx2} y2={ly2} stroke={color} strokeWidth={sel ? (d.width || 2) + 1 : (d.width || 2)} pointerEvents="none" />
                 {/* Center dotted line */}
                 <line x1={(p0.x + lx1) / 2} y1={(p0.y + ly1) / 2} x2={(p1.x + lx2) / 2} y2={(p1.y + ly2) / 2} stroke={color} strokeWidth="1" strokeDasharray="4,2" pointerEvents="none" />
                 {/* Connector dotted lines */}
@@ -733,12 +820,15 @@ export default function ChartPage() {
                     const fy1 = p0.y + shiftY * r;
                     const fx2 = p1.x + shiftX * r;
                     const fy2 = p1.y + shiftY * r;
+                    // Custom Fib Color
+                    const levelColor = (d.fibColors && d.fibColors[r]) ? d.fibColors[r] : color;
+
                     return (<g key={i}>
                         {/* Hit Area */}
                         <line x1={fx1} y1={fy1} x2={fx2} y2={fy2} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
                         {/* Visual */}
-                        <line x1={fx1} y1={fy1} x2={fx2} y2={fy2} stroke={color} strokeWidth={sel ? 2 : 1} opacity={sel ? 1 : 0.8} pointerEvents="none" />
-                        <text x={fx2 + 5} y={fy2} fill={color} fontSize="9" pointerEvents="none">{r}</text>
+                        <line x1={fx1} y1={fy1} x2={fx2} y2={fy2} stroke={levelColor} strokeWidth={sel ? (d.width || 1) + 1 : (d.width || 1)} opacity={sel ? 1 : 0.8} pointerEvents="none" />
+                        <text x={fx2 + 5} y={fy2} fill={levelColor} fontSize="9" pointerEvents="none">{r}</text>
                     </g>);
                 })}
                 {/* Trendline (Diagonal) */}
@@ -857,7 +947,7 @@ export default function ChartPage() {
                                     ) : (
                                         <>
                                             <div className="menu-row">
-                                                <label>颜色</label>
+                                                <label>主色</label>
                                                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                                                     {['#fcd535', '#ff9f43', '#a855f7', '#00d68f', '#ff4757', '#3b82f6', '#ffffff'].map(c => (
                                                         <div key={c} onClick={() => setDrawings(p => p.map(d => d.id === targetId ? { ...d, color: c } : d))}
@@ -865,6 +955,46 @@ export default function ChartPage() {
                                                     ))}
                                                 </div>
                                             </div>
+                                            <div className="menu-row">
+                                                <label>线宽</label>
+                                                <div style={{ display: 'flex', gap: 8 }}>
+                                                    {[1, 2, 3, 4].map(w => (
+                                                        <div key={w} onClick={() => setDrawings(p => p.map(d => d.id === targetId ? { ...d, width: w } : d))}
+                                                            style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', background: (drawings.find(d => d.id === targetId)?.width || 2) === w ? '#2a2e39' : 'transparent', cursor: 'pointer', border: '1px solid #444', borderRadius: 4 }}>
+                                                            <div style={{ height: w, width: 20, background: '#888' }}></div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                            {drawings.find(d => d.id === targetId)?.type === 'fib' && (
+                                                <div style={{ marginTop: 8 }}>
+                                                    <label style={{ fontSize: 12, color: '#888', marginBottom: 4, display: 'block' }}>Fib 分层颜色</label>
+                                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+                                                        {FIB_RATIOS.map(r => {
+                                                            const d = drawings.find(dd => dd.id === targetId);
+                                                            const c = (d.fibColors && d.fibColors[r]) ? d.fibColors[r] : d.color; // Fallback to main color
+                                                            return (
+                                                                <div key={r} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, background: '#2a2e39', padding: 4, borderRadius: 4 }}>
+                                                                    <span style={{ fontSize: 10, color: '#aaa' }}>{r}</span>
+                                                                    <div style={{ position: 'relative', width: 20, height: 20 }}>
+                                                                        <input type="color" value={c}
+                                                                            onChange={(e) => {
+                                                                                const newC = e.target.value;
+                                                                                setDrawings(prev => prev.map(dd => {
+                                                                                    if (dd.id !== targetId) return dd;
+                                                                                    return { ...dd, fibColors: { ...(dd.fibColors || {}), [r]: newC } };
+                                                                                }));
+                                                                            }}
+                                                                            style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }}
+                                                                        />
+                                                                        <div style={{ width: '100%', height: '100%', borderRadius: '50%', background: c, border: '1px solid #fff' }} />
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </div>
+                                            )}
                                         </>
                                     )}
 
@@ -980,7 +1110,7 @@ export default function ChartPage() {
                                     {/* Hit Area */}
                                     <line x1={0} y1={d.screenY} x2="100%" y2={d.screenY} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
                                     {/* Visible */}
-                                    <line x1={0} y1={d.screenY} x2="100%" y2={d.screenY} stroke={color} strokeWidth={sel ? 3 : 2} pointerEvents="none" />
+                                    <line x1={0} y1={d.screenY} x2="100%" y2={d.screenY} stroke={color} strokeWidth={sel ? (d.width || 2) + 1 : (d.width || 2)} pointerEvents="none" />
                                     <text x={5} y={d.screenY - 5} fill={color} fontSize="10" pointerEvents="none">{d.id}</text>
                                     {sel && <circle cx={(containerRef.current?.clientWidth || 300) / 2} cy={d.screenY} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="ns-resize" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 0)} />}
                                 </g>
@@ -992,7 +1122,7 @@ export default function ChartPage() {
                                         {/* Hit Area */}
                                         <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
                                         {/* Visible */}
-                                        <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke={color} strokeWidth={sel ? 3 : 2} pointerEvents="none" />
+                                        <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke={color} strokeWidth={sel ? (d.width || 2) + 1 : (d.width || 2)} pointerEvents="none" />
                                         {sel && <><circle cx={p1.x} cy={p1.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 0)} /><circle cx={p2.x} cy={p2.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 1)} /></>}
                                         <text x={(p1.x + p2.x) / 2} y={(p1.y + p2.y) / 2 - 5} fill={color} fontSize="10" textAnchor="middle" pointerEvents="none">{d.id}</text>
                                     </g>
@@ -1005,7 +1135,7 @@ export default function ChartPage() {
                                 const h = Math.abs(p2.y - p1.y);
                                 return (
                                     <g key={d.id}>
-                                        <rect x={x} y={y} width={w} height={h} fill={`${color}20`} stroke={color} strokeWidth={sel ? 3 : 2} pointerEvents="all" cursor="pointer" {...handlers} />
+                                        <rect x={x} y={y} width={w} height={h} fill={`${color}20`} stroke={color} strokeWidth={sel ? (d.width || 2) + 1 : (d.width || 2)} pointerEvents="all" cursor="pointer" {...handlers} />
                                         {sel && <><circle cx={p1.x} cy={p1.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 0)} /><circle cx={p2.x} cy={p2.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 1)} /></>}
                                         <text x={x + 5} y={y - 5} fill={color} fontSize="10" pointerEvents="none">{d.id}</text>
                                     </g>
@@ -1042,7 +1172,6 @@ export default function ChartPage() {
                 ))}
                 {selectedId && <button onClick={deleteSelected} style={{ color: '#ff4757' }}>🗑</button>}
                 {drawings.length > 0 && !selectedId && <button onClick={clearAll} style={{ color: '#ff4757', opacity: 0.6 }}>🗑</button>}
-                {inDrawMode && <span style={{ color: '#fcd535', fontSize: '11px', marginLeft: '6px' }}>点击确定 {pendingPoints.length + 1}/{currentNeeded}</span>}
                 {selectedId && <span style={{ color: '#00d68f', fontSize: '11px', marginLeft: '6px' }}>{selectedId}</span>}
             </div>
         </div>
