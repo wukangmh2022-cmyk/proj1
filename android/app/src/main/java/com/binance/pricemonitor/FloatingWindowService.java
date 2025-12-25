@@ -462,9 +462,24 @@ public class FloatingWindowService extends Service {
     private java.util.Map<String, java.util.List<Double>> candleHistory = new java.util.concurrent.ConcurrentHashMap<>();
     private java.util.Map<String, Long> lastCandleTime = new java.util.concurrent.ConcurrentHashMap<>();
     private java.util.Set<String> triggeredAlerts = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+    // Map to track start time of delayed alerts: <AlertID, StartTimestampMS>
+    private java.util.Map<String, Long> pendingDelayAlerts = new java.util.concurrent.ConcurrentHashMap<>();
     
     // Alert configuration class
     public static class AlertConfig {
+        public String id;
+        public String symbol;
+        public String targetType;
+        public double target;
+        public String targetValue;
+        public String condition;
+        public String confirmation;
+        public String interval;
+        public int delaySeconds; // Field for time delay
+        
+        public String algo;
+        public java.util.Map<String, Object> params;
+        
         public boolean active;
     }
     
@@ -647,7 +662,30 @@ public class FloatingWindowService extends Service {
             }
             
             if (conditionMet) {
-                triggerAlert(alert, close, triggerTarget);
+                // Handle Confirmation Mode
+                if ("time_delay".equals(alert.confirmation) && alert.delaySeconds > 0) {
+                    long now = System.currentTimeMillis();
+                    if (!pendingDelayAlerts.containsKey(alert.id)) {
+                        // First time condition met: Start timer
+                        pendingDelayAlerts.put(alert.id, now);
+                    } else {
+                        // Already pending: Check duration
+                        long startTime = pendingDelayAlerts.get(alert.id);
+                        if (now - startTime >= alert.delaySeconds * 1000L) {
+                            // Time up! Trigger.
+                            triggerAlert(alert, close, triggerTarget);
+                            pendingDelayAlerts.remove(alert.id);
+                        }
+                    }
+                } else {
+                    // Immediate trigger (or candle close which is already filtered)
+                    triggerAlert(alert, close, triggerTarget);
+                }
+            } else {
+                // Condition NOT met: Reset delay timer if exists
+                if (pendingDelayAlerts.containsKey(alert.id)) {
+                    pendingDelayAlerts.remove(alert.id);
+                }
             }
         }
     }
