@@ -28,6 +28,21 @@ console.log(`Channel (t=1500): Expected [150, 200]. Got: ${JSON.stringify(target
 if (targetsChannel.length === 2 && targetsChannel.includes(150) && targetsChannel.includes(200)) console.log("✅ Channel OK");
 else console.error("❌ Channel FAIL");
 
+// 3. Fibonacci Channel Test (Multi-Line: 0, 0.5, 1.0)
+// Base (0) at 150. Full Height = 100.
+// Offsets: [0, 50, 100] -> Expected [150, 200, 250]
+const fibChannelConfig = {
+    algo: "multi_ray",
+    params: {
+        t0: 1000, p0: 100, slope: 0.1,
+        offsets: [0, 50, 100]
+    }
+};
+const targetsFib = checkAlertTargets(fibChannelConfig, 1500);
+console.log(`Fib Channel (t=1500): Expected [150, 200, 250]. Got: ${JSON.stringify(targetsFib)}`);
+if (targetsFib.length === 3 && targetsFib.includes(250)) console.log("✅ Fib Channel OK");
+else console.error("❌ Fib Channel FAIL");
+
 console.log("\n=== 2. Testing Indicator Algorithms (Java Logic Simulation) ===");
 
 // Mock History: 0, 1, 2, ... 19 (20 items)

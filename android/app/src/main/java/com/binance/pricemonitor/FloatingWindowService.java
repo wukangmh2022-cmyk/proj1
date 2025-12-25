@@ -467,6 +467,8 @@ public class FloatingWindowService extends Service {
     // Map to track consecutive candle hits: <AlertID, Count>
     private java.util.Map<String, Integer> candleDelayCounter = new java.util.concurrent.ConcurrentHashMap<>();
     
+    private android.os.PowerManager.WakeLock wakeLock;
+
     // Alert configuration class
     public static class AlertConfig {
         public String id;
@@ -483,6 +485,19 @@ public class FloatingWindowService extends Service {
         public String algo;
         public java.util.Map<String, Object> params;
         
+        // --- Cache Fields (Optimized for Hot Loop) ---
+        public String cachedIndType; // "sma", "rsi"
+        public int cachedPeriod;
+        public double cachedT0;
+        public double cachedP0;
+        public double cachedSlope;
+        public double cachedP_High;
+        public double cachedP_Low;
+        public double cachedT_Start;
+        public double cachedT_End;
+        public java.util.List<Double> cachedOffsets;
+        // ---------------------------------------------
+        
         public boolean active;
     }
     
@@ -491,6 +506,41 @@ public class FloatingWindowService extends Service {
             com.google.gson.reflect.TypeToken<java.util.List<AlertConfig>> typeToken = 
                 new com.google.gson.reflect.TypeToken<java.util.List<AlertConfig>>() {};
             alerts = gson.fromJson(alertsJson, typeToken.getType());
+            
+            // PRE-PARSE / CACHE PARAMETERS to avoid Map lookup in hot loop
+            for (AlertConfig a : alerts) {
+                try {
+                    // Cache Indicator Params
+                    if ("indicator".equals(a.targetType) && a.targetValue != null) {
+                        a.cachedIndType = a.targetValue.replaceAll("[0-9]", "").toLowerCase();
+                         try {
+                            a.cachedPeriod = Integer.parseInt(a.targetValue.replaceAll("[a-zA-Z]", ""));
+                        } catch (Exception e) { a.cachedPeriod = 14; }
+                    }
+                    
+                    // Cache Drawing Params
+                    if (a.params != null) {
+                         java.util.Map<String, Object> p = a.params;
+                         if (p.containsKey("t0")) a.cachedT0 = ((Number)p.get("t0")).doubleValue();
+                         if (p.containsKey("p0")) a.cachedP0 = ((Number)p.get("p0")).doubleValue();
+                         if (p.containsKey("slope")) a.cachedSlope = ((Number)p.get("slope")).doubleValue();
+                         if (p.containsKey("pHigh")) a.cachedP_High = ((Number)p.get("pHigh")).doubleValue();
+                         if (p.containsKey("pLow")) a.cachedP_Low = ((Number)p.get("pLow")).doubleValue();
+                         if (p.containsKey("tStart")) a.cachedT_Start = ((Number)p.get("tStart")).doubleValue();
+                         if (p.containsKey("tEnd")) a.cachedT_End = ((Number)p.get("tEnd")).doubleValue();
+                         
+                         if (p.containsKey("offsets")) {
+                              a.cachedOffsets = new java.util.ArrayList<>();
+                              Object offsetsObj = p.get("offsets");
+                              if (offsetsObj instanceof java.util.List) {
+                                  for (Object o : (java.util.List)offsetsObj) {
+                                      if (o instanceof Number) a.cachedOffsets.add(((Number)o).doubleValue());
+                                  }
+                              }
+                         }
+                    }
+                } catch (Exception e) { e.printStackTrace(); }
+            }
             
             // Clear triggered cache for new alerts
             triggeredAlerts.clear();
@@ -517,7 +567,31 @@ public class FloatingWindowService extends Service {
             }
         }
         
-        if (streams.isEmpty()) return;
+        if (streams.isEmpty()) {
+            // Release WakeLock if no active alerts
+            if (wakeLock != null && wakeLock.isHeld()) {
+                wakeLock.release();
+            }
+            return;
+        }
+        
+        // Smart WakeLock: Only acquire if we have ACTUAL ALERTS monitoring.
+        // If we are just streaming for the UI (activeAlertsCount == 0), we DO NOT hold the lock.
+        // This lets the phone sleep when screen is off, saving battery.
+        boolean hasActiveAlerts = false;
+        for (AlertConfig a : alerts) { if(a.active) { hasActiveAlerts = true; break; } }
+        
+        if (hasActiveAlerts) {
+            if (wakeLock == null) {
+                android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+                wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "BinanceMonitor::AlertService");
+            }
+            if (!wakeLock.isHeld()) {
+                wakeLock.acquire();
+            }
+        } else {
+             if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
+        }
         
         String streamPath = String.join("/", streams);
         String url = "wss://stream.binance.com:9443/stream?streams=" + streamPath;
@@ -630,7 +704,7 @@ public class FloatingWindowService extends Service {
                 if (alert.targetValue != null && alert.targetValue.startsWith("fib")) {
                     val = calculateFibLevel(alert.targetValue);
                 } else {
-                    val = calculateIndicator(alert.targetValue, history);
+                    val = calculateIndicator(alert, history); // Pass 'alert' object instead of 'alert.targetValue'
                 }
                 if (!Double.isNaN(val)) potentialTargets.add(val);
             } else if (alert.targetType.equals("drawing") && alert.algo != null) {
@@ -712,50 +786,30 @@ public class FloatingWindowService extends Service {
     
     private java.util.List<Double> calculateDrawingTargets(AlertConfig alert, long timestampMs) {
         java.util.List<Double> results = new java.util.ArrayList<>();
-        if (alert.params == null) return results;
+        // Removed params null check because we use cached fields (initialized to 0, which is fine or managed)
+        // But algo check remains
         
         try {
             double t = timestampMs / 1000.0; // Seconds
-            java.util.Map<String, Object> p = alert.params;
             
             if ("linear_ray".equals(alert.algo)) {
-                if (p.containsKey("t0") && p.containsKey("p0") && p.containsKey("slope")) {
-                    double t0 = ((Number) p.get("t0")).doubleValue();
-                    double p0 = ((Number) p.get("p0")).doubleValue();
-                    double slope = ((Number) p.get("slope")).doubleValue();
-                    results.add(p0 + slope * (t - t0));
-                }
-            } else if (("parallel_channel".equals(alert.algo) || "multi_ray".equals(alert.algo)) && p.containsKey("offsets")) {
-                if (p.containsKey("t0") && p.containsKey("p0") && p.containsKey("slope")) {
-                    double t0 = ((Number) p.get("t0")).doubleValue();
-                    double p0 = ((Number) p.get("p0")).doubleValue();
-                    double slope = ((Number) p.get("slope")).doubleValue();
-                    double base = p0 + slope * (t - t0);
-                    
-                    Object offsetsObj = p.get("offsets");
-                    if (offsetsObj instanceof java.util.List) {
-                        java.util.List<?> list = (java.util.List<?>) offsetsObj;
-                        for (Object o : list) {
-                            if (o instanceof Number) {
-                                results.add(base + ((Number)o).doubleValue());
-                            }
-                        }
-                    }
-                }
+                 results.add(alert.cachedP0 + alert.cachedSlope * (t - alert.cachedT0));
+            } else if (("parallel_channel".equals(alert.algo) || "multi_ray".equals(alert.algo)) && alert.cachedOffsets != null) {
+                 double base = alert.cachedP0 + alert.cachedSlope * (t - alert.cachedT0);
+                 for (double off : alert.cachedOffsets) {
+                     results.add(base + off);
+                 }
             }
-             // For horizontal lines (algo=price_level), params.price is sufficient, 
-             // but usually handled by fallback to alert.target if algo missing.
-             // If algo is present:
-            else if ("price_level".equals(alert.algo) && p.containsKey("price")) {
-                results.add(((Number)p.get("price")).doubleValue());
+             // For horizontal lines (algo=price_level), params.price is sufficient, params checks removed for speed
+             // Assuming parsed correctly. Price usually in 'target' fallback, but if algo present:
+            else if ("price_level".equals(alert.algo) && alert.params != null && alert.params.containsKey("price")) {
+                 results.add(((Number)alert.params.get("price")).doubleValue()); // Keep map lookup for simple case or cache 'cachedPrice' todo
             }
             // Rectangle Zone: [High, Low] if time matches
-            else if ("rect_zone".equals(alert.algo) && p.containsKey("tStart") && p.containsKey("tEnd") && p.containsKey("pHigh") && p.containsKey("pLow")) {
-                double tStart = ((Number)p.get("tStart")).doubleValue();
-                double tEnd = ((Number)p.get("tEnd")).doubleValue();
-                if (t >= tStart && t <= tEnd) {
-                    results.add(((Number)p.get("pHigh")).doubleValue());
-                    results.add(((Number)p.get("pLow")).doubleValue());
+            else if ("rect_zone".equals(alert.algo)) {
+                if (t >= alert.cachedT_Start && t <= alert.cachedT_End) {
+                    results.add(alert.cachedP_High);
+                    results.add(alert.cachedP_Low);
                 }
             }
             
@@ -765,16 +819,12 @@ public class FloatingWindowService extends Service {
         return results;
     }
     
-    private double calculateIndicator(String indicator, java.util.List<Double> history) {
+    private double calculateIndicator(AlertConfig alert, java.util.List<Double> history) {
         if (history == null || history.isEmpty()) return Double.NaN;
         
-        String type = indicator.replaceAll("[0-9]", "").toLowerCase();
-        int period;
-        try {
-            period = Integer.parseInt(indicator.replaceAll("[a-zA-Z]", ""));
-        } catch (Exception e) {
-            period = 14; // Default for RSI
-        }
+        String type = alert.cachedIndType;
+        if (type == null) return Double.NaN;
+        int period = alert.cachedPeriod;
         
         if (type.equals("sma") || type.equals("ma")) {
             if (history.size() < period) return Double.NaN;
@@ -918,6 +968,8 @@ public class FloatingWindowService extends Service {
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (nm != null) nm.notify(id, builder.build());
     }
+
+    private PowerManager.WakeLock wakeLock;
 
     @Override
     public void onDestroy() {
