@@ -123,6 +123,7 @@ export default function ChartPage() {
     // Drag Logic
     const [dragState, setDragState] = useState(null); // { id, index }
     const [activeHandle, setActiveHandle] = useState(null); // { id, index } - For Indirect Drag
+    const [subMenuPos, setSubMenuPos] = useState(null); // { x, y, isBottom }
 
     // Disable Chart Scroll/Scale when Active Handle is set
     useEffect(() => {
@@ -1463,33 +1464,30 @@ export default function ChartPage() {
 
             <div className="drawing-toolbar">
                 <div style={{ position: 'relative' }}>
-                    <button className={subIndicator !== 'NONE' ? 'active' : ''} onClick={(e) => { e.stopPropagation(); setShowSubMenu(p => !p); }} style={{ fontSize: '13px', fontWeight: 'bold' }}>
+                    <button className={subIndicator !== 'NONE' ? 'active' : ''}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            if (showSubMenu) {
+                                setShowSubMenu(false);
+                            } else {
+                                const rect = e.currentTarget.getBoundingClientRect();
+                                // Smart positioning: if button is in lower half, open UP. Else open DOWN.
+                                const isBottom = rect.top > window.innerHeight / 2;
+                                setSubMenuPos({
+                                    x: rect.left + (rect.width / 2),
+                                    y: isBottom ? rect.top - 10 : rect.bottom + 10,
+                                    isBottom
+                                });
+                                setShowSubMenu(true);
+                            }
+                        }}
+                        style={{ fontSize: '13px', fontWeight: 'bold' }}>
                         {subIndicator !== 'NONE' ? subIndicator : (
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                 <path d="M2 12c3.5-6 7-6 10 0s6.5 6 10 0" />
                             </svg>
                         )}
                     </button>
-                    {showSubMenu && (
-                        <div style={{
-                            position: 'absolute', bottom: '50px', left: '50%', transform: 'translateX(-50%)',
-                            background: '#1e222d', border: '1px solid #2a2e39', borderRadius: '8px',
-                            padding: '4px', display: 'flex', flexDirection: 'column', gap: '4px',
-                            boxShadow: '0 4px 12px rgba(0,0,0,0.5)', zIndex: 100, minWidth: '80px'
-                        }}>
-                            {['NONE', 'RSI', 'MACD', 'KDJ'].map(type => (
-                                <button key={type}
-                                    onClick={(e) => { e.stopPropagation(); setSubIndicator(type); setShowSubMenu(false); }}
-                                    style={{
-                                        background: subIndicator === type ? '#2a2e39' : 'transparent',
-                                        border: 'none', color: subIndicator === type ? '#fcd535' : '#ccc',
-                                        padding: '8px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', textAlign: 'left'
-                                    }}>
-                                    {type === 'NONE' ? '无' : type}
-                                </button>
-                            ))}
-                        </div>
-                    )}
                 </div>
                 {/* Removed extra spacing div */}
                 {['hline', 'trendline', 'channel', 'fib', 'rect'].map(t => (
@@ -1507,6 +1505,32 @@ export default function ChartPage() {
                 {drawings.length > 0 && !selectedId && <button onClick={clearAll} style={{ color: '#ff4757', opacity: 0.6 }}>🗑</button>}
                 {selectedId && <span style={{ color: '#00d68f', fontSize: '11px', marginLeft: '6px' }}>{selectedId}</span>}
             </div>
+
+            {/* Sub Indicator Menu (Fixed Global Position) */}
+            {showSubMenu && subMenuPos && (
+                <div style={{
+                    position: 'fixed',
+                    top: subMenuPos.isBottom ? 'auto' : subMenuPos.y,
+                    bottom: subMenuPos.isBottom ? (window.innerHeight - subMenuPos.y) : 'auto',
+                    left: subMenuPos.x,
+                    transform: 'translateX(-50%)',
+                    background: '#1e222d', border: '1px solid #2a2e39', borderRadius: '8px',
+                    padding: '4px', display: 'flex', flexDirection: 'column', gap: '4px',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.5)', zIndex: 9999, minWidth: '80px'
+                }} onClick={(e) => e.stopPropagation()}>
+                    {['NONE', 'RSI', 'MACD', 'KDJ'].map(type => (
+                        <button key={type}
+                            onClick={(e) => { e.stopPropagation(); setSubIndicator(type); setShowSubMenu(false); }}
+                            style={{
+                                background: subIndicator === type ? '#2a2e39' : 'transparent',
+                                border: 'none', color: subIndicator === type ? '#fcd535' : '#ccc',
+                                padding: '8px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', textAlign: 'left'
+                            }}>
+                            {type === 'NONE' ? '无' : type}
+                        </button>
+                    ))}
+                </div>
+            )}
         </div>
     );
 }
