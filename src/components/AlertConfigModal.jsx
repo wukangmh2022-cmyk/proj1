@@ -15,6 +15,9 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
     const [sliderVal, setSliderVal] = useState(0); // 0-100 linear state for slider
     const [delayCandles, setDelayCandles] = useState(0);
     const [soundId, setSoundId] = useState(1); // Default Sound 1
+    const [soundRepeat, setSoundRepeat] = useState('once'); // 'once' | 'loop'
+    const [soundDuration, setSoundDuration] = useState(10); // Seconds (Total loop time)
+    const [loopPause, setLoopPause] = useState(1); // Seconds (Pause between loops)
 
     const [actions, setActions] = useState({
         toast: true,
@@ -24,7 +27,6 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
 
     const [activeTab, setActiveTab] = useState('new');
     const [myAlerts, setMyAlerts] = useState([]);
-    const [history, setHistory] = useState([]);
     const [editId, setEditId] = useState(null);
 
     // Drawings
@@ -82,6 +84,9 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
         setDelayCandles(alert.delayCandles || 0);
         setDelayCandles(alert.delayCandles || 0);
         setSoundId(alert.soundId || 1);
+        setSoundRepeat(alert.soundRepeat || 'once');
+        setSoundDuration(alert.soundDuration || 10);
+        setLoopPause(alert.loopPause || 1);
         setActions(alert.actions);
         setActiveTab('new');
     };
@@ -132,6 +137,9 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
             delaySeconds: confirmation === 'time_delay' ? parseInt(delay) : 0,
             delayCandles: confirmation === 'candle_delay' ? parseInt(delayCandles) : 0,
             soundId: parseInt(soundId),
+            soundRepeat,
+            soundDuration: parseInt(soundDuration),
+            loopPause: parseInt(loopPause),
             actions,
             active: true,
             createdAt: editId ? (myAlerts.find(a => a.id === editId)?.createdAt || Date.now()) : Date.now()
@@ -471,6 +479,50 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                                             <option value="10">Attention</option>
                                         </select>
                                     </div>
+
+                                    {/* Advanced Sound Config */}
+                                    {parseInt(soundId) > 0 && (
+                                        <div className="sub-option" style={{ marginTop: '8px', paddingLeft: '8px', borderLeft: '2px solid #333' }}>
+                                            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '8px' }}>
+                                                <label style={{ fontSize: '0.9em', color: '#888' }}>模式:</label>
+                                                <div className="toggle-group">
+                                                    <button
+                                                        className={soundRepeat === 'once' ? 'active' : ''}
+                                                        onClick={() => setSoundRepeat('once')}
+                                                        style={{ padding: '4px 8px', fontSize: '0.85em' }}
+                                                    >单次</button>
+                                                    <button
+                                                        className={soundRepeat === 'loop' ? 'active' : ''}
+                                                        onClick={() => setSoundRepeat('loop')}
+                                                        style={{ padding: '4px 8px', fontSize: '0.85em' }}
+                                                    >循环</button>
+                                                </div>
+                                            </div>
+
+                                            {soundRepeat === 'loop' && (
+                                                <>
+                                                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                                        <label style={{ fontSize: '0.9em', color: '#888', minWidth: '40px' }}>总长:</label>
+                                                        <input
+                                                            type="range" min="5" max="60" step="5"
+                                                            value={soundDuration} onChange={e => setSoundDuration(e.target.value)}
+                                                            style={{ flex: 1 }}
+                                                        />
+                                                        <span style={{ fontSize: '0.85em', width: '3em', textAlign: 'right' }}>{soundDuration}s</span>
+                                                    </div>
+                                                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px' }}>
+                                                        <label style={{ fontSize: '0.9em', color: '#888', minWidth: '40px' }}>间隔:</label>
+                                                        <input
+                                                            type="range" min="0" max="5" step="1"
+                                                            value={loopPause} onChange={e => setLoopPause(e.target.value)}
+                                                            style={{ flex: 1 }}
+                                                        />
+                                                        <span style={{ fontSize: '0.85em', width: '3em', textAlign: 'right' }}>{loopPause}s</span>
+                                                    </div>
+                                                </>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                                 <div className="vibration-row">
                                     <label>震动:</label>

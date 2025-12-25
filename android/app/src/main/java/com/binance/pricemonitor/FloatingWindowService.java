@@ -481,7 +481,10 @@ public class FloatingWindowService extends Service {
         public String interval;
         public int delaySeconds; // Field for time delay
         public int delayCandles; // Field for K-line delay
-        public int soundId; // 0-9 for MIDI-like tones
+        public int soundId; // 0-9 for MIDI-like tones, Default 1
+        public String soundRepeat; // "once" | "loop"
+        public int soundDuration; // Max duration in seconds
+        public int loopPause; // Pause in seconds
         
         public String algo;
         public java.util.Map<String, Object> params;
