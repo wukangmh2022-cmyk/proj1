@@ -47,7 +47,7 @@ public class FloatingWindowService extends Service {
     public static final String ACTION_SET_SYMBOLS = "SET_SYMBOLS";
     public static final String ACTION_START_DATA = "START_DATA"; // Start WS without showing window
     public static final String ACTION_SHOW_WINDOW = "SHOW_WINDOW";
-    public static final String ACTION_SHOW_WINDOW = "SHOW_WINDOW";
+
     public static final String ACTION_HIDE_WINDOW = "HIDE_WINDOW";
     public static final String ACTION_REQUEST_UPDATE = "REQUEST_UPDATE"; // New action for immediate data
     
