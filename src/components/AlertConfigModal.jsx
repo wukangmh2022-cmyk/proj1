@@ -125,9 +125,9 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
             targetValue: finalTargetValue,
             condition: direction,
             confirmation,
-            interval: confirmation === 'candle_close' || targetType === 'indicator' ? interval : null,
+            interval: (confirmation === 'candle_close' || confirmation === 'candle_delay' || targetType === 'indicator') ? interval : '1m',
             delaySeconds: confirmation === 'time_delay' ? parseInt(delay) : 0,
-            delayCandles: confirmation === 'candle_close' ? parseInt(delayCandles) : 0,
+            delayCandles: confirmation === 'candle_delay' ? parseInt(delayCandles) : 0,
             actions,
             active: true,
             createdAt: editId ? (myAlerts.find(a => a.id === editId)?.createdAt || Date.now()) : Date.now()
@@ -361,10 +361,13 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                                     <button className={confirmation === 'candle_close' ? 'active' : ''} onClick={() => setConfirmation('candle_close')}>
                                         🕯️ K线确认 <span className="hint">收盘确认</span>
                                     </button>
+                                    <button className={confirmation === 'candle_delay' ? 'active' : ''} onClick={() => setConfirmation('candle_delay')}>
+                                        🔢 延迟K线 <span className="hint">连续N根</span>
+                                    </button>
                                 </div>
 
                                 {/* Sub-options */}
-                                {(confirmation === 'candle_close' || targetType === 'indicator') && (
+                                {(confirmation === 'candle_close' || confirmation === 'candle_delay' || targetType === 'indicator') && (
                                     <div className="sub-option">
                                         <label>K线周期</label>
                                         <select value={interval} onChange={e => setInterval(e.target.value)}>
@@ -375,6 +378,20 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                                             <option value="4h">4小时</option>
                                             <option value="1d">1天</option>
                                         </select>
+                                    </div>
+                                )}
+
+                                {confirmation === 'candle_delay' && (
+                                    <div className="sub-option">
+                                        <label>连续满足根数 (当前: {delayCandles}根)</label>
+                                        <div className="slider-row">
+                                            <input
+                                                type="range"
+                                                min="1" max="10" step="1"
+                                                value={delayCandles}
+                                                onChange={e => setDelayCandles(parseInt(e.target.value))}
+                                            />
+                                        </div>
                                     </div>
                                 )}
 

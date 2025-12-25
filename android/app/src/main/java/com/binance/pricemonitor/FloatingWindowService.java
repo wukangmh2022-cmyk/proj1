@@ -464,6 +464,8 @@ public class FloatingWindowService extends Service {
     private java.util.Set<String> triggeredAlerts = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
     // Map to track start time of delayed alerts: <AlertID, StartTimestampMS>
     private java.util.Map<String, Long> pendingDelayAlerts = new java.util.concurrent.ConcurrentHashMap<>();
+    // Map to track consecutive candle hits: <AlertID, Count>
+    private java.util.Map<String, Integer> candleDelayCounter = new java.util.concurrent.ConcurrentHashMap<>();
     
     // Alert configuration class
     public static class AlertConfig {
@@ -476,6 +478,7 @@ public class FloatingWindowService extends Service {
         public String confirmation;
         public String interval;
         public int delaySeconds; // Field for time delay
+        public int delayCandles; // Field for K-line delay
         
         public String algo;
         public java.util.Map<String, Object> params;
@@ -674,17 +677,34 @@ public class FloatingWindowService extends Service {
                         if (now - startTime >= alert.delaySeconds * 1000L) {
                             // Time up! Trigger.
                             triggerAlert(alert, close, triggerTarget);
-                            pendingDelayAlerts.remove(alert.id);
+                           if (pendingDelayAlerts.containsKey(alert.id)) {
+                        pendingDelayAlerts.remove(alert.id);
+                    }
                         }
                     }
+                } else if ("candle_delay".equals(alert.confirmation) && alert.delayCandles > 0) {
+                    if (isClosed) {
+                        int count = candleDelayCounter.getOrDefault(alert.id, 0) + 1;
+                        if (count >= alert.delayCandles) {
+                            triggerAlert(alert, close, triggerTarget);
+                            candleDelayCounter.put(alert.id, 0); // Reset or Keep? Usually trigger once.
+                        } else {
+                            candleDelayCounter.put(alert.id, count);
+                        }
+                    }
+                    // For open candles, do nothing (wait for close)
                 } else {
                     // Immediate trigger (or candle close which is already filtered)
                     triggerAlert(alert, close, triggerTarget);
                 }
             } else {
-                // Condition NOT met: Reset delay timer if exists
+                // Condition NOT met
                 if (pendingDelayAlerts.containsKey(alert.id)) {
                     pendingDelayAlerts.remove(alert.id);
+                }
+                if (isClosed) {
+                    // Reset candle counter if condition broke on a CLOSED candle
+                    candleDelayCounter.put(alert.id, 0);
                 }
             }
         }
@@ -728,6 +748,15 @@ public class FloatingWindowService extends Service {
              // If algo is present:
             else if ("price_level".equals(alert.algo) && p.containsKey("price")) {
                 results.add(((Number)p.get("price")).doubleValue());
+            }
+            // Rectangle Zone: [High, Low] if time matches
+            else if ("rect_zone".equals(alert.algo) && p.containsKey("tStart") && p.containsKey("tEnd") && p.containsKey("pHigh") && p.containsKey("pLow")) {
+                double tStart = ((Number)p.get("tStart")).doubleValue();
+                double tEnd = ((Number)p.get("tEnd")).doubleValue();
+                if (t >= tStart && t <= tEnd) {
+                    results.add(((Number)p.get("pHigh")).doubleValue());
+                    results.add(((Number)p.get("pLow")).doubleValue());
+                }
             }
             
         } catch (Exception e) {

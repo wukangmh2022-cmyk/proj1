@@ -191,4 +191,104 @@ res = javaSimulateCheck(delayAlert, 103, 12000); // 12000 - 1000 = 11000ms > 100
 console.log(`T=11s: ${res} (Expected: TRIGGERED)`);
 if (res !== "TRIGGERED") console.error("❌ Fail T=11");
 
+// Test Case: Rectangle Zone
+// Time 1000-2000, Price 50-100
+const rectConfig = {
+    algo: "rect_zone",
+    params: { tStart: 1000, tEnd: 2000, pHigh: 100, pLow: 50 }
+};
+
+// 1. Inside Time
+const targetsRect = checkAlertTargets(rectConfig, 1500);
+console.log(`Rectangle (t=1500): Expected [100, 50]. Got: ${JSON.stringify(targetsRect)}`);
+if (targetsRect.length === 2 && targetsRect.includes(100)) console.log("✅ Rectangle OK");
+else console.error("❌ Rectangle FAIL");
+
+// 2. Outside Time
+const targetsRectOut = checkAlertTargets(rectConfig, 3000);
+console.log(`Rectangle (t=3000): Expected null/empty. Got: ${JSON.stringify(targetsRectOut)}`);
+if (!targetsRectOut || targetsRectOut.length === 0) console.log("✅ Rectangle Out OK");
+
+
+console.log("\n=== 4. Testing Trigger Logic (Candle Delay Simulation) ===");
+
+// State for Candle Delay
+const candleDelayCounter = new Map(); // <AlertID, count>
+
+function javaSimulateCandleCheck(alert, currentPrice, isClosed) {
+    if (triggeredAlerts.has(alert.id)) return "ALREADY_TRIGGERED";
+
+    // Determine target (Simulate drawing calc)
+    let targets = [alert.target];
+
+    // Check condition against ANY target
+    let conditionMet = false;
+    for (let t of targets) {
+        if (alert.condition === 'crossing_up' && currentPrice >= t) conditionMet = true;
+        if (alert.condition === 'crossing_down' && currentPrice <= t) conditionMet = true;
+    }
+
+    if (conditionMet) {
+        if (alert.confirmation === 'candle_delay' && alert.delayCandles > 0) {
+            if (isClosed) {
+                let count = (candleDelayCounter.get(alert.id) || 0) + 1;
+                if (count >= alert.delayCandles) {
+                    triggeredAlerts.add(alert.id);
+                    candleDelayCounter.set(alert.id, 0);
+                    return `TRIGGERED (Count ${count})`;
+                } else {
+                    candleDelayCounter.set(alert.id, count);
+                    return `COUNTING ${count}`;
+                }
+            } else {
+                return "WAITING_CLOSE";
+            }
+        } else {
+            // Immediate logic skipped for this test
+            return "TEST_SKIP";
+        }
+    } else {
+        if (isClosed) {
+            candleDelayCounter.set(alert.id, 0); // Reset on closed fail
+            return "RESET";
+        }
+        return "NO_ACTION";
+    }
+}
+
+// Test Case: Delay 3 Candles
+// Need 3 consecutive CLOSED candles satisfying condition.
+const candleDelayAlert = {
+    id: "alert_candle_1",
+    target: 200,
+    condition: "crossing_up",
+    confirmation: "candle_delay",
+    delayCandles: 3
+};
+
+// 1. Open Candle (Metric met but not closed) -> Wait
+let resC = javaSimulateCandleCheck(candleDelayAlert, 201, false);
+console.log(`Candle 1 Open: ${resC} (Expected: WAITING_CLOSE)`);
+
+// 2. Closed Candle 1 -> Count 1
+resC = javaSimulateCandleCheck(candleDelayAlert, 201, true);
+console.log(`Candle 1 Close: ${resC} (Expected: COUNTING 1)`);
+
+// 3. Closed Candle 2 -> Count 2
+resC = javaSimulateCandleCheck(candleDelayAlert, 202, true);
+console.log(`Candle 2 Close: ${resC} (Expected: COUNTING 2)`);
+
+// 4. Closed Candle 3 -> Trigger!
+resC = javaSimulateCandleCheck(candleDelayAlert, 203, true);
+console.log(`Candle 3 Close: ${resC} (Expected: TRIGGERED (Count 3))`);
+
+// 5. Test Reset: Fail on Candle 4
+// Close at 190 (<200) -> Reset
+const candleDelayAlert2 = { ...candleDelayAlert, id: "alert_candle_2" };
+javaSimulateCandleCheck(candleDelayAlert2, 201, true); // Count 1
+resC = javaSimulateCandleCheck(candleDelayAlert2, 190, true);
+console.log(`Candle Reset: ${resC} (Expected: RESET)`);
+if (candleDelayCounter.get("alert_candle_2") === 0) console.log("✅ Counter Reset OK");
+
+
 console.log("=== DONE ===");
