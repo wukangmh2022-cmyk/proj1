@@ -52,7 +52,7 @@ public class FloatingWidgetPlugin extends Plugin {
             return;
         }
 
-        Context context = getContext();
+        Context context = getContext().getApplicationContext();
         Intent intent = new Intent(context, FloatingWindowService.class);
         intent.setAction(FloatingWindowService.ACTION_START_DATA);
         intent.putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST, symbols);
@@ -70,7 +70,7 @@ public class FloatingWidgetPlugin extends Plugin {
         com.getcapacitor.JSArray jsArray = call.getArray("alerts");
         String alertsJson = jsArray != null ? jsArray.toString() : "[]";
         
-        Context context = getContext();
+        Context context = getContext().getApplicationContext();
         Intent intent = new Intent(context, FloatingWindowService.class);
         intent.setAction(FloatingWindowService.ACTION_SYNC_ALERTS);
         intent.putExtra(FloatingWindowService.EXTRA_ALERTS_JSON, alertsJson);
@@ -86,7 +86,7 @@ public class FloatingWidgetPlugin extends Plugin {
     @PluginMethod
     public void start(PluginCall call) {
         // Now "start" means show the floating window
-        Context context = getContext();
+        Context context = getContext().getApplicationContext();
         Intent intent = new Intent(context, FloatingWindowService.class);
         intent.setAction(FloatingWindowService.ACTION_SHOW_WINDOW);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -100,7 +100,7 @@ public class FloatingWidgetPlugin extends Plugin {
     @PluginMethod
     public void stop(PluginCall call) {
         // Now "stop" means hide the floating window (service keeps running)
-        Context context = getContext();
+        Context context = getContext().getApplicationContext();
         Intent intent = new Intent(context, FloatingWindowService.class);
         intent.setAction(FloatingWindowService.ACTION_HIDE_WINDOW);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -124,7 +124,7 @@ public class FloatingWidgetPlugin extends Plugin {
             return;
         }
 
-        Context context = getContext();
+        Context context = getContext().getApplicationContext();
         Intent intent = new Intent(context, FloatingWindowService.class);
         intent.setAction(FloatingWindowService.ACTION_SET_SYMBOLS);
         intent.putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST, symbols);
@@ -142,7 +142,7 @@ public class FloatingWidgetPlugin extends Plugin {
 
     @PluginMethod
     public void requestTickerUpdate(PluginCall call) {
-        Context context = getContext();
+        Context context = getContext().getApplicationContext();
         Intent intent = new Intent(context, FloatingWindowService.class);
         intent.setAction(FloatingWindowService.ACTION_REQUEST_UPDATE);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -160,7 +160,7 @@ public class FloatingWidgetPlugin extends Plugin {
         boolean showSymbol = call.getBoolean("showSymbol", true);
         int itemsPerPage = call.getInt("itemsPerPage", 1);
 
-        Context context = getContext();
+        Context context = getContext().getApplicationContext();
         Intent intent = new Intent(context, FloatingWindowService.class);
         intent.setAction(FloatingWindowService.ACTION_CONFIG);
         intent.putExtra(FloatingWindowService.EXTRA_FONT_SIZE, fontSize);
