@@ -57,6 +57,10 @@ export default function ChartPage() {
     });
     const indicatorsRef = useRef(indicators); // Sync ref for callbacks
 
+    const [subIndicator, setSubIndicator] = useState('NONE'); // NONE, RSI, MACD, KDJ
+    const [showSubMenu, setShowSubMenu] = useState(false);
+    const subSeriesRefs = useRef({}); // To store sub-chart series objects
+
     // Save indicators when changed
     useEffect(() => {
         indicatorsRef.current = indicators; // Keep ref in sync
@@ -118,6 +122,18 @@ export default function ChartPage() {
 
     // Drag Logic
     const [dragState, setDragState] = useState(null); // { id, index }
+    const [activeHandle, setActiveHandle] = useState(null); // { id, index } - For Indirect Drag
+
+    // Disable Chart Scroll/Scale when Active Handle is set
+    useEffect(() => {
+        if (!chartRef.current) return;
+        if (activeHandle) {
+            chartRef.current.applyOptions({ handleScale: false, handleScroll: false });
+        } else {
+            chartRef.current.applyOptions({ handleScale: true, handleScroll: true });
+        }
+    }, [activeHandle]);
+
     const handleDragStart = (e, id, index) => {
         e.stopPropagation();
         e.preventDefault();
@@ -136,6 +152,10 @@ export default function ChartPage() {
             return;
         }
 
+        // If we are starting a drag from background (Indirect Drag)
+        // logicOffset should be calculated based on the CURRENT POINT POSITION vs MOUSE
+        // This is handled below.
+
         const drawing = drawings.find(d => d.id === id);
         if (!drawing) return;
 
@@ -145,7 +165,14 @@ export default function ChartPage() {
         const logicOffset = (pointLogic !== null) ? pointLogic - mouseLogic : 0;
         const priceOffset = point.price - mousePrice;
 
+        // Disable chart pan/zoom during drag (Already handled by effect if activeHandle is set, but set here for robustness during drag)
+        chartRef.current.applyOptions({ handleScale: false, handleScroll: false });
+
         setDragState({ id, index, logicOffset, priceOffset });
+
+        // Sync Active Handle and Selection
+        setActiveHandle({ id, index });
+        setSelectedId(id);
     };
 
     const rafRef = useRef(null);
@@ -194,6 +221,10 @@ export default function ChartPage() {
             });
         };
         const up = () => {
+            // Restore chart pan/zoom
+            if (chartRef.current) {
+                chartRef.current.applyOptions({ handleScale: true, handleScroll: true });
+            }
             setDragState(null);
             if (rafRef.current) {
                 cancelAnimationFrame(rafRef.current);
@@ -442,6 +473,11 @@ export default function ChartPage() {
             maSeriesRefs.current[key] = s;
         });
 
+        // Initialize Sub-Indicator Series if any (should be NONE initially but good for hot reload)
+        // Actually, we'll handle sub-indicator changes in a separate useEffect or inside updateIndicators
+        // But we need to handle the initial render or state change. 
+        // Let's rely on a separate useEffect for subIndicator management to keep this init clean.
+
         chartRef.current = chart;
         seriesRef.current = series;
 
@@ -473,6 +509,15 @@ export default function ChartPage() {
             }
         });
 
+        // Click on background to deselect
+        chart.subscribeClick((param) => {
+            if (param.point === undefined || !param.hoveredSeries) {
+                // Clicked on empty space
+                setSelectedId(null);
+                setMenu(null);
+            }
+        });
+
         const resize = () => {
             if (containerRef.current) {
                 chart.applyOptions({ width: containerRef.current.clientWidth, height: containerRef.current.clientHeight });
@@ -496,18 +541,141 @@ export default function ChartPage() {
         });
     }, [drawMode]);
 
+    // Indicators Logic
+    const calSMA = (data, count) => {
+        const avg = (d) => d.reduce((a, b) => a + b, 0) / d.length;
+        let result = [];
+        for (let i = 0; i < data.length; i++) {
+            if (i < count - 1) continue;
+            const slice = data.slice(i - count + 1, i + 1).map(d => d.close);
+            result.push({ time: data[i].time, value: avg(slice) });
+        }
+        return result;
+    };
+
+    const calRSI = (data, period = 14) => {
+        let result = [];
+        let gains = 0, losses = 0;
+        for (let i = 0; i < data.length; i++) {
+            if (i < 1) continue;
+            const change = data[i].close - data[i - 1].close;
+            const gain = change > 0 ? change : 0;
+            const loss = change < 0 ? -change : 0;
+
+            if (i === period) {
+                // Initial average
+                let sumGain = 0, sumLoss = 0;
+                for (let j = 1; j <= period; j++) {
+                    const chg = data[j].close - data[j - 1].close;
+                    sumGain += chg > 0 ? chg : 0;
+                    sumLoss += chg < 0 ? -chg : 0;
+                }
+                gains = sumGain / period;
+                losses = sumLoss / period;
+                const rs = gains / losses;
+                result.push({ time: data[i].time, value: 100 - 100 / (1 + rs) });
+            } else if (i > period) {
+                gains = (gains * (period - 1) + gain) / period;
+                losses = (losses * (period - 1) + loss) / period;
+                const rs = gains / losses;
+                result.push({ time: data[i].time, value: 100 - 100 / (1 + rs) });
+            } else {
+
+            }
+        }
+        return result;
+    };
+
+    const calMACD = (data, fast = 12, slow = 26, signal = 9) => {
+        // EMA helper
+        const ema = (src, p) => {
+            const k = 2 / (p + 1);
+            let res = [];
+            let prev = src[0] ? src[0].value || src[0].close : 0; // handle simple or object array
+            src.forEach(d => {
+                const val = d.value !== undefined ? d.value : d.close;
+                const next = val * k + prev * (1 - k);
+                res.push({ time: d.time, value: next });
+                prev = next;
+            });
+            return res;
+        }
+
+        // We need complete data for EMA. Simple EMA implementation
+        // Real MACD usually starts with SMA, but pure EMA is fine for approx
+        const closeSeries = data.map(d => ({ time: d.time, value: d.close }));
+        if (closeSeries.length === 0) return { diff: [], dea: [], hist: [] };
+
+        // Initial SMA for EMA seed is better but let's stick to simple recursive EMA for stability
+        // Actually, let's do a quick loop calc
+        let emaFast = [], emaSlow = [], diff = [], dea = [], hist = [];
+
+        let kF = 2 / (fast + 1);
+        let kS = 2 / (slow + 1);
+        let kSig = 2 / (signal + 1);
+
+        let lastFast = data[0].close, lastSlow = data[0].close, lastDea = 0;
+
+        data.forEach((d, i) => {
+            lastFast = d.close * kF + lastFast * (1 - kF);
+            lastSlow = d.close * kS + lastSlow * (1 - kS);
+            const df = lastFast - lastSlow;
+
+            // Signal (DEA) is EMA of Diff
+            if (i === 0) lastDea = df;
+            else lastDea = df * kSig + lastDea * (1 - kSig);
+
+            const h = df - lastDea;
+
+            diff.push({ time: d.time, value: df });
+            dea.push({ time: d.time, value: lastDea });
+            hist.push({ time: d.time, value: h, color: h >= 0 ? '#26a69a' : '#ef5350' });
+        });
+
+        return { diff, dea, hist };
+    };
+
+    const calKDJ = (data, p = 9, m1 = 3, m2 = 3) => {
+        let k = 50, d = 50, j = 50;
+        let resK = [], resD = [], resJ = [];
+
+        data.forEach((item, i) => {
+            if (i < p - 1) return;
+
+            // Find RSV
+            let low = item.low, high = item.high;
+            for (let x = 0; x < p; x++) {
+                if (data[i - x].low < low) low = data[i - x].low;
+                if (data[i - x].high > high) high = data[i - x].high;
+            }
+
+            const rsv = (high === low) ? 50 : (item.close - low) / (high - low) * 100;
+
+            k = (1 * rsv + (m1 - 1) * k) / m1;
+            d = (1 * k + (m2 - 1) * d) / m2;
+            j = 3 * k - 2 * d;
+
+            resK.push({ time: item.time, value: k });
+            resD.push({ time: item.time, value: d });
+            resJ.push({ time: item.time, value: j });
+        });
+
+        return { k: resK, d: resD, j: resJ };
+    };
+
+
     // Calc Indicators
     const updateIndicators = (data) => {
-        const calSMA = (d, p) => {
-            const res = [];
-            for (let i = 0; i < d.length; i++) {
-                if (i < p - 1) { res.push({ time: d[i].time, value: NaN }); continue; }
-                let sum = 0;
-                for (let j = 0; j < p; j++) sum += d[i - j].close;
-                res.push({ time: d[i].time, value: sum / p });
-            }
-            return res.filter(x => !isNaN(x.value));
-        };
+        // const calSMA = (d, p) => { // This was the old calSMA, now replaced by the new one above
+        //     const res = [];
+        //     for (let i = 0; i < d.length; i++) {
+        //         if (i < p - 1) { res.push({ time: d[i].time, value: NaN }); continue; }
+        //         let sum = 0;
+        //         for (let j = 0; j < p; j++) sum += d[i - j].close;
+        //         res.push({ time: d[i].time, value: sum / p });
+        //     }
+        //     return res.filter(x => !isNaN(x.value));
+        // };
 
         Object.entries(indicatorsRef.current).forEach(([key, cfg]) => {
             if (maSeriesRefs.current[key]) {
@@ -526,7 +694,86 @@ export default function ChartPage() {
                 }
             }
         });
+
+        // Update Sub Indicator
+        if (chartRef.current && subIndicator !== 'NONE') {
+            const chart = chartRef.current;
+            // Ensure series exist / match type
+            // Heavily simplified: Re-create if needed or just update data
+            // To prevent flickering, we only recreate if checking existing refs fails
+
+            // For simplicity in this step, let's just update data if refs exist, or create if not.
+            // Better approach: separate useEffect manages Series Creation/Removal, this only pushes data.
+            // But we need data to push.
+
+            if (subIndicator === 'RSI' && subSeriesRefs.current.rsi) {
+                subSeriesRefs.current.rsi.setData(calRSI(data));
+            } else if (subIndicator === 'MACD' && subSeriesRefs.current.hist) {
+                const m = calMACD(data);
+                subSeriesRefs.current.diff.setData(m.diff);
+                subSeriesRefs.current.dea.setData(m.dea);
+                subSeriesRefs.current.hist.setData(m.hist);
+            } else if (subIndicator === 'KDJ' && subSeriesRefs.current.k) {
+                const k = calKDJ(data);
+                subSeriesRefs.current.k.setData(k.k);
+                subSeriesRefs.current.d.setData(k.d);
+                subSeriesRefs.current.j.setData(k.j);
+            }
+        }
     };
+
+    // Sub-Indicator Series Management
+    useEffect(() => {
+        if (!chartRef.current) return;
+        const chart = chartRef.current;
+
+        // Cleanup old
+        Object.values(subSeriesRefs.current).forEach(s => chart.removeSeries(s));
+        subSeriesRefs.current = {};
+
+        if (subIndicator === 'RSI') {
+            // Main Chart occupies top 55%
+            chart.priceScale('right').applyOptions({ scaleMargins: { top: 0.05, bottom: 0.45 } });
+            // Vol occupies 55%-70% (middle band)
+            chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.55, bottom: 0.30 } });
+
+            const s = chart.addSeries(LineSeries, { color: '#a855f7', lineWidth: 2, priceScaleId: 'sub' });
+            subSeriesRefs.current = { rsi: s };
+            // Sub Chart occupies bottom 25%
+            chart.priceScale('sub').applyOptions({ scaleMargins: { top: 0.75, bottom: 0 }, position: 'left' });
+
+        } else if (subIndicator === 'MACD') {
+            chart.priceScale('right').applyOptions({ scaleMargins: { top: 0.05, bottom: 0.45 } });
+            chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.55, bottom: 0.30 } });
+
+            const h = chart.addSeries(HistogramSeries, { priceScaleId: 'sub' });
+            const diff = chart.addSeries(LineSeries, { color: '#fcd535', lineWidth: 1, priceScaleId: 'sub' });
+            const dea = chart.addSeries(LineSeries, { color: '#ff9f43', lineWidth: 1, priceScaleId: 'sub' });
+            subSeriesRefs.current = { hist: h, diff, dea };
+            chart.priceScale('sub').applyOptions({ scaleMargins: { top: 0.75, bottom: 0 }, position: 'left' });
+
+        } else if (subIndicator === 'KDJ') {
+            chart.priceScale('right').applyOptions({ scaleMargins: { top: 0.05, bottom: 0.45 } });
+            chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.55, bottom: 0.30 } });
+
+            const k = chart.addSeries(LineSeries, { color: '#ffffff', lineWidth: 1, priceScaleId: 'sub' });
+            const d = chart.addSeries(LineSeries, { color: '#fcd535', lineWidth: 1, priceScaleId: 'sub' });
+            const j = chart.addSeries(LineSeries, { color: '#a855f7', lineWidth: 1, priceScaleId: 'sub' });
+            subSeriesRefs.current = { k, d, j };
+            chart.priceScale('sub').applyOptions({ scaleMargins: { top: 0.75, bottom: 0 }, position: 'left' });
+
+        } else {
+            // Reset Main Chart and Vol to default layout (No Sub-Chart)
+            chart.priceScale('right').applyOptions({ scaleMargins: { top: 0.05, bottom: 0.20 } });
+            chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.80, bottom: 0 } });
+        }
+
+        // Trigger data update
+        if (allDataRef.current && subIndicator !== 'NONE') {
+            updateIndicators(allDataRef.current);
+        }
+
+    }, [subIndicator]);
 
     // Load data & Infinite Scroll
     useEffect(() => {
@@ -771,39 +1018,62 @@ export default function ChartPage() {
         const handlers = {
             onClick: (e) => {
                 e.stopPropagation();
-                setMenu({ x: e.clientX, y: e.clientY, type: 'drawing', id: d.id });
+                const rect = containerRef.current.getBoundingClientRect();
+                setMenu({ x: e.clientX - rect.left, y: e.clientY - rect.top, type: 'drawing', id: d.id });
                 setSelectedId(d.id);
+            },
+            onPointerDown: (e) => {
+                e.stopPropagation();
             }
         };
+
+        const anchorHandlers = (idx) => ({
+            onPointerDown: (e) => handleDragStart(e, d.id, idx),
+            onClick: (e) => {
+                e.stopPropagation();
+                if (activeHandle && activeHandle.id === d.id && activeHandle.index === idx) {
+                    setActiveHandle(null);
+                } else {
+                    setActiveHandle({ id: d.id, index: idx });
+                    setSelectedId(d.id);
+                }
+            }
+        });
 
         // Channel: Parallelogram logic
         if (!isFib) {
             const dx = p1.x - p0.x;
             const dy = p1.y - p0.y;
-            const lx1 = p2.x - dx;
-            const ly1 = p2.y - dy;
-            const lx2 = p2.x;
-            const ly2 = p2.y;
+            // p3 is the calculated 4th point of the parallelogram (opposite to p1)
+            const p3 = { x: p2.x - dx, y: p2.y - dy };
+            // p4 is the user-placed 3rd point (p2)
+            const p4 = { x: p2.x, y: p2.y };
+
+            // For hit areas, we can reuse p3/p4 coordinates but variable names might need adjustment in hit area code if they used lx1 etc.
+            // Looking at lines 1018-1021:
+            // <line x1={lx1} y1={ly1} ... 
+            // So we need to update those lines too or map them.
+            // Let's update the hit areas to use p3/p4 as well.
 
             return (<g key={d.id}>
                 {/* Hit Areas - 4 sides */}
                 <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
-                <line x1={lx1} y1={ly1} x2={lx2} y2={ly2} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
+                <line x1={p3.x} y1={p3.y} x2={p4.x} y2={p4.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
                 {/* Connectors (optional hit area) */}
-                <line x1={p0.x} y1={p0.y} x2={lx1} y2={ly1} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
-                <line x1={p1.x} y1={p1.y} x2={lx2} y2={ly2} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
+                <line x1={p0.x} y1={p0.y} x2={p3.x} y2={p3.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
+                <line x1={p1.x} y1={p1.y} x2={p4.x} y2={p4.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
 
                 {/* Main line */}
-                <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke={color} strokeWidth={sel ? (d.width || 2) + 1 : (d.width || 2)} pointerEvents="none" />
+                <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke={color} strokeWidth={d.width || 2} pointerEvents="none" />
                 {/* Parallel line */}
-                <line x1={lx1} y1={ly1} x2={lx2} y2={ly2} stroke={color} strokeWidth={sel ? (d.width || 2) + 1 : (d.width || 2)} pointerEvents="none" />
+                <line x1={p3.x} y1={p3.y} x2={p4.x} y2={p4.y} stroke={color} strokeWidth={d.width || 2} pointerEvents="none" />
                 {/* Center dotted line */}
-                <line x1={(p0.x + lx1) / 2} y1={(p0.y + ly1) / 2} x2={(p1.x + lx2) / 2} y2={(p1.y + ly2) / 2} stroke={color} strokeWidth="1" strokeDasharray="4,2" pointerEvents="none" />
+                <line x1={(p0.x + p3.x) / 2} y1={(p0.y + p3.y) / 2} x2={(p1.x + p4.x) / 2} y2={(p1.y + p4.y) / 2} stroke={color} strokeWidth="1" strokeDasharray="4,2" pointerEvents="none" />
                 {/* Connector dotted lines */}
-                <line x1={p0.x} y1={p0.y} x2={lx1} y2={ly1} stroke={color} strokeWidth="1" strokeDasharray="2,2" opacity="0.5" pointerEvents="none" />
-                <line x1={p1.x} y1={p1.y} x2={lx2} y2={ly2} stroke={color} strokeWidth="1" strokeDasharray="2,2" opacity="0.5" pointerEvents="none" />
+                <line x1={p0.x} y1={p0.y} x2={p3.x} y2={p3.y} stroke={color} strokeWidth="1" strokeDasharray="2,2" opacity="0.5" pointerEvents="none" />
+                <line x1={p1.x} y1={p1.y} x2={p4.x} y2={p4.y} stroke={color} strokeWidth="1" strokeDasharray="2,2" opacity="0.5" pointerEvents="none" />
 
-                {sel && d.screenPoints.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, i)} />)}
+                {sel && d.screenPoints.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r="6" fill={activeHandle?.id === d.id && activeHandle?.index === i ? "#fff" : color} stroke={activeHandle?.id === d.id && activeHandle?.index === i ? color : "#fff"} strokeWidth="2" cursor="crosshair" pointerEvents="all" {...anchorHandlers(i)} />)}
                 <text x={p0.x} y={p0.y - 10} fill={color} fontSize="10" pointerEvents="none">{d.id}</text>
             </g>);
         }
@@ -823,17 +1093,22 @@ export default function ChartPage() {
                     // Custom Fib Color
                     const levelColor = (d.fibColors && d.fibColors[r]) ? d.fibColors[r] : color;
 
+                    const minX = Math.min(fx1, fx2);
+                    const maxX = Math.max(fx1, fx2);
+                    const minY = Math.min(fy1, fy2);
+                    const maxY = Math.max(fy1, fy2);
+
                     return (<g key={i}>
-                        {/* Hit Area */}
-                        <line x1={fx1} y1={fy1} x2={fx2} y2={fy2} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
+                        {/* Hit Area (Rectangle covering the line for easier selection) */}
+                        <rect x={minX} y={minY - 10} width={maxX - minX} height={maxY - minY + 20} fill="transparent" stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
                         {/* Visual */}
-                        <line x1={fx1} y1={fy1} x2={fx2} y2={fy2} stroke={levelColor} strokeWidth={sel ? (d.width || 1) + 1 : (d.width || 1)} opacity={sel ? 1 : 0.8} pointerEvents="none" />
+                        <line x1={fx1} y1={fy1} x2={fx2} y2={fy2} stroke={levelColor} strokeWidth={d.width || 2} opacity={sel ? 1 : 0.8} pointerEvents="none" />
                         <text x={fx2 + 5} y={fy2} fill={levelColor} fontSize="9" pointerEvents="none">{r}</text>
                     </g>);
                 })}
                 {/* Trendline (Diagonal) */}
                 <line x1={p0.x} y1={p0.y} x2={p2.x} y2={p2.y} stroke={color} strokeWidth="1" strokeDasharray="4,2" opacity="0.5" pointerEvents="none" />
-                {sel && d.screenPoints.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, i)} />)}
+                {sel && d.screenPoints.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r="6" fill={activeHandle?.id === d.id && activeHandle?.index === i ? "#fff" : color} stroke={activeHandle?.id === d.id && activeHandle?.index === i ? color : "#fff"} strokeWidth="2" cursor="crosshair" pointerEvents="all" {...anchorHandlers(i)} />)}
             </g>);
         }
         return null; // Should be handled by channel block
@@ -855,7 +1130,14 @@ export default function ChartPage() {
             </div>
 
             <div ref={containerRef} className="chart-container"
-                style={{ position: 'relative', cursor: inDrawMode ? 'crosshair' : 'default' }}>
+                style={{ position: 'relative', cursor: inDrawMode ? 'crosshair' : 'default', touchAction: activeHandle ? 'none' : 'auto' }}
+                onPointerDown={(e) => {
+                    // Indirect Drag Start
+                    if (activeHandle && !dragState) {
+                        handleDragStart(e, activeHandle.id, activeHandle.index);
+                    }
+                }}
+                onClick={() => { setSelectedId(null); setMenu(null); setActiveHandle(null); }}>
 
                 {/* Legend */}
                 <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 30, display: 'flex', gap: '10px', fontSize: '12px', fontFamily: 'monospace', flexWrap: 'wrap' }}>
@@ -889,7 +1171,7 @@ export default function ChartPage() {
                     const targetId = menu.id;
 
                     // Common Actions
-                    const close = () => setMenu(null);
+                    const close = () => { setMenu(null); setSelectedId(null); };
                     const del = () => {
                         if (isIndicator) setIndicators(p => ({ ...p, [targetId]: { ...p[targetId], visible: false } }));
                         else setDrawings(p => p.filter(d => d.id !== targetId));
@@ -1101,10 +1383,29 @@ export default function ChartPage() {
                             const handlers = {
                                 onClick: (e) => {
                                     e.stopPropagation();
-                                    setMenu({ x: e.clientX, y: e.clientY, type: 'drawing', id: d.id });
+                                    const rect = containerRef.current.getBoundingClientRect();
+                                    setMenu({ x: e.clientX - rect.left, y: e.clientY - rect.top, type: 'drawing', id: d.id });
                                     setSelectedId(d.id);
+                                },
+                                onPointerDown: (e) => {
+                                    // Make sure we stop propagation so background doesn't get it (though background uses click)
+                                    e.stopPropagation();
                                 }
                             };
+                            const anchorHandlers = (idx) => ({
+                                onPointerDown: (e) => handleDragStart(e, d.id, idx),
+                                onClick: (e) => {
+                                    e.stopPropagation();
+                                    // Toggle Active Handle
+                                    if (activeHandle && activeHandle.id === d.id && activeHandle.index === idx) {
+                                        setActiveHandle(null);
+                                    } else {
+                                        setActiveHandle({ id: d.id, index: idx });
+                                        // Also Select Drawing if not
+                                        setSelectedId(d.id);
+                                    }
+                                }
+                            });
                             if (d.type === 'hline') return (
                                 <g key={d.id}>
                                     {/* Hit Area */}
@@ -1112,7 +1413,7 @@ export default function ChartPage() {
                                     {/* Visible */}
                                     <line x1={0} y1={d.screenY} x2="100%" y2={d.screenY} stroke={color} strokeWidth={sel ? (d.width || 2) + 1 : (d.width || 2)} pointerEvents="none" />
                                     <text x={5} y={d.screenY - 5} fill={color} fontSize="10" pointerEvents="none">{d.id}</text>
-                                    {sel && <circle cx={(containerRef.current?.clientWidth || 300) / 2} cy={d.screenY} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="ns-resize" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 0)} />}
+                                    {sel && <circle cx={(containerRef.current?.clientWidth || 300) / 2} cy={d.screenY} r="7" fill={activeHandle?.id === d.id && activeHandle?.index === 0 ? "#fff" : color} stroke={activeHandle?.id === d.id && activeHandle?.index === 0 ? color : "#fff"} strokeWidth="2" cursor="ns-resize" pointerEvents="all" {...anchorHandlers(0)} />}
                                 </g>
                             );
                             else if (d.type === 'trendline' && d.screenPoints && d.screenPoints.length >= 2) {
@@ -1120,10 +1421,12 @@ export default function ChartPage() {
                                 return (
                                     <g key={d.id}>
                                         {/* Hit Area */}
-                                        <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
+                                        <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke="transparent" strokeWidth="15" cursor="pointer" pointerEvents="all" {...handlers} />
                                         {/* Visible */}
-                                        <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke={color} strokeWidth={sel ? (d.width || 2) + 1 : (d.width || 2)} pointerEvents="none" />
-                                        {sel && <><circle cx={p1.x} cy={p1.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 0)} /><circle cx={p2.x} cy={p2.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 1)} /></>}
+                                        <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke={color} strokeWidth={d.width || 2} pointerEvents="none" />
+                                        {sel && d.screenPoints.map((p, i) => (
+                                            <circle key={i} cx={p.x} cy={p.y} r="6" fill={activeHandle?.id === d.id && activeHandle?.index === i ? "#fff" : color} stroke={activeHandle?.id === d.id && activeHandle?.index === i ? color : "#fff"} strokeWidth="2" cursor="crosshair" pointerEvents="all" {...anchorHandlers(i)} />
+                                        ))}
                                         <text x={(p1.x + p2.x) / 2} y={(p1.y + p2.y) / 2 - 5} fill={color} fontSize="10" textAnchor="middle" pointerEvents="none">{d.id}</text>
                                     </g>
                                 );
@@ -1159,6 +1462,36 @@ export default function ChartPage() {
             </div>
 
             <div className="drawing-toolbar">
+                <div style={{ position: 'relative' }}>
+                    <button className={subIndicator !== 'NONE' ? 'active' : ''} onClick={(e) => { e.stopPropagation(); setShowSubMenu(p => !p); }} style={{ fontSize: '13px', fontWeight: 'bold' }}>
+                        {subIndicator !== 'NONE' ? subIndicator : (
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M2 12c3.5-6 7-6 10 0s6.5 6 10 0" />
+                            </svg>
+                        )}
+                    </button>
+                    {showSubMenu && (
+                        <div style={{
+                            position: 'absolute', bottom: '50px', left: '50%', transform: 'translateX(-50%)',
+                            background: '#1e222d', border: '1px solid #2a2e39', borderRadius: '8px',
+                            padding: '4px', display: 'flex', flexDirection: 'column', gap: '4px',
+                            boxShadow: '0 4px 12px rgba(0,0,0,0.5)', zIndex: 100, minWidth: '80px'
+                        }}>
+                            {['NONE', 'RSI', 'MACD', 'KDJ'].map(type => (
+                                <button key={type}
+                                    onClick={(e) => { e.stopPropagation(); setSubIndicator(type); setShowSubMenu(false); }}
+                                    style={{
+                                        background: subIndicator === type ? '#2a2e39' : 'transparent',
+                                        border: 'none', color: subIndicator === type ? '#fcd535' : '#ccc',
+                                        padding: '8px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', textAlign: 'left'
+                                    }}>
+                                    {type === 'NONE' ? '无' : type}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+                {/* Removed extra spacing div */}
                 {['hline', 'trendline', 'channel', 'fib', 'rect'].map(t => (
                     <button key={t} className={drawMode === t ? 'active' : ''} onClick={(e) => { e.stopPropagation(); startDrawMode(t); }}>
                         {t === 'hline' ? '─' : t === 'trendline' ? '╱' : t === 'channel' ? (

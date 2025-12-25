@@ -509,10 +509,24 @@ body {
   padding: 12px 16px;
   background: var(--bg-card);
   border-top: 1px solid var(--border-color);
-  justify-content: center;
+  justify-content: flex-start;
+  /* changed from center to allow scrolling from start */
+  overflow-x: auto;
+  /* Enable scrolling */
+  width: 100%;
+  white-space: nowrap;
+  -webkit-overflow-scrolling: touch;
+  /* smooth scrolling on iOS */
+}
+
+/* Hide scrollbar for clean look */
+.drawing-toolbar::-webkit-scrollbar {
+  display: none;
 }
 
 .drawing-toolbar button {
+  flex-shrink: 0;
+  /* Prevent shrinking */
   width: 44px;
   height: 44px;
   background: rgba(255, 255, 255, 0.05);
