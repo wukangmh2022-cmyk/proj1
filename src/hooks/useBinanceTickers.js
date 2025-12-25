@@ -11,13 +11,67 @@ const BINANCE_WS_URL = 'wss://stream.binance.com:9443/stream';
  */
 export const useBinanceTickers = (symbols = []) => {
     const [tickers, setTickers] = useState({});
+    const bufferRef = useRef({}); // Store latest data per symbol { symbol: { price, ... } }
     const wsRef = useRef(null);
     const reconnectTimeoutRef = useRef(null);
     const watchdogIntervalRef = useRef(null);
     const lastUpdateRef = useRef(Date.now());
     const listenerRef = useRef(null);
+    const flushIntervalRef = useRef(null);
 
     const isNative = Capacitor.isNativePlatform();
+
+    // ===== UI UPDATE LOOP (Throttling) =====
+    // Decouples high-frequency data (WS/Native) from React Rendering
+    useEffect(() => {
+        let timer = null;
+
+        const flushUpdates = () => {
+            if (Object.keys(bufferRef.current).length > 0) {
+                setTickers(prev => {
+                    // Merge buffer into previous state
+                    const next = { ...prev, ...bufferRef.current };
+                    bufferRef.current = {}; // Clear buffer
+                    return next;
+                });
+            }
+        };
+
+        const startLoop = () => {
+            if (timer) clearInterval(timer);
+            // Flush every 200ms (5 FPS update rate for table is sufficient, 60FPS is waste for just numbers)
+            timer = setInterval(flushUpdates, 200);
+            flushIntervalRef.current = timer;
+        };
+
+        const stopLoop = () => {
+            if (timer) {
+                clearInterval(timer);
+                timer = null;
+            }
+        };
+
+        // Initial Start
+        startLoop();
+
+        // Handle Background/Foreground
+        const handleVisibilityChange = () => {
+            if (document.hidden) {
+                stopLoop();
+            } else {
+                startLoop();
+                // On resume, if native, request fresh data
+                if (isNative) FloatingWidget.requestTickerUpdate();
+            }
+        };
+
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+
+        return () => {
+            stopLoop();
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+        };
+    }, [isNative]);
 
     // ===== NATIVE MODE: Always listen to native events =====
     useEffect(() => {
@@ -26,14 +80,12 @@ export const useBinanceTickers = (symbols = []) => {
         listenerRef.current = FloatingWidget.addListener('tickerUpdate', (data) => {
             const { symbol, price, changePercent } = data;
 
-            setTickers(prev => ({
-                ...prev,
-                [symbol]: {
-                    price: price,
-                    change: 0,
-                    changePercent: changePercent
-                }
-            }));
+            // Update Buffer ONLY
+            bufferRef.current[symbol] = {
+                price: price,
+                change: 0,
+                changePercent: changePercent
+            };
         });
 
         // Request immediate update (replay last cached data)
@@ -75,14 +127,12 @@ export const useBinanceTickers = (symbols = []) => {
                     const changePrice = price - openPrice;
                     const changePercent = openPrice > 0 ? (changePrice / openPrice) * 100 : 0;
 
-                    setTickers(prev => ({
-                        ...prev,
-                        [symbol]: {
-                            price: price,
-                            change: changePrice,
-                            changePercent: changePercent
-                        }
-                    }));
+                    // Update Buffer
+                    bufferRef.current[symbol] = {
+                        price: price,
+                        change: changePrice,
+                        changePercent: changePercent
+                    };
                 }
             } catch (err) {
                 console.error('Parse Error', err);
