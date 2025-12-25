@@ -7,6 +7,7 @@ import FloatingWidget from './plugins/FloatingWidget';
 import { Capacitor } from '@capacitor/core';
 import { getSymbols, addSymbol, removeSymbol, saveSymbols, getFloatingConfig, saveFloatingConfig } from './utils/storage';
 import { getAlerts } from './utils/alert_storage';
+import { serializeDrawingAlert } from './utils/drawing_alert_utils';
 import ChartPage from './components/ChartPage';
 import AlertConfigModal from './components/AlertConfigModal';
 import './App.css';
@@ -92,17 +93,15 @@ function HomePage() {
               if (drawingsStr) {
                 const drawings = JSON.parse(drawingsStr);
                 const d = drawings.find(x => x.id === a.targetValue);
-                // If it's a Horizontal Line or Ray, the Y is constant.
-                // We can set it as the target.
-                // Note: Our drawing structure puts y in points or special prop.
-                // hline: { screenY... logicY? price? }
-                // Need to verify drawing structure. usually it has 'price' or points with 'price'.
                 if (d) {
-                  // Assuming d.points[0].price holds the value for hline/ray
-                  // Or if it's stored differently.
-                  // Let's assume points[0].price based on standard 'lightweight-charts' data usage
-                  if (d.type === 'hline' && d.price) {
-                    return { ...a, target: d.price };
+                  const serialized = serializeDrawingAlert(d);
+                  if (serialized) {
+                    // Merge Algo and Params into the Alert object for Native Service
+                    return {
+                      ...a,
+                      algo: serialized.algo,
+                      params: serialized.params
+                    };
                   }
                 }
               }

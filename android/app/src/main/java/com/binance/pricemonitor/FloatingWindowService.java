@@ -465,16 +465,6 @@ public class FloatingWindowService extends Service {
     
     // Alert configuration class
     public static class AlertConfig {
-        public String id;
-        public String symbol;
-        public String targetType; // "price" or "indicator"
-        public double target; // price value or 0 if indicator
-        public String targetValue; // "sma7", "ema25", etc. for indicator type
-        public String condition; // "crossing_up", "crossing_down"
-        public String confirmation; // "immediate", "time_delay", "candle_close"
-        public String interval; // "1m", "5m", etc.
-        public int delaySeconds;
-        public int delayCandles;
         public boolean active;
     }
     
@@ -614,36 +604,98 @@ public class FloatingWindowService extends Service {
             String alertInterval = alert.interval != null ? alert.interval : "1m";
             if (!alertInterval.equals(interval)) continue;
             
-            double targetValue;
+            // Determine target(s)
+            java.util.List<Double> potentialTargets = new java.util.ArrayList<>();
             
-            // Determine target
             if (alert.targetType.equals("indicator")) {
-                if (alert.targetValue.startsWith("fib")) {
-                    targetValue = calculateFibLevel(alert.targetValue);
+                double val = Double.NaN;
+                if (alert.targetValue != null && alert.targetValue.startsWith("fib")) {
+                    val = calculateFibLevel(alert.targetValue);
                 } else {
-                    targetValue = calculateIndicator(alert.targetValue, history);
+                    val = calculateIndicator(alert.targetValue, history);
                 }
-                
-                if (Double.isNaN(targetValue)) continue;
+                if (!Double.isNaN(val)) potentialTargets.add(val);
+            } else if (alert.targetType.equals("drawing") && alert.algo != null) {
+                // Dynamic drawing calculation
+                String key = symbol + "_" + interval;
+                Long t = lastCandleTime.get(key);
+                long calcTime = (isClosed && t != null) ? t : System.currentTimeMillis();
+                potentialTargets = calculateDrawingTargets(alert, calcTime);
             } else {
-                targetValue = alert.target;
+                potentialTargets.add(alert.target);
             }
+            
+            if (potentialTargets.isEmpty()) continue;
             
             // Check confirmation mode
             if (alert.confirmation.equals("candle_close") && !isClosed) continue;
             
-            // Check condition
+            // Check condition against ALL potential targets (e.g. channel lines)
             boolean conditionMet = false;
-            if (alert.condition.equals("crossing_up") && close >= targetValue) {
-                conditionMet = true;
-            } else if (alert.condition.equals("crossing_down") && close <= targetValue) {
-                conditionMet = true;
+            double triggerTarget = 0;
+            
+            for (double tVal : potentialTargets) {
+                if (alert.condition.equals("crossing_up") && close >= tVal) {
+                    conditionMet = true;
+                    triggerTarget = tVal;
+                    break;
+                } else if (alert.condition.equals("crossing_down") && close <= tVal) {
+                    conditionMet = true;
+                    triggerTarget = tVal;
+                    break;
+                }
             }
             
             if (conditionMet) {
-                triggerAlert(alert, close, targetValue);
+                triggerAlert(alert, close, triggerTarget);
             }
         }
+    }
+    
+    private java.util.List<Double> calculateDrawingTargets(AlertConfig alert, long timestampMs) {
+        java.util.List<Double> results = new java.util.ArrayList<>();
+        if (alert.params == null) return results;
+        
+        try {
+            double t = timestampMs / 1000.0; // Seconds
+            java.util.Map<String, Object> p = alert.params;
+            
+            if ("linear_ray".equals(alert.algo)) {
+                if (p.containsKey("t0") && p.containsKey("p0") && p.containsKey("slope")) {
+                    double t0 = ((Number) p.get("t0")).doubleValue();
+                    double p0 = ((Number) p.get("p0")).doubleValue();
+                    double slope = ((Number) p.get("slope")).doubleValue();
+                    results.add(p0 + slope * (t - t0));
+                }
+            } else if (("parallel_channel".equals(alert.algo) || "multi_ray".equals(alert.algo)) && p.containsKey("offsets")) {
+                if (p.containsKey("t0") && p.containsKey("p0") && p.containsKey("slope")) {
+                    double t0 = ((Number) p.get("t0")).doubleValue();
+                    double p0 = ((Number) p.get("p0")).doubleValue();
+                    double slope = ((Number) p.get("slope")).doubleValue();
+                    double base = p0 + slope * (t - t0);
+                    
+                    Object offsetsObj = p.get("offsets");
+                    if (offsetsObj instanceof java.util.List) {
+                        java.util.List<?> list = (java.util.List<?>) offsetsObj;
+                        for (Object o : list) {
+                            if (o instanceof Number) {
+                                results.add(base + ((Number)o).doubleValue());
+                            }
+                        }
+                    }
+                }
+            }
+             // For horizontal lines (algo=price_level), params.price is sufficient, 
+             // but usually handled by fallback to alert.target if algo missing.
+             // If algo is present:
+            else if ("price_level".equals(alert.algo) && p.containsKey("price")) {
+                results.add(((Number)p.get("price")).doubleValue());
+            }
+            
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return results;
     }
     
     private double calculateIndicator(String indicator, java.util.List<Double> history) {
