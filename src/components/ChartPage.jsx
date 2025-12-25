@@ -1471,12 +1471,11 @@ export default function ChartPage() {
                                 setShowSubMenu(false);
                             } else {
                                 const rect = e.currentTarget.getBoundingClientRect();
-                                // Smart positioning: if button is in lower half, open UP. Else open DOWN.
-                                const isBottom = rect.top > window.innerHeight / 2;
+                                // User request: Always open UPWARDS
                                 setSubMenuPos({
                                     x: rect.left + (rect.width / 2),
-                                    y: isBottom ? rect.top - 10 : rect.bottom + 10,
-                                    isBottom
+                                    y: rect.top - 10, // Position above the button
+                                    isBottom: true // Force 'bottom' calculation logic in render
                                 });
                                 setShowSubMenu(true);
                             }
