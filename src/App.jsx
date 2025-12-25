@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { HashRouter, Routes, Route, useNavigate } from 'react-router-dom';
+import { HashRouter, Routes, Route, useNavigate, useParams } from 'react-router-dom';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { useBinanceTickers } from './hooks/useBinanceTickers';
 import { usePriceAlerts } from './hooks/usePriceAlerts';
@@ -352,12 +352,17 @@ function HomePage() {
   );
 }
 
+const ChartPageWrapper = () => {
+  const { symbol } = useParams();
+  return <ChartPage key={symbol} />;
+};
+
 function App() {
   return (
     <HashRouter>
       <Routes>
         <Route path="/" element={<HomePage />} />
-        <Route path="/chart/:symbol" element={<ChartPage />} />
+        <Route path="/chart/:symbol" element={<ChartPageWrapper />} />
       </Routes>
     </HashRouter>
   );

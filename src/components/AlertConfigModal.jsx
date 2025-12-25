@@ -12,6 +12,7 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
     const [confirmation, setConfirmation] = useState('immediate');
     const [interval, setInterval] = useState('1m');
     const [delay, setDelay] = useState(10);
+    const [sliderVal, setSliderVal] = useState(0); // 0-100 linear state for slider
     const [delayCandles, setDelayCandles] = useState(0);
 
     const [actions, setActions] = useState({
@@ -25,6 +26,9 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
     const [history, setHistory] = useState([]);
     const [editId, setEditId] = useState(null);
 
+    // Drawings
+    const [availableDrawings, setAvailableDrawings] = useState([]);
+
     useEffect(() => {
         loadData();
     }, [symbol]);
@@ -32,6 +36,16 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
     const loadData = () => {
         setMyAlerts(getAlerts(symbol));
         setHistory(getAlertHistory().filter(h => h.symbol === symbol));
+
+        // Load drawings for this symbol
+        try {
+            const saved = localStorage.getItem(`chart_drawings_${symbol}`);
+            if (saved) {
+                setAvailableDrawings(JSON.parse(saved));
+            } else {
+                setAvailableDrawings([]);
+            }
+        } catch (e) { console.error(e); }
     };
 
     const handleEdit = (alert) => {
@@ -40,28 +54,46 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
         setTargetValue(alert.targetValue);
         setDirection(alert.condition);
         if (alert.targetType === 'indicator') {
-            setIndicatorType(alert.targetValue.replace(/[0-9]/g, ''));
-            setIndicatorPeriod(alert.targetValue.replace(/[a-z]/g, ''));
+            // Extract indicatorType and indicatorPeriod from targetValue string
+            if (alert.targetValue.startsWith('rsi')) {
+                setIndicatorType('rsi');
+                setIndicatorPeriod(parseInt(alert.targetValue.replace('rsi', '')));
+                setTargetValue(alert.target); // For RSI, target is the threshold
+            } else if (alert.targetValue.startsWith('fib')) {
+                setIndicatorType('fib');
+                setTargetValue(alert.targetValue.replace('fib_', '')); // For Fib, targetValue is the high_low_ratio string
+            } else {
+                // SMA/EMA
+                const match = alert.targetValue.match(/([a-z]+)(\d+)/i);
+                if (match) {
+                    setIndicatorType(match[1].toLowerCase());
+                    setIndicatorPeriod(parseInt(match[2]));
+                }
+            }
         }
         setConfirmation(alert.confirmation);
         if (alert.interval) setInterval(alert.interval);
+        if (alert.interval) setInterval(alert.interval);
         setDelay(alert.delaySeconds || 10);
+        // Sync slider
+        const d = alert.delaySeconds || 10;
+        setSliderVal(Math.round(Math.log(Math.max(10, d) / 10) / Math.log(1080) * 100));
         setDelayCandles(alert.delayCandles || 0);
         setActions(alert.actions);
         setActiveTab('new');
     };
 
     const handleCreate = () => {
-        let finalTarget = targetValue;
-        let finalTargetValue = targetValue;
+        let finalTarget = null; // The actual numeric value to compare against (e.g., price, RSI threshold, calculated fib level)
+        let finalTargetValue = null; // The string representation of the target (e.g., "100", "rsi7", "fib_100_90_0.618", "drawing_id")
 
         if (targetType === 'indicator') {
             if (indicatorType === 'rsi') {
-                // RSI: targetValue is the threshold (70, 80, 30, 20)
+                // targetValue is the threshold (e.g., "70")
                 finalTargetValue = `rsi${indicatorPeriod}`;
                 finalTarget = parseFloat(targetValue) || 70;
             } else if (indicatorType === 'fib') {
-                // Fibonacci: targetValue is "high_low_ratio", target calculated from that
+                // targetValue is the "high_low_ratio" string
                 finalTargetValue = `fib_${targetValue}`;
                 const parts = targetValue.split('_');
                 if (parts.length >= 3) {
@@ -71,15 +103,18 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                     finalTarget = high - (high - low) * ratio;
                 }
             } else {
-                // SMA/EMA: standard format
+                // SMA/EMA: targetValue is the indicator key (e.g., "sma7")
                 const key = `${indicatorType.toLowerCase()}${indicatorPeriod}`;
-                finalTarget = key;
+                finalTarget = key; // For indicators like SMA/EMA, the target itself is the key string
                 finalTargetValue = key;
             }
-        } else {
+        } else if (targetType === 'drawing') {
+            finalTargetValue = targetValue; // The Drawing ID
+            finalTarget = 0; // Placeholder, actual comparison happens against drawing lines
+        } else { // targetType === 'price'
             if (!targetValue) return;
             finalTarget = parseFloat(targetValue);
-            finalTargetValue = finalTarget;
+            finalTargetValue = finalTarget; // For price, target and targetValue are the same numeric value
         }
 
         const newAlert = {
@@ -117,6 +152,17 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
         setTargetValue(currentPrice || '');
         setDirection('crossing_up');
         setConfirmation('immediate');
+        setIndicatorType('sma');
+        setIndicatorPeriod(7);
+        setInterval('1m');
+        setDelay(10);
+        setSliderVal(0);
+        setDelayCandles(0);
+        setActions({
+            toast: true,
+            notification: true,
+            vibration: 'once'
+        });
     };
 
     return (
@@ -150,7 +196,8 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                                 <div className="section-title">触发目标</div>
                                 <div className="toggle-group">
                                     <button className={targetType === 'price' ? 'active' : ''} onClick={() => setTargetType('price')}>💲 价格</button>
-                                    <button className={targetType === 'indicator' ? 'active' : ''} onClick={() => setTargetType('indicator')}>📊 技术指标</button>
+                                    <button className={targetType === 'indicator' ? 'active' : ''} onClick={() => setTargetType('indicator')}>📊 指标</button>
+                                    <button className={targetType === 'drawing' ? 'active' : ''} onClick={() => setTargetType('drawing')}>🖍 图形</button>
                                 </div>
 
                                 {targetType === 'price' ? (
@@ -161,7 +208,7 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                                         value={targetValue}
                                         onChange={e => setTargetValue(e.target.value)}
                                     />
-                                ) : (
+                                ) : targetType === 'indicator' ? (
                                     <>
                                         <div className="indicator-row">
                                             <select value={indicatorType} onChange={e => setIndicatorType(e.target.value)}>
@@ -203,8 +250,33 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                                             const fibHigh = fibParts[0] || '';
                                             const fibLow = fibParts[1] || '';
                                             const fibRatio = fibParts[2] || '0.618';
+                                            const fibLevel = fibHigh && fibLow ?
+                                                (parseFloat(fibHigh) - (parseFloat(fibHigh) - parseFloat(fibLow)) * parseFloat(fibRatio)).toFixed(2) : '?';
                                             return (
                                                 <>
+                                                    {/* Fibonacci diagram */}
+                                                    <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: '12px', padding: '12px', marginTop: '12px' }}>
+                                                        <svg width="100%" height="100" viewBox="0 0 200 100">
+                                                            {/* Price scale */}
+                                                            <line x1="20" y1="10" x2="20" y2="90" stroke="#444" strokeWidth="1" />
+
+                                                            {/* High line */}
+                                                            <line x1="20" y1="15" x2="180" y2="15" stroke="#00d68f" strokeWidth="2" strokeDasharray="4,2" />
+                                                            <text x="25" y="12" fill="#00d68f" fontSize="10">高点 {fibHigh || '?'}</text>
+
+                                                            {/* Fib level line */}
+                                                            <line x1="20" y1="50" x2="180" y2="50" stroke="#fcd535" strokeWidth="2" />
+                                                            <text x="25" y="47" fill="#fcd535" fontSize="10">{(parseFloat(fibRatio) * 100).toFixed(1)}% = {fibLevel}</text>
+
+                                                            {/* Low line */}
+                                                            <line x1="20" y1="85" x2="180" y2="85" stroke="#ff4757" strokeWidth="2" strokeDasharray="4,2" />
+                                                            <text x="25" y="97" fill="#ff4757" fontSize="10">低点 {fibLow || '?'}</text>
+
+                                                            {/* Price movement illustration */}
+                                                            <path d="M 40 85 Q 80 85 100 15 Q 130 15 150 50" stroke="#888" strokeWidth="1.5" fill="none" />
+                                                            <circle cx="150" cy="50" r="4" fill="#fcd535" />
+                                                        </svg>
+                                                    </div>
                                                     <div className="sub-option" style={{ marginTop: '12px' }}>
                                                         <label>高点价格</label>
                                                         <input type="number" className="form-input" placeholder="如 100000"
@@ -244,6 +316,26 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                                             </select>
                                         </div>
                                     </>
+                                ) : ( // targetType === 'drawing'
+                                    <div className="indicator-row">
+                                        {availableDrawings.length === 0 ? (
+                                            <div style={{ color: '#888', padding: 10, textAlign: 'center', width: '100%' }}>
+                                                暂无图形，请先在图表上绘制
+                                            </div>
+                                        ) : (
+                                            <select value={targetValue} onChange={e => setTargetValue(e.target.value)} style={{ width: '100%' }}>
+                                                <option value="">-- 选择图形 --</option>
+                                                {availableDrawings.map(d => (
+                                                    <option key={d.id} value={d.id}>
+                                                        {d.type.toUpperCase()} ({d.id.substring(0, 8)})
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        )}
+                                        <div style={{ marginTop: 8, fontSize: 12, color: '#888' }}>
+                                            {targetValue ? '提示: 将监控价格穿越该图形的任意线条' : ''}
+                                        </div>
+                                    </div>
                                 )}
                             </div>
 
@@ -272,7 +364,7 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                                 </div>
 
                                 {/* Sub-options */}
-                                {confirmation === 'candle_close' && targetType === 'price' && (
+                                {(confirmation === 'candle_close' || targetType === 'indicator') && (
                                     <div className="sub-option">
                                         <label>K线周期</label>
                                         <select value={interval} onChange={e => setInterval(e.target.value)}>
@@ -290,8 +382,28 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                                     <div className="sub-option">
                                         <label>延迟时间</label>
                                         <div className="slider-row">
-                                            <input type="range" min="5" max="60" step="5" value={delay} onChange={e => setDelay(e.target.value)} />
-                                            <span className="slider-value">{delay}秒</span>
+                                            <input
+                                                type="range"
+                                                min="0" max="100" step="1"
+                                                value={sliderVal}
+                                                onChange={e => {
+                                                    const p = parseInt(e.target.value);
+                                                    setSliderVal(p); // Smooth update
+
+                                                    let v = 10 * Math.pow(1080, p / 100);
+                                                    // Smart stepping logic for business value
+                                                    if (v < 60) v = Math.round(v / 5) * 5;
+                                                    else if (v < 300) v = Math.round(v / 10) * 10;
+                                                    else if (v < 3600) v = Math.round(v / 60) * 60;
+                                                    else v = Math.round(v / 300) * 300;
+                                                    setDelay(Math.min(10800, Math.max(10, v)));
+                                                }}
+                                            />
+                                            <span className="slider-value" style={{ minWidth: '4.5em', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                                                {delay < 60 ? `${delay}秒`
+                                                    : delay < 3600 ? `${Math.floor(delay / 60)}分${delay % 60 ? ` ${delay % 60}秒` : ''}`
+                                                        : `${(delay / 3600).toFixed(1).replace('.0', '')}小时`}
+                                            </span>
                                         </div>
                                     </div>
                                 )}
@@ -351,7 +463,19 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                                                 {alert.condition === 'crossing_up' ? '↑' : '↓'}
                                             </span>
                                             <span className="item-target">
-                                                {alert.targetType === 'indicator' ? alert.targetValue.toUpperCase() : `$${alert.target}`}
+                                                {(() => {
+                                                    if (alert.targetType === 'price') return `$${alert.target}`;
+                                                    if (alert.targetType === 'drawing') return `图形 ${alert.targetValue}`;
+                                                    if (alert.targetType === 'indicator') {
+                                                        const t = alert.targetValue;
+                                                        if (t.startsWith('rsi')) return `RSI${t.slice(3)} @ ${alert.target}`;
+                                                        if (t.startsWith('sma')) return `SMA${t.slice(3)}`;
+                                                        if (t.startsWith('ema')) return `EMA${t.slice(3)}`;
+                                                        if (t.startsWith('fib')) return `Fib ${(alert.targetValue.split('_')[2] || '')}`;
+                                                        return t.toUpperCase();
+                                                    }
+                                                    return alert.targetValue;
+                                                })()}
                                             </span>
                                         </div>
                                         <div className="item-meta">
@@ -382,6 +506,6 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                     )}
                 </div>
             </div>
-        </div>
+        </div >
     );
 }

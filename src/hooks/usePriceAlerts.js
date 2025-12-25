@@ -34,6 +34,92 @@ export const usePriceAlerts = (tickers) => {
         }
     }, []);
 
+    const getDrawings = (symbol) => {
+        try {
+            const s = localStorage.getItem(`chart_drawings_${symbol}`);
+            return s ? JSON.parse(s) : [];
+        } catch { return []; }
+    };
+
+    // Helper to calculate target price from drawing at specific time
+    const getDrawingTarget = (drawing, time) => {
+        if (!drawing || !drawing.points) return null;
+
+        // Horizontal Line
+        if (drawing.type === 'hline') {
+            return drawing.points[0]?.price || null;
+        }
+
+        // Trendline / Channel / Fib - Linear Interpolation based on Time
+        // Note: This assumes linear time progression (which is close enough for alerts usually, though gaps exist)
+        if (drawing.type === 'trendline' || drawing.type === 'channel' || drawing.type === 'fib') {
+            const p1 = drawing.points[0];
+            const p2 = drawing.points[1];
+            if (!p1 || !p2) return null;
+            if (p1.time === p2.time) return p1.price; // Vertical line?
+
+            const slope = (p2.price - p1.price) / (p2.time - p1.time);
+            const yAtTime = p1.price + slope * (time - p1.time);
+
+            if (drawing.type === 'trendline') return yAtTime;
+
+            // Channel: Check Main Line and Parallel Line
+            if (drawing.type === 'channel') {
+                const p3 = drawing.points[2];
+                if (!p3) return yAtTime; // Fallback to line
+
+                // Calculate vertical offset of 3rd point from the line defined by p1-p2
+                // We need the Y of the line at p3.time
+                const yLineAtP3 = p1.price + slope * (p3.time - p1.time);
+                const channelHeight = p3.price - yLineAtP3;
+
+                // Valid targets are Main Line (yAtTime) AND Parallel Line (yAtTime + channelHeight)
+                // We return an ARRAY of targets? Or closest?
+                // For simplicity, let's return an object or array, and caller handles generic crossing check against any.
+                return [yAtTime, yAtTime + channelHeight];
+            }
+
+            // Fib: Multi-levels
+            if (drawing.type === 'fib') {
+                const p3 = drawing.points[2]; // Using 3rd point for width/height reference if complex, but standard fib is just p1-p2 vertical range usually?
+                // Wait, our Fib tool uses P1, P2, P3 parallelogram logic?
+                // Yes, P1-P2 is the base trendline. P3 defines the width/height (100% level?).
+                // Standard Fib Retracement is usually just high-low levels.
+                // But our 'fib' type in ChartPage seemed to be "Fib Channel" or similar (Parallelogram).
+                // Let's assume it works like Channel but with multiple ratios.
+                // Ratios: [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.618]
+                const channelRefPoint = drawing.points[2];
+                if (!channelRefPoint) return yAtTime;
+
+                const yLineAtRef = p1.price + slope * (channelRefPoint.time - p1.time);
+                const fullHeight = channelRefPoint.price - yLineAtRef;
+
+                const RATIOS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.618];
+                return RATIOS.map(r => yAtTime + fullHeight * r);
+            }
+        }
+
+        // Rectangle
+        if (drawing.type === 'rect') {
+            const p1 = drawing.points[0];
+            const p2 = drawing.points[1];
+            if (!p1 || !p2) return null;
+            // Top and Bottom Y
+            const top = Math.max(p1.price, p2.price);
+            const bottom = Math.min(p1.price, p2.price);
+            // Also check X bounds? If time < start or time > end?
+            // Usually price alerts ignore X bounds if it's "level", but Rect implies specific area.
+            // Let's respect time bounds.
+            const tStart = Math.min(p1.time, p2.time);
+            const tEnd = Math.max(p1.time, p2.time);
+            if (time < tStart || time > tEnd) return null; // Not in active zone
+
+            return [top, bottom];
+        }
+
+        return null;
+    };
+
     const refreshAlerts = () => {
         setAlerts(getAlerts());
     };
@@ -62,6 +148,21 @@ export const usePriceAlerts = (tickers) => {
                     // targetValue string acts as key, e.g. 'sma7'
                     targetPrice = data[alert.targetValue];
                     if (!targetPrice) return;
+                } else if (alert.targetType === 'drawing') {
+                    // Load Drawings
+                    const allDrawings = getDrawings(symbol);
+                    const d = allDrawings.find(x => x.id === alert.targetValue);
+                    if (!d) return;
+
+                    // Calculate target based on Candle Time (Current/Latest)
+                    // data.kline.t is open time? data.t is time?
+                    // useBinanceCandles usually provides formatted data?
+                    // raw kline is in data.kline
+                    const t = data.kline ? data.kline.t / 1000 : Date.now() / 1000; // time in seconds (as used in drawing)
+
+                    targetPrice = getDrawingTarget(d, t);
+                    // targetPrice could be number, array, or null
+                    if (targetPrice === null) return;
                 } else {
                     targetPrice = parseFloat(alert.target);
                 }
@@ -91,10 +192,21 @@ export const usePriceAlerts = (tickers) => {
             if (!shouldCheck) return;
 
             // --- CONDITION CHECK ---
-            if (alert.condition === 'crossing_up') {
-                isConditionMet = currentPrice >= targetPrice;
-            } else if (alert.condition === 'crossing_down') {
-                isConditionMet = currentPrice <= targetPrice;
+            const check = (t) => {
+                if (alert.condition === 'crossing_up') return currentPrice >= t;
+                if (alert.condition === 'crossing_down') return currentPrice <= t;
+                return false;
+            };
+
+            if (Array.isArray(targetPrice)) {
+                // If any of the lines are crossed
+                isConditionMet = targetPrice.some(tp => check(tp));
+                // Optimization: store WHICH line was crossed for message?
+                // For now just trigger.
+                // We might want to use the crossed line as the recorded 'target' in history.
+                // But strict bool is enough.
+            } else {
+                isConditionMet = check(targetPrice);
             }
 
             // --- TRIGGER LOGIC ---

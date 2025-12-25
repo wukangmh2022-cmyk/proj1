@@ -1,52 +1,1047 @@
-import { useEffect } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
+import { createChart, CandlestickSeries, LineSeries } from 'lightweight-charts';
 import '../App.css';
+
+const DRAW_MODES = { NONE: 'none', TRENDLINE: 'trendline', CHANNEL: 'channel', RECT: 'rect', HLINE: 'hline', FIB: 'fib' };
+const FIB_RATIOS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+
+let idCounter = 0;
+const genId = (type) => `${type[0]}${++idCounter}`;
 
 export default function ChartPage() {
     const { symbol } = useParams();
     const navigate = useNavigate();
+    const containerRef = useRef(null);
+    const chartRef = useRef(null);
+    const seriesRef = useRef(null);
+
+    const [interval, setIntervalState] = useState(localStorage.getItem(`chart_interval_${symbol}`) || '1h');
+    const [drawMode, setDrawModeState] = useState(DRAW_MODES.NONE);
+    // Lazy init drawings to avoid empty state overwriting storage
+    const [drawings, setDrawings] = useState(() => {
+        const s = localStorage.getItem(`chart_drawings_${symbol}`);
+        return s ? JSON.parse(s) : [];
+    });
+    const [screenDrawings, setScreenDrawings] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [selectedId, setSelectedId] = useState(null);
+
+    // Config Menu State
+    const [menu, setMenu] = useState(null); // { x, y, type, id, data }
+
+    // Enhanced Indicator State
+    const DEFAULT_INDICATORS = {
+        ma1: { name: 'MA', period: 7, color: '#fcd535', width: 1, visible: true },
+        ma2: { name: 'MA', period: 25, color: '#ff9f43', width: 1, visible: true },
+        ma3: { name: 'MA', period: 99, color: '#a855f7', width: 1, visible: true },
+    };
+    const [indicators, setIndicators] = useState(() => {
+        const saved = localStorage.getItem(`chart_indicators_v2_${symbol}`);
+        return saved ? JSON.parse(saved) : DEFAULT_INDICATORS;
+    });
+    const indicatorsRef = useRef(indicators); // Sync ref for callbacks
+
+    // Save indicators when changed
+    useEffect(() => {
+        indicatorsRef.current = indicators; // Keep ref in sync
+        localStorage.setItem(`chart_indicators_v2_${symbol}`, JSON.stringify(indicators));
+        if (allDataRef.current.length > 0) updateIndicators(allDataRef.current);
+    }, [indicators, symbol]);
+
+    // Drawing state: pendingPoints = confirmed points, activePoint = point being positioned
+    const [pendingPoints, setPendingPoints] = useState([]);
+    const [activePoint, setActivePoint] = useState(null); // { time, price, x, y }
+    const [cursor, setCursor] = useState(null);
+    const [legendValues, setLegendValues] = useState({});
+
+    const drawModeRef = useRef(DRAW_MODES.NONE);
+
+    // Helpers (Hoisted for Drag Interaction)
+    const estimatedStep = parseInterval(interval); // Simple memo not needed for primitive, but okay.
+
+    const getLogic = useCallback((time) => {
+        const data = allDataRef.current;
+        if (!data || !data.length) return 0;
+        // Binary search
+        let l = 0, r = data.length - 1;
+        while (l <= r) {
+            const mid = (l + r) >> 1;
+            const midTime = data[mid].time;
+            if (midTime === time) return mid;
+            if (midTime < time) l = mid + 1;
+            else r = mid - 1;
+        }
+        // Interpolate
+        if (l === 0) {
+            const diff = data[0].time - time;
+            const step = data[1] ? data[1].time - data[0].time : estimatedStep;
+            return -diff / step;
+        }
+        if (l >= data.length) {
+            const last = data[data.length - 1];
+            const prev = data[data.length - 2] || { time: last.time - estimatedStep };
+            const step = last.time - prev.time;
+            return (data.length - 1) + (time - last.time) / step;
+        }
+        const idx = l - 1;
+        const t1 = data[idx].time;
+        const t2 = data[idx + 1].time;
+        const ratio = (time - t1) / (t2 - t1);
+        return idx + ratio;
+    }, [estimatedStep]);
+
+    const getTime = useCallback((logic) => {
+        const data = allDataRef.current;
+        if (!data || !data.length) return 0;
+        const idx = Math.floor(logic);
+        const ratio = logic - idx;
+        if (idx < 0) return data[0].time + logic * (data[1] ? data[1].time - data[0].time : estimatedStep);
+        if (idx >= data.length - 1) return data[data.length - 1].time + (logic - (data.length - 1)) * (data[data.length - 1].time - (data[data.length - 2]?.time || data[data.length - 1].time - estimatedStep));
+        return data[idx].time + (data[idx + 1].time - data[idx].time) * ratio;
+    }, [estimatedStep]);
+
+    // Drag Logic
+    const [dragState, setDragState] = useState(null); // { id, index }
+    const handleDragStart = (e, id, index) => {
+        e.stopPropagation();
+        e.preventDefault();
+        setDragState({ id, index });
+    };
 
     useEffect(() => {
-        if (!Capacitor.isNativePlatform()) return;
+        const move = (e) => {
+            if (!dragState || !containerRef.current || !chartRef.current || !seriesRef.current) return;
+            const rect = containerRef.current.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
 
-        const handleBackButton = () => {
-            navigate(-1);
+            const logic = chartRef.current.timeScale().coordinateToLogical(x);
+            const price = seriesRef.current.coordinateToPrice(y);
+
+            if (logic === null || price === null) return;
+            const time = getTime(logic);
+
+            setDrawings(prev => prev.map(d => {
+                if (d.id !== dragState.id) return d;
+                if (d.type === 'hline') return { ...d, price };
+                const newPoints = [...d.points];
+                if (newPoints[dragState.index]) {
+                    newPoints[dragState.index] = { ...newPoints[dragState.index], time, price };
+                }
+                return { ...d, points: newPoints };
+            }));
         };
-
-        // Add the listener for the back button
-        const listener = CapacitorApp.addListener('backButton', handleBackButton);
-
-        // Clean up the listener when the component unmounts
+        const up = () => setDragState(null);
+        if (dragState) {
+            window.addEventListener('pointermove', move);
+            window.addEventListener('pointerup', up);
+        }
         return () => {
-            listener.then(remove => remove.remove());
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', up);
         };
-    }, [navigate]); // Re-run effect if navigate function changes
+    }, [dragState, getTime]);
+    const pendingPointsRef = useRef([]);
+    const lastCursorRef = useRef(null);
+    const allDataRef = useRef([]);
+    const isFetchingHistoryRef = useRef(false);
+    const activePointRef = useRef(null);
 
-    // Use TradingView Widget (public embed, no API key needed)
-    const widgetUrl = `https://www.tradingview.com/widgetembed/?frameElementId=tv-widget&symbol=BINANCE:${symbol}&interval=60&hidesidetoolbar=0&symboledit=0&saveimage=0&toolbarbg=f1f3f6&studies=[]&theme=dark&style=1&timezone=exchange&withdateranges=1&showpopupbutton=0&studies_overrides={}&overrides={}&enabled_features=[]&disabled_features=[]&locale=zh_CN&utm_source=&utm_medium=widget&utm_campaign=chart`;
+    // Indicators Refs (Dynamic access or fixed slots? Fixed slots for now to keep it simple)
+    const maSeriesRefs = useRef({}); // { ma1: series, ma2: series ... }
+
+    const setInterval = (v) => { setIntervalState(v); localStorage.setItem(`chart_interval_${symbol}`, v); };
+
+    // Start drawing mode - immediately create first point at cursor or center
+    const startDrawMode = (mode) => {
+        if (drawModeRef.current === mode) {
+            // Toggle off
+            setDrawModeState(DRAW_MODES.NONE);
+            drawModeRef.current = DRAW_MODES.NONE;
+            setPendingPoints([]);
+            pendingPointsRef.current = [];
+            setActivePoint(null);
+            return;
+        }
+
+        setDrawModeState(mode);
+        drawModeRef.current = mode;
+        setPendingPoints([]);
+        pendingPointsRef.current = [];
+
+        // Create initial active point at last cursor position or center
+        if (chartRef.current && seriesRef.current && containerRef.current) {
+            let x, y, logic, price;
+            if (lastCursorRef.current) {
+                x = lastCursorRef.current.x;
+                y = lastCursorRef.current.y;
+                price = lastCursorRef.current.price;
+                // Convert x to logic
+                logic = chartRef.current.timeScale().coordinateToLogical(x);
+                // IF logic is null, try to infer? No, it should be valid if onscreen.
+                if (logic === null) logic = 0; // Fallback
+                const p = { logic, price, x, y };
+                setActivePoint(p);
+                activePointRef.current = p;
+            } else {
+                // Always start at center for TradingView-style "Virtual Cursor"
+                const x = containerRef.current.clientWidth / 2;
+                const y = containerRef.current.clientHeight / 2;
+                const logic = chartRef.current.timeScale().coordinateToLogical(x);
+                const price = seriesRef.current.coordinateToPrice(y);
+                const p = { logic, price, x, y };
+                setActivePoint(p);
+                activePointRef.current = p;
+            }
+        }
+    };
+
+    // Data <-> Screen
+    const logicToScreen = useCallback((logic, price) => {
+        if (!chartRef.current || !seriesRef.current || logic === null || isNaN(logic)) return null;
+        const x = chartRef.current.timeScale().logicalToCoordinate(logic);
+        const y = seriesRef.current.priceToCoordinate(price);
+        return (x !== null && y !== null) ? { x, y } : null;
+    }, []);
+
+    // Recalculate indicators on state change
+    useEffect(() => {
+        if (allDataRef.current.length > 0) updateIndicators(allDataRef.current);
+    }, [indicators]);
+
+    const updateScreenDrawings = useCallback(() => {
+        if (!allDataRef.current.length) return;
+        const data = allDataRef.current;
+        const estimatedStep = parseInterval(interval);
+
+        const getLogic = (time) => {
+            // Debug Log
+            // console.log(`[getLogic] Time: ${time}, Interval: ${interval}, EstStep: ${estimatedStep}`);
+
+            if (data.length === 0) return 0;
+            // Binary search for closest time
+            let l = 0, r = data.length - 1;
+            while (l <= r) {
+                const mid = (l + r) >> 1;
+                const midTime = data[mid].time;
+                if (midTime === time) return mid;
+                if (midTime < time) l = mid + 1;
+                else r = mid - 1;
+            }
+
+            // Not found exact, interpolate
+            if (l === 0) {
+                const diff = data[0].time - time;
+                const step = data[1] ? data[1].time - data[0].time : estimatedStep; // Use interval-aware step
+                const res = -diff / step;
+                console.log(`[getLogic] PRE-DATA: Time=${time} First=${data[0].time} Diff=${diff} Step=${step} Res=${res}`);
+                return res;
+            }
+            if (l >= data.length) {
+                const last = data[data.length - 1];
+                const prev = data[data.length - 2] || { time: last.time - estimatedStep };
+                const step = last.time - prev.time;
+                const res = (data.length - 1) + (time - last.time) / step;
+                console.log(`[getLogic] PAST-DATA: Time=${time} Last=${last.time} Step=${step} Res=${res}`);
+                return res;
+            }
+
+            // Interpolate between idx and idx+1
+            const idx = l - 1;
+            const t1 = data[idx].time;
+            const t2 = data[idx + 1].time;
+            const ratio = (time - t1) / (t2 - t1);
+            if (ratio < 0 || ratio > 1) console.warn(`[getLogic] INTERP ODD: Ratio=${ratio} T1=${t1} T2=${t2} Time=${time}`);
+            return idx + ratio;
+        };
+
+        // Filter hidden drawings
+        const result = drawings.filter(d => d.visible !== false).map(d => {
+            if (d.type === 'hline') {
+                const p = (d.points && d.points[0]) ? d.points[0].price : d.price;
+                if (p === undefined) return null;
+                const y = seriesRef.current?.priceToCoordinate(p);
+                return y !== null ? { ...d, screenY: y } : null;
+            }
+
+            if (d.points && d.points.some(ppp => !ppp.time)) return null;
+
+            if (d.points) {
+                const sp = d.points.map(p => logicToScreen(getLogic(p.time), p.price)).filter(Boolean);
+                // Debug Geometry Enchanced
+                if (d.type === 'channel' || d.id === selectedId) {
+                    console.log(`[ScreenPoints] ID=${d.id} Interval=${interval} Type=${d.type}`);
+                    d.points.forEach((p, i) => {
+                        const l = getLogic(p.time);
+                        const s = sp[i];
+                        console.log(`  P${i}: Time=${p.time} Price=${p.price} Logic=${l.toFixed(2)} ScreenX=${s?.x.toFixed(1)} ScreenY=${s?.y.toFixed(1)}`);
+                    });
+                }
+                return sp.length === d.points.length ? { ...d, screenPoints: sp } : null;
+            }
+            return null;
+        }).filter(Boolean);
+        setScreenDrawings(result);
+    }, [drawings, logicToScreen, interval]); // Added interval dependency
+
+    useEffect(() => {
+        if (!chartRef.current || !seriesRef.current) return;
+
+        let frameId;
+        let prevTimeState = null;
+        let prevPriceState = null;
+
+        const checkSync = () => {
+            const chart = chartRef.current;
+            const series = seriesRef.current;
+            if (!chart || !series) return;
+
+            // Check Time Scale
+            const timeRange = chart.timeScale().getVisibleLogicalRange();
+            const timeState = timeRange ? `${timeRange.from.toFixed(2)},${timeRange.to.toFixed(2)}` : null;
+
+            // Check Price Scale (by mapping fixed price points)
+            // We use two distinct prices to detect translation and scaling
+            const y1 = series.priceToCoordinate(seriesRef.current.coordinateToPrice(0) || 0);
+            // Using dynamic reference might be better: get visible range
+            // But coordinateToPrice(0) gives price at top? No.
+            // Better: just use top and bottom pixel coordinates and check their prices? 
+            // Actually, we want to know if the mapping changed.
+            // Let's use the chart height to get two prices and check their coords? 
+            // The simplest robust way: priceToCoordinate of the current top/bottom prices of the view?
+            // No, getting mapped coords of fixed values is best.
+            // Let's us 0 and 1000? No, crypto prices vary. 
+            // Let's use the first visible candle's open/close?
+            // Actually, we can just map 0 and 1000000. If scale changes, their Y changes.
+            const tY1 = series.priceToCoordinate(100);
+            const tY2 = series.priceToCoordinate(100000);
+            const priceState = `${tY1},${tY2}`;
+
+            if (timeState !== prevTimeState || priceState !== prevPriceState) {
+                prevTimeState = timeState;
+                prevPriceState = priceState;
+                updateScreenDrawings();
+            }
+
+            frameId = requestAnimationFrame(checkSync);
+        };
+
+        checkSync();
+
+        return () => cancelAnimationFrame(frameId);
+    }, [drawings, updateScreenDrawings]);
+
+    // Chart init
+    useEffect(() => {
+        if (!containerRef.current) return;
+        const chart = createChart(containerRef.current, {
+            width: containerRef.current.clientWidth, height: containerRef.current.clientHeight,
+            layout: { background: { color: '#0d1117' }, textColor: '#d1d5db' },
+            grid: { vertLines: { color: 'rgba(255,255,255,0.05)' }, horzLines: { color: 'rgba(255,255,255,0.05)' } },
+            crosshair: { mode: 1 },
+            rightPriceScale: { borderColor: 'rgba(255,255,255,0.1)' },
+            timeScale: { borderColor: 'rgba(255,255,255,0.1)', timeVisible: true }
+        });
+        const series = chart.addSeries(CandlestickSeries, {
+            upColor: '#00d68f', downColor: '#ff4757', borderDownColor: '#ff4757',
+            borderUpColor: '#00d68f', wickDownColor: '#ff4757', wickUpColor: '#00d68f'
+        });
+
+        // Add Indicator Series
+        Object.entries(indicators).forEach(([key, cfg]) => {
+            const s = chart.addSeries(LineSeries, { color: cfg.color, lineWidth: cfg.width, visible: cfg.visible, crosshairMarkerVisible: false });
+            maSeriesRefs.current[key] = s;
+        });
+
+        chartRef.current = chart;
+        seriesRef.current = series;
+
+        // Crosshair move - update active point position & legend
+        chart.subscribeCrosshairMove((p) => {
+            if (!p.point) { setCursor(null); setLegendValues({}); return; }
+            const price = series.coordinateToPrice(p.point.y);
+            const c = { x: p.point.x, y: p.point.y, price, time: p.time };
+            setCursor(c);
+            lastCursorRef.current = c;
+
+            // Update Legend Values
+            if (p.seriesData) {
+                const v = {};
+                Object.entries(maSeriesRefs.current).forEach(([key, s]) => {
+                    const val = p.seriesData.get(s);
+                    if (val && val.value) v[key] = val.value;
+                });
+                setLegendValues(v);
+            }
+
+            // If in draw mode, we handle activePoint manually via virtual cursor layer
+            // So we DO NOT update it here to avoid conflicts
+            if (drawModeRef.current !== DRAW_MODES.NONE) {
+                // no-op
+            }
+        });
+
+        const resize = () => {
+            if (containerRef.current) {
+                chart.applyOptions({ width: containerRef.current.clientWidth, height: containerRef.current.clientHeight });
+                updateScreenDrawings();
+            }
+        };
+        window.addEventListener('resize', resize);
+        return () => { window.removeEventListener('resize', resize); chart.remove(); };
+    }, []);
+
+    // Toggle native crosshair visibility & mode
+    useEffect(() => {
+        if (!chartRef.current) return;
+        const isDrawing = drawMode !== DRAW_MODES.NONE;
+        chartRef.current.applyOptions({
+            crosshair: {
+                mode: isDrawing ? 0 : 1, // 0: Normal, 1: Magnet
+                vertLine: { visible: !isDrawing, labelVisible: !isDrawing },
+                horzLine: { visible: !isDrawing, labelVisible: !isDrawing },
+            }
+        });
+    }, [drawMode]);
+
+    // Calc Indicators
+    const updateIndicators = (data) => {
+        const calSMA = (d, p) => {
+            const res = [];
+            for (let i = 0; i < d.length; i++) {
+                if (i < p - 1) { res.push({ time: d[i].time, value: NaN }); continue; }
+                let sum = 0;
+                for (let j = 0; j < p; j++) sum += d[i - j].close;
+                res.push({ time: d[i].time, value: sum / p });
+            }
+            return res.filter(x => !isNaN(x.value));
+        };
+
+        Object.entries(indicatorsRef.current).forEach(([key, cfg]) => {
+            if (maSeriesRefs.current[key]) {
+                const s = maSeriesRefs.current[key];
+                s.applyOptions({ color: cfg.color, lineWidth: cfg.width, visible: cfg.visible });
+                s.setData(calSMA(data, cfg.period));
+            }
+        });
+    };
+
+    // Load data & Infinite Scroll
+    useEffect(() => {
+        if (!seriesRef.current || !chartRef.current) return;
+
+        // Clear data ref immediately to avoid interval mismatch corruption (e.g. 1h data + 1d websocket update)
+        allDataRef.current = [];
+        setScreenDrawings([]); // Clear visuals immediately
+        setIsLoading(true);
+
+        // Initial Load
+        const load = async () => {
+            try {
+                const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=500`);
+                const data = await res.json();
+                const formatted = data.map(d => ({ time: d[0] / 1000, open: +d[1], high: +d[2], low: +d[3], close: +d[4] }));
+                allDataRef.current = formatted;
+                seriesRef.current.setData(formatted);
+                updateIndicators(formatted);
+                chartRef.current.timeScale().fitContent();
+            } catch (e) { console.error(e); }
+            setIsLoading(false);
+        };
+        load();
+
+        // WebSocket
+        const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${symbol.toLowerCase()}@kline_${interval}`);
+        ws.onmessage = (e) => {
+            // Guard: don't update if initial load hasn't finished (prevent mixing intervals)
+            if (allDataRef.current.length === 0) return;
+
+            const m = JSON.parse(e.data);
+            if (m.k) {
+                const k = { time: m.k.t / 1000, open: +m.k.o, high: +m.k.h, low: +m.k.l, close: +m.k.c };
+                seriesRef.current.update(k);
+                // Sync allDataRef
+                const last = allDataRef.current[allDataRef.current.length - 1];
+                if (last && last.time === k.time) {
+                    allDataRef.current[allDataRef.current.length - 1] = k;
+                } else {
+                    allDataRef.current.push(k);
+                }
+                updateIndicators(allDataRef.current);
+            }
+        };
+
+        // Infinite Scroll Handler
+        const handleScroll = async (newRange) => {
+            if (newRange && newRange.from < 20 && !isFetchingHistoryRef.current && allDataRef.current.length > 0) {
+                const oldestTime = allDataRef.current[0].time * 1000;
+                isFetchingHistoryRef.current = true;
+                try {
+                    const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=500&endTime=${oldestTime - 1}`);
+                    const raw = await res.json();
+                    if (Array.isArray(raw) && raw.length > 0) {
+                        const newData = raw.map(d => ({ time: d[0] / 1000, open: +d[1], high: +d[2], low: +d[3], close: +d[4] }));
+                        // Filter to avoid overlaps
+                        const uniqueNew = newData.filter(d => d.time < allDataRef.current[0].time);
+                        if (uniqueNew.length > 0) {
+                            const merged = [...uniqueNew, ...allDataRef.current];
+                            allDataRef.current = merged;
+                            seriesRef.current.setData(merged);
+                            updateIndicators(merged);
+
+                            // No shift needed for drawings now! They use time.
+                        }
+                    }
+                } catch (err) { console.error(err); }
+                finally { isFetchingHistoryRef.current = false; }
+            }
+        };
+
+        chartRef.current.timeScale().subscribeVisibleLogicalRangeChange(handleScroll);
+
+        return () => {
+            ws.close();
+            if (chartRef.current) chartRef.current.timeScale().unsubscribeVisibleLogicalRangeChange(handleScroll);
+        };
+    }, [symbol, interval]);
+
+    // Helper to parse interval to seconds
+    const parseInterval = (int) => {
+        if (!int) return 60;
+        const unit = int.slice(-1);
+        const val = parseInt(int);
+        if (unit === 'm') return val * 60;
+        if (unit === 'h') return val * 3600;
+        if (unit === 'd') return val * 86400;
+        if (unit === 'w') return val * 604800;
+        return 60;
+    };
+
+    // Helpers for Time <-> Logic interpolation
+    const getLogicFromTime = (time) => {
+        if (!allDataRef.current || allDataRef.current.length === 0) return null;
+        const data = allDataRef.current;
+        const estimatedStep = parseInterval(interval);
+
+        // Binary search for closest candle
+        let l = 0, r = data.length - 1;
+        while (l <= r) {
+            const mid = (l + r) >> 1;
+            const midTime = data[mid].time;
+            if (midTime === time) return mid;
+            if (midTime < time) l = mid + 1;
+            else r = mid - 1;
+        }
+        // Not found exact, interpolate
+        if (l === 0) {
+            const diff = data[0].time - time;
+            const step = data[1] ? data[1].time - data[0].time : estimatedStep;
+            return -diff / step;
+        }
+        if (l >= data.length) {
+            const last = data[data.length - 1];
+            const prev = data[data.length - 2] || { time: last.time - estimatedStep };
+            const step = last.time - prev.time;
+            return (data.length - 1) + (time - last.time) / step;
+        }
+        const t1 = data[l - 1].time;
+        const t2 = data[l].time;
+        return (l - 1) + (time - t1) / (t2 - t1);
+    };
+
+    const getTimeFromLogic = (logic) => {
+        if (!allDataRef.current || allDataRef.current.length === 0) return null;
+        const data = allDataRef.current;
+        const estimatedStep = parseInterval(interval);
+
+        const idx = Math.floor(logic);
+        const ratio = logic - idx;
+        if (idx < 0) {
+            const step = data[1] ? data[1].time - data[0].time : estimatedStep;
+            return data[0].time + logic * step;
+        }
+        if (idx >= data.length - 1) {
+            const last = data[data.length - 1];
+            const prev = data[data.length - 2] || { time: last.time - estimatedStep };
+            const step = last.time - prev.time;
+            return last.time + (logic - (data.length - 1)) * step;
+        }
+        const t1 = data[idx].time;
+        const t2 = data[idx + 1].time;
+        return t1 + (t2 - t1) * ratio;
+    };
+
+    // Expose helpers via refs or similar? No, used in render loop.
+    // Actually, logicToScreen needs access to this.
+    // Let's attach them to a ref or move logicToScreen inside?
+    // Better: Define them at top level but they need allDataRef.
+    // Or keep logicToScreen simple and do conversion in updateScreenDrawings.
+
+    // Back
+    useEffect(() => {
+        if (!Capacitor.isNativePlatform()) return;
+        const l = CapacitorApp.addListener('backButton', () => navigate(-1));
+        return () => { l.then(r => r.remove()); };
+    }, [navigate]);
+
+    // Persist
+    useEffect(() => {
+        if (drawings.length) localStorage.setItem(`chart_drawings_${symbol}`, JSON.stringify(drawings));
+        else localStorage.removeItem(`chart_drawings_${symbol}`);
+    }, [drawings, symbol]);
+    // Load effect removed (Handled by lazy init + key remount)
+
+    const deleteSelected = () => { setDrawings(p => p.filter(d => d.id !== selectedId)); setSelectedId(null); };
+    const clearAll = () => { setDrawings([]); setSelectedId(null); };
+    // Virtual Cursor Interaction Logic
+    const lastTouchRef = useRef(null);
+    const onInteractStart = (e) => {
+        lastTouchRef.current = { x: e.clientX, y: e.clientY };
+    };
+
+    const onInteractMove = (e) => {
+        if (!activePointRef.current || !chartRef.current || !seriesRef.current) return;
+
+        let dx = 0, dy = 0;
+        if (lastTouchRef.current) {
+            dx = e.clientX - lastTouchRef.current.x;
+            dy = e.clientY - lastTouchRef.current.y;
+        }
+        lastTouchRef.current = { x: e.clientX, y: e.clientY };
+
+        const newX = activePointRef.current.x + dx;
+        const newY = activePointRef.current.y + dy;
+
+        // Clamp to container
+        if (!containerRef.current) return;
+        const width = containerRef.current.clientWidth;
+        const height = containerRef.current.clientHeight;
+
+        const clampedX = Math.max(0, Math.min(newX, width));
+        const clampedY = Math.max(0, Math.min(newY, height));
+
+        const logic = chartRef.current.timeScale().coordinateToLogical(clampedX);
+        const price = seriesRef.current.coordinateToPrice(clampedY);
+
+        if (logic !== null && price !== null) {
+            const newP = { x: clampedX, y: clampedY, logic, price };
+            activePointRef.current = newP; // Update Sync Ref
+            setActivePoint(newP); // Trigger Render
+        }
+    };
+
+    const confirmPoint = () => {
+        if (!activePointRef.current) return;
+        const { logic, price } = activePointRef.current;
+
+        const pointsNeeded = { hline: 1, trendline: 2, rect: 2, channel: 3, fib: 3 };
+        const newPoint = { logic, price };
+        const newPending = [...pendingPointsRef.current, newPoint];
+        const needed = pointsNeeded[drawModeRef.current] || 2;
+
+        if (newPending.length >= needed) {
+            let drawing;
+            // getTime is now component-level
+
+            const type = drawModeRef.current;
+            if (type === 'hline') {
+                drawing = { id: genId('hline'), type: 'hline', price: newPending[0].price };
+            } else {
+                // Unified: All time-based drawings use 'points'
+                drawing = { id: genId(type), type, points: newPending.map(p => ({ ...p, time: getTime(p.logic) })) };
+            }
+            setDrawings(prev => [...prev, drawing]);
+            setPendingPoints([]);
+            pendingPointsRef.current = [];
+            setDrawModeState(DRAW_MODES.NONE);
+            drawModeRef.current = DRAW_MODES.NONE;
+            setActivePoint(null);
+            activePointRef.current = null;
+        } else {
+            setPendingPoints(newPending);
+            pendingPointsRef.current = newPending;
+        }
+    };
+
+    const getColor = (t, d) => (d && d.color) ? d.color : ({ trendline: '#00d68f', channel: '#ff9f43', rect: '#a855f7', fib: '#fcd535', hline: '#fcd535' }[t] || '#fff');
+
+    const ptLineDist = (px, py, x1, y1, x2, y2) => {
+        const A = px - x1, B = py - y1, C = x2 - x1, D = y2 - y1;
+        const dot = A * C + B * D, len = C * C + D * D;
+        const t = len ? Math.max(0, Math.min(1, dot / len)) : 0;
+        return Math.hypot(px - (x1 + t * C), py - (y1 + t * D));
+    };
+
+    const render3Pt = (d, isFib) => {
+        if (!d.screenPoints || d.screenPoints.length < 3) return null;
+        const [p0, p1, p2] = d.screenPoints;
+        const color = getColor(d.type, d), sel = d.id === selectedId;
+        const handlers = {
+            onClick: (e) => {
+                e.stopPropagation();
+                setMenu({ x: e.clientX, y: e.clientY, type: 'drawing', id: d.id });
+                setSelectedId(d.id);
+            }
+        };
+
+        // Channel: Parallelogram logic
+        if (!isFib) {
+            const dx = p1.x - p0.x;
+            const dy = p1.y - p0.y;
+            const lx1 = p2.x - dx;
+            const ly1 = p2.y - dy;
+            const lx2 = p2.x;
+            const ly2 = p2.y;
+
+            return (<g key={d.id}>
+                {/* Hit Areas - 4 sides */}
+                <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
+                <line x1={lx1} y1={ly1} x2={lx2} y2={ly2} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
+                {/* Connectors (optional hit area) */}
+                <line x1={p0.x} y1={p0.y} x2={lx1} y2={ly1} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
+                <line x1={p1.x} y1={p1.y} x2={lx2} y2={ly2} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
+
+                {/* Main line */}
+                <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke={color} strokeWidth={sel ? 3 : 2} pointerEvents="none" />
+                {/* Parallel line */}
+                <line x1={lx1} y1={ly1} x2={lx2} y2={ly2} stroke={color} strokeWidth={sel ? 3 : 2} pointerEvents="none" />
+                {/* Center dotted line */}
+                <line x1={(p0.x + lx1) / 2} y1={(p0.y + ly1) / 2} x2={(p1.x + lx2) / 2} y2={(p1.y + ly2) / 2} stroke={color} strokeWidth="1" strokeDasharray="4,2" pointerEvents="none" />
+                {/* Connector dotted lines */}
+                <line x1={p0.x} y1={p0.y} x2={lx1} y2={ly1} stroke={color} strokeWidth="1" strokeDasharray="2,2" opacity="0.5" pointerEvents="none" />
+                <line x1={p1.x} y1={p1.y} x2={lx2} y2={ly2} stroke={color} strokeWidth="1" strokeDasharray="2,2" opacity="0.5" pointerEvents="none" />
+
+                {sel && d.screenPoints.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, i)} />)}
+                <text x={p0.x} y={p0.y - 10} fill={color} fontSize="10" pointerEvents="none">{d.id}</text>
+            </g>);
+        }
+
+        // Fib: Shift Vector Logic
+        if (isFib) {
+            const shiftX = p2.x - p1.x;
+            const shiftY = p2.y - p1.y;
+            const FIB_RATIOS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.618];
+
+            return (<g key={d.id}>
+                {FIB_RATIOS.map((r, i) => {
+                    const fx1 = p0.x + shiftX * r;
+                    const fy1 = p0.y + shiftY * r;
+                    const fx2 = p1.x + shiftX * r;
+                    const fy2 = p1.y + shiftY * r;
+                    return (<g key={i}>
+                        {/* Hit Area */}
+                        <line x1={fx1} y1={fy1} x2={fx2} y2={fy2} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
+                        {/* Visual */}
+                        <line x1={fx1} y1={fy1} x2={fx2} y2={fy2} stroke={color} strokeWidth={sel ? 2 : 1} opacity={sel ? 1 : 0.8} pointerEvents="none" />
+                        <text x={fx2 + 5} y={fy2} fill={color} fontSize="9" pointerEvents="none">{r}</text>
+                    </g>);
+                })}
+                {/* Trendline (Diagonal) */}
+                <line x1={p0.x} y1={p0.y} x2={p2.x} y2={p2.y} stroke={color} strokeWidth="1" strokeDasharray="4,2" opacity="0.5" pointerEvents="none" />
+                {sel && d.screenPoints.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, i)} />)}
+            </g>);
+        }
+        return null; // Should be handled by channel block
+    };
+
+    const intervals = '1m,5m,15m,30m,1h,4h,1d,3d,1w'.split(',');
+    const inDrawMode = drawMode !== DRAW_MODES.NONE;
+    const pointsNeeded = { hline: 1, trendline: 2, rect: 2, channel: 3, fib: 3 };
+    const currentNeeded = pointsNeeded[drawMode] || 0;
 
     return (
         <div className="chart-page">
             <div className="chart-header">
                 <button className="back-btn" onClick={() => navigate(-1)}>←</button>
-                <div className="symbol-info">
-                    <h2>{symbol}</h2>
+                <h2 style={{ margin: 0, fontSize: '16px' }}>{symbol}</h2>
+                <div className="interval-selector">
+                    {intervals.map(i => <button key={i} className={interval === i ? 'active' : ''} onClick={() => setInterval(i)}>{i}</button>)}
                 </div>
             </div>
-            <div className="chart-container">
-                <iframe
-                    src={widgetUrl}
-                    style={{
-                        width: '100%',
-                        height: '100%',
-                        border: 'none',
-                        borderRadius: '8px'
-                    }}
-                    title={`${symbol} Chart`}
-                    allowFullScreen
-                />
+
+            <div ref={containerRef} className="chart-container"
+                style={{ position: 'relative', cursor: inDrawMode ? 'crosshair' : 'default' }}>
+
+                {/* Legend */}
+                <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 30, display: 'flex', gap: '10px', fontSize: '12px', fontFamily: 'monospace', flexWrap: 'wrap' }}>
+                    {Object.entries(indicators).map(([key, cfg]) => (
+                        <div key={key}
+                            style={{ color: cfg.visible ? cfg.color : '#555', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                const rect = e.currentTarget.getBoundingClientRect();
+                                setMenu({
+                                    type: 'indicator',
+                                    id: key,
+                                    x: rect.left,
+                                    y: rect.bottom + 5,
+                                    data: cfg
+                                });
+                            }}>
+                            <span style={{ marginRight: 4 }}>{cfg.name}{cfg.period}</span>
+                            {cfg.visible && legendValues[key] !== undefined && <span>{legendValues[key].toFixed(2)}</span>}
+                            {!cfg.visible && <span style={{ fontSize: '10px', opacity: 0.5 }}>OFF</span>}
+                        </div>
+                    ))}
+                    <div style={{ color: '#888', cursor: 'pointer' }} onClick={() => alert('Add Indicator feature coming soon')}>+</div>
+                </div>
+
+                {/* Config Menu */}
+                {menu && (() => {
+                    // Render Mini Toolbar or Settings Modal
+                    const isSettings = menu.type.includes('_settings');
+                    const isIndicator = menu.type.startsWith('indicator');
+                    const targetId = menu.id;
+
+                    // Common Actions
+                    const close = () => setMenu(null);
+                    const del = () => {
+                        if (isIndicator) setIndicators(p => ({ ...p, [targetId]: { ...p[targetId], visible: false } }));
+                        else setDrawings(p => p.filter(d => d.id !== targetId));
+                        close();
+                    };
+                    const toggleVis = () => {
+                        if (isIndicator) setIndicators(p => ({ ...p, [targetId]: { ...p[targetId], visible: !p[targetId].visible } }));
+                        else setDrawings(p => p.map(d => d.id === targetId ? { ...d, visible: !(d.visible !== false) } : d));
+                    };
+                    const openSettings = () => setMenu({ ...menu, type: isIndicator ? 'indicator_settings' : 'drawing_settings' });
+
+                    if (isSettings) {
+                        // Centered Modal
+                        return (
+                            <div style={{
+                                position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 200,
+                                display: 'flex', alignItems: 'center', justifyContent: 'center'
+                            }} onClick={close}>
+                                <div style={{
+                                    background: '#1e222d', padding: '20px', borderRadius: '12px', width: '300px',
+                                    border: '1px solid #2a2e39', boxShadow: '0 8px 24px rgba(0,0,0,0.8)',
+                                    display: 'flex', flexDirection: 'column', gap: '16px'
+                                }} onClick={e => e.stopPropagation()}>
+                                    <h3 style={{ margin: 0, color: '#fff', fontSize: '16px' }}>设置</h3>
+
+                                    {isIndicator ? (
+                                        <>
+                                            <div className="menu-row">
+                                                <label>周期</label>
+                                                <input type="number" value={indicators[targetId].period}
+                                                    onChange={e => setIndicators(p => ({ ...p, [targetId]: { ...p[targetId], period: parseInt(e.target.value) || 7 } }))}
+                                                    style={{ width: 60, background: '#2a2e39', border: 'none', color: '#fff', padding: 8, borderRadius: 4 }} />
+                                            </div>
+                                            <div className="menu-row">
+                                                <label>颜色</label>
+                                                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                                    {['#fcd535', '#ff9f43', '#a855f7', '#00d68f', '#ff4757', '#3b82f6'].map(c => (
+                                                        <div key={c} onClick={() => setIndicators(p => ({ ...p, [targetId]: { ...p[targetId], color: c } }))}
+                                                            style={{ width: 24, height: 24, borderRadius: '50%', background: c, border: indicators[targetId].color === c ? '2px solid #fff' : '2px solid transparent', cursor: 'pointer' }} />
+                                                    ))}
+                                                </div>
+                                            </div>
+                                            <div className="menu-row">
+                                                <label>线宽</label>
+                                                <div style={{ display: 'flex', gap: 8 }}>
+                                                    {[1, 2, 3, 4].map(w => (
+                                                        <div key={w} onClick={() => setIndicators(p => ({ ...p, [targetId]: { ...p[targetId], width: w } }))}
+                                                            style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', background: indicators[targetId].width === w ? '#2a2e39' : 'transparent', cursor: 'pointer', border: '1px solid #444', borderRadius: 4 }}>
+                                                            <div style={{ height: w, width: 20, background: '#888' }}></div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <div className="menu-row">
+                                                <label>颜色</label>
+                                                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                                    {['#fcd535', '#ff9f43', '#a855f7', '#00d68f', '#ff4757', '#3b82f6', '#ffffff'].map(c => (
+                                                        <div key={c} onClick={() => setDrawings(p => p.map(d => d.id === targetId ? { ...d, color: c } : d))}
+                                                            style={{ width: 24, height: 24, borderRadius: '50%', background: c, border: (drawings.find(d => d.id === targetId)?.color || '#00d68f') === c ? '2px solid #fff' : '2px solid transparent', cursor: 'pointer' }} />
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </>
+                                    )}
+
+                                    <div style={{ textAlign: 'right', marginTop: '8px' }}>
+                                        <button onClick={close} style={{ padding: '8px 16px', background: '#2a2e39', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>完成</button>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    }
+
+                    // Mini Toolbar
+                    return (
+                        <div className="mini-toolbar" style={{
+                            position: 'fixed',
+                            left: Math.min(menu.x, window.innerWidth - 120),
+                            top: Math.min(menu.y, window.innerHeight - 50),
+                            background: '#1e222d', border: '1px solid #2a2e39', borderRadius: '30px',
+                            padding: '8px 16px', display: 'flex', gap: '16px', zIndex: 100,
+                            boxShadow: '0 4px 12px rgba(0,0,0,0.5)', alignItems: 'center'
+                        }} onClick={e => e.stopPropagation()}>
+                            <button onClick={openSettings} style={{ background: 'none', border: 'none', color: '#ccc', fontSize: '18px', cursor: 'pointer', padding: 0 }}>⚙</button>
+                            <button onClick={toggleVis} style={{ background: 'none', border: 'none', color: '#ccc', fontSize: '18px', cursor: 'pointer', padding: 0 }}>👁</button>
+                            <button onClick={del} style={{ background: 'none', border: 'none', color: '#ff4757', fontSize: '18px', cursor: 'pointer', padding: 0 }}>🗑</button>
+                            <div style={{ width: 1, height: 16, background: '#333' }}></div>
+                            <button onClick={close} style={{ background: 'none', border: 'none', color: '#666', fontSize: '14px', cursor: 'pointer', padding: 0 }}>✕</button>
+                        </div>
+                    );
+                })()}
+
+                {isLoading && <div className="chart-loading">加载中...</div>}
+
+                <svg style={{
+                    position: 'absolute', top: 0, left: 0,
+                    width: '100%', height: '100%',
+                    pointerEvents: 'none', zIndex: 10
+                }}>
+                    {/* ClipPath to exclude axis areas */}
+                    <defs>
+                        <clipPath id="chartClip">
+                            <rect x="0" y="0"
+                                width={(containerRef.current?.clientWidth || 300) - 75}
+                                height={(containerRef.current?.clientHeight || 200) - 25} />
+                        </clipPath>
+                    </defs>
+
+                    {/* All drawings clipped to chart area */}
+                    <g clipPath="url(#chartClip)">
+                        {/* Active point + crosshair in draw mode */}
+                        {inDrawMode && activePoint && (
+                            <g>
+                                {/* Crosshair lines */}
+                                <line x1={0} y1={activePoint.y} x2="100%" y2={activePoint.y} stroke="rgba(255,255,255,0.5)" strokeDasharray="4,4" />
+                                <line x1={activePoint.x} y1={0} x2={activePoint.x} y2="100%" stroke="rgba(255,255,255,0.5)" strokeDasharray="4,4" />
+                                {/* Active point (Target Reticle) */}
+                                <circle cx={activePoint.x} cy={activePoint.y} r="5" fill="transparent" stroke={getColor(drawMode)} strokeWidth="2" />
+                            </g>
+                        )}
+                        {/* Confirmed pending points (Solid Anchor) */}
+                        {pendingPoints.map((p, i) => {
+                            const sp = logicToScreen(p.logic, p.price);
+                            return sp ? <circle key={i} cx={sp.x} cy={sp.y} r="6" fill={getColor(drawMode)} stroke="#fff" strokeWidth="2" /> : null;
+                        })}
+
+                        {/* Preview line from last pending point to active point */}
+                        {inDrawMode && activePoint && pendingPoints.length === 1 && (
+                            <line x1={logicToScreen(pendingPoints[0].logic, pendingPoints[0].price)?.x}
+                                y1={logicToScreen(pendingPoints[0].logic, pendingPoints[0].price)?.y}
+                                x2={activePoint.x} y2={activePoint.y}
+                                stroke={getColor(drawMode)} strokeWidth="2" strokeDasharray="6,3" />
+                        )}
+
+                        {/* Preview for Channel (2 points confirmed, finding 3rd) */}
+                        {inDrawMode && drawMode === 'channel' && activePoint && pendingPoints.length === 2 && (() => {
+                            const p0 = logicToScreen(pendingPoints[0].logic, pendingPoints[0].price);
+                            const p1 = logicToScreen(pendingPoints[1].logic, pendingPoints[1].price);
+                            // Construct temp drawing object to reuse render3Pt logic
+                            // But render3Pt expects a 'drawing' object. Let's make a temp one.
+                            if (p0 && p1) {
+                                const tempD = {
+                                    id: 'temp', type: 'channel',
+                                    screenPoints: [p0, p1, { x: activePoint.x, y: activePoint.y }]
+                                };
+                                return render3Pt(tempD, false);
+                            }
+                        })()}
+
+                        {/* Preview for Fib (2 points confirmed, finding 3rd) */}
+                        {inDrawMode && drawMode === 'fib' && activePoint && pendingPoints.length === 2 && (() => {
+                            const p0 = logicToScreen(pendingPoints[0].logic, pendingPoints[0].price);
+                            const p1 = logicToScreen(pendingPoints[1].logic, pendingPoints[1].price);
+                            if (p0 && p1) {
+                                const tempD = {
+                                    id: 'temp', type: 'fib',
+                                    screenPoints: [p0, p1, { x: activePoint.x, y: activePoint.y }]
+                                };
+                                return render3Pt(tempD, true);
+                            }
+                        })()}
+
+                        {/* Completed drawings */}
+                        {screenDrawings.map(d => {
+                            const color = getColor(d.type, d), sel = d.id === selectedId;
+                            const handlers = {
+                                onClick: (e) => {
+                                    e.stopPropagation();
+                                    setMenu({ x: e.clientX, y: e.clientY, type: 'drawing', id: d.id });
+                                    setSelectedId(d.id);
+                                }
+                            };
+                            if (d.type === 'hline') return (
+                                <g key={d.id}>
+                                    {/* Hit Area */}
+                                    <line x1={0} y1={d.screenY} x2="100%" y2={d.screenY} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
+                                    {/* Visible */}
+                                    <line x1={0} y1={d.screenY} x2="100%" y2={d.screenY} stroke={color} strokeWidth={sel ? 3 : 2} pointerEvents="none" />
+                                    <text x={5} y={d.screenY - 5} fill={color} fontSize="10" pointerEvents="none">{d.id}</text>
+                                    {sel && <circle cx={(containerRef.current?.clientWidth || 300) / 2} cy={d.screenY} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="ns-resize" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 0)} />}
+                                </g>
+                            );
+                            else if (d.type === 'trendline' && d.screenPoints && d.screenPoints.length >= 2) {
+                                const [p1, p2] = d.screenPoints;
+                                return (
+                                    <g key={d.id}>
+                                        {/* Hit Area */}
+                                        <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
+                                        {/* Visible */}
+                                        <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke={color} strokeWidth={sel ? 3 : 2} pointerEvents="none" />
+                                        {sel && <><circle cx={p1.x} cy={p1.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 0)} /><circle cx={p2.x} cy={p2.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 1)} /></>}
+                                        <text x={(p1.x + p2.x) / 2} y={(p1.y + p2.y) / 2 - 5} fill={color} fontSize="10" textAnchor="middle" pointerEvents="none">{d.id}</text>
+                                    </g>
+                                );
+                            } else if (d.type === 'rect' && d.screenPoints && d.screenPoints.length >= 2) {
+                                const [p1, p2] = d.screenPoints;
+                                const x = Math.min(p1.x, p2.x);
+                                const y = Math.min(p1.y, p2.y);
+                                const w = Math.abs(p2.x - p1.x);
+                                const h = Math.abs(p2.y - p1.y);
+                                return (
+                                    <g key={d.id}>
+                                        <rect x={x} y={y} width={w} height={h} fill={`${color}20`} stroke={color} strokeWidth={sel ? 3 : 2} pointerEvents="all" cursor="pointer" {...handlers} />
+                                        {sel && <><circle cx={p1.x} cy={p1.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 0)} /><circle cx={p2.x} cy={p2.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 1)} /></>}
+                                        <text x={x + 5} y={y - 5} fill={color} fontSize="10" pointerEvents="none">{d.id}</text>
+                                    </g>
+                                );
+                            }
+                            if (d.type === 'channel') return render3Pt(d, false);
+                            if (d.type === 'fib') return render3Pt(d, true);
+                            return null;
+                        })}
+                    </g>
+                </svg>
+                {/* Interaction Layer for Virtual Cursor */}
+                {inDrawMode && (
+                    <div
+                        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 20, cursor: 'none', touchAction: 'none' }}
+                        onPointerDown={onInteractStart}
+                        onPointerMove={onInteractMove}
+                        onClick={confirmPoint}
+                    />
+                )}
+            </div>
+
+            <div className="drawing-toolbar">
+                {['hline', 'trendline', 'channel', 'fib', 'rect'].map(t => (
+                    <button key={t} className={drawMode === t ? 'active' : ''} onClick={(e) => { e.stopPropagation(); startDrawMode(t); }}>
+                        {t === 'hline' ? '─' : t === 'trendline' ? '╱' : t === 'channel' ? (
+                            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" style={{ display: 'block', minWidth: '20px', minHeight: '20px' }}>
+                                <path d="M5 15L15 5" stroke="currentColor" strokeWidth="1.5" />
+                                <path d="M9 17L19 7" stroke="currentColor" strokeWidth="1.5" />
+                                <path d="M7 16L17 6" stroke="currentColor" strokeWidth="1" strokeDasharray="2,2" opacity="0.8" />
+                            </svg>
+                        ) : t === 'fib' ? 'Fib' : '▢'}
+                    </button>
+                ))}
+                {selectedId && <button onClick={deleteSelected} style={{ color: '#ff4757' }}>🗑</button>}
+                {drawings.length > 0 && !selectedId && <button onClick={clearAll} style={{ color: '#ff4757', opacity: 0.6 }}>🗑</button>}
+                {inDrawMode && <span style={{ color: '#fcd535', fontSize: '11px', marginLeft: '6px' }}>点击确定 {pendingPoints.length + 1}/{currentNeeded}</span>}
+                {selectedId && <span style={{ color: '#00d68f', fontSize: '11px', marginLeft: '6px' }}>{selectedId}</span>}
             </div>
         </div>
     );
