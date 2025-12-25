@@ -973,8 +973,6 @@ public class FloatingWindowService extends Service {
         if (nm != null) nm.notify(id, builder.build());
     }
 
-    private PowerManager.WakeLock wakeLock;
-
     @Override
     public void onDestroy() {
         super.onDestroy();
