@@ -14,6 +14,7 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
     const [delay, setDelay] = useState(10);
     const [sliderVal, setSliderVal] = useState(0); // 0-100 linear state for slider
     const [delayCandles, setDelayCandles] = useState(0);
+    const [soundId, setSoundId] = useState(1); // Default Sound 1
 
     const [actions, setActions] = useState({
         toast: true,
@@ -79,6 +80,8 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
         const d = alert.delaySeconds || 10;
         setSliderVal(Math.round(Math.log(Math.max(10, d) / 10) / Math.log(1080) * 100));
         setDelayCandles(alert.delayCandles || 0);
+        setDelayCandles(alert.delayCandles || 0);
+        setSoundId(alert.soundId || 1);
         setActions(alert.actions);
         setActiveTab('new');
     };
@@ -128,6 +131,7 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
             interval: (confirmation === 'candle_close' || confirmation === 'candle_delay' || targetType === 'indicator') ? interval : '1m',
             delaySeconds: confirmation === 'time_delay' ? parseInt(delay) : 0,
             delayCandles: confirmation === 'candle_delay' ? parseInt(delayCandles) : 0,
+            soundId: parseInt(soundId),
             actions,
             active: true,
             createdAt: editId ? (myAlerts.find(a => a.id === editId)?.createdAt || Date.now()) : Date.now()
@@ -446,10 +450,27 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                                         <input type="checkbox" checked={actions.toast} onChange={e => setActions({ ...actions, toast: e.target.checked })} />
                                         <span>弹窗</span>
                                     </label>
-                                    <label className={actions.notification ? 'checked' : ''}>
-                                        <input type="checkbox" checked={actions.notification} onChange={e => setActions({ ...actions, notification: e.target.checked })} />
-                                        <span>通知</span>
-                                    </label>
+                                    <div className="checkbox-row">
+                                        <input type="checkbox" checked={actions.vibration === 'once'} onChange={() => setActions({ ...actions, vibration: actions.vibration === 'once' ? 'none' : 'once' })} />
+                                        <span>振动提醒</span>
+                                    </div>
+
+                                    <div className="sub-option" style={{ marginTop: '12px' }}>
+                                        <label>🔔 提示音效</label>
+                                        <select value={soundId} onChange={e => setSoundId(e.target.value)} style={{ width: '100%' }}>
+                                            <option value="0">静音</option>
+                                            <option value="1">Success (Major)</option>
+                                            <option value="2">Danger (Siren)</option>
+                                            <option value="3">Coin (Mario)</option>
+                                            <option value="4">Laser (Drop)</option>
+                                            <option value="5">Rise (Uplift)</option>
+                                            <option value="6">Notification (Pop)</option>
+                                            <option value="7">Tech (High)</option>
+                                            <option value="8">Low Battery</option>
+                                            <option value="9">Confirm (Beep)</option>
+                                            <option value="10">Attention</option>
+                                        </select>
+                                    </div>
                                 </div>
                                 <div className="vibration-row">
                                     <label>震动:</label>
