@@ -79,9 +79,39 @@ function HomePage() {
   useEffect(() => {
     if (!alertModalSymbol && Capacitor.isNativePlatform()) {
       // Import alerts and sync to native
+      // Import alerts and sync to native
       import('./utils/alert_storage').then(({ getAlerts }) => {
         const allAlerts = getAlerts();
-        FloatingWidget.syncAlerts({ alerts: allAlerts }).catch(console.error);
+
+        // Enrich drawing alerts with static targets (Horizontal Lines)
+        // This ensures they work in background service which doesn't support dynamic drawing math
+        const enrichedAlerts = allAlerts.map(a => {
+          if (a.targetType === 'drawing' && a.target === 0) {
+            try {
+              const drawingsStr = localStorage.getItem(`chart_drawings_${a.symbol}`);
+              if (drawingsStr) {
+                const drawings = JSON.parse(drawingsStr);
+                const d = drawings.find(x => x.id === a.targetValue);
+                // If it's a Horizontal Line or Ray, the Y is constant.
+                // We can set it as the target.
+                // Note: Our drawing structure puts y in points or special prop.
+                // hline: { screenY... logicY? price? }
+                // Need to verify drawing structure. usually it has 'price' or points with 'price'.
+                if (d) {
+                  // Assuming d.points[0].price holds the value for hline/ray
+                  // Or if it's stored differently.
+                  // Let's assume points[0].price based on standard 'lightweight-charts' data usage
+                  if (d.type === 'hline' && d.price) {
+                    return { ...a, target: d.price };
+                  }
+                }
+              }
+            } catch (e) { console.error('Enrich Drawing Alert Error', e); }
+          }
+          return a;
+        });
+
+        FloatingWidget.syncAlerts({ alerts: enrichedAlerts }).catch(console.error);
       });
     }
   }, [alertModalSymbol]);
