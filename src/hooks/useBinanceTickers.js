@@ -2,17 +2,20 @@ import { useState, useEffect, useRef } from 'react';
 import { Capacitor } from '@capacitor/core';
 import FloatingWidget from '../plugins/FloatingWidget';
 
-const BINANCE_WS_URL = 'wss://stream.binance.com:9443/stream';
+const BINANCE_SPOT_WS = 'wss://stream.binance.com:9443/stream';
+const BINANCE_FUTURES_WS = 'wss://fstream.binance.com/stream';
 
 /**
  * Hook to get real-time ticker data.
+ * Supports both Spot (BTCUSDT) and Perpetual Futures (BTCUSDT.P)
  * On Android: receives data from native Service (must call FloatingWidget.startData first)
  * On Web: uses WebSocket directly
  */
 export const useBinanceTickers = (symbols = []) => {
     const [tickers, setTickers] = useState({});
     const bufferRef = useRef({}); // Store latest data per symbol { symbol: { price, ... } }
-    const wsRef = useRef(null);
+    const wsSpotRef = useRef(null);
+    const wsFuturesRef = useRef(null);
     const reconnectTimeoutRef = useRef(null);
     const watchdogIntervalRef = useRef(null);
     const lastUpdateRef = useRef(Date.now());
@@ -20,6 +23,10 @@ export const useBinanceTickers = (symbols = []) => {
     const flushIntervalRef = useRef(null);
 
     const isNative = Capacitor.isNativePlatform();
+
+    // Helper: Check if symbol is perpetual (.P suffix)
+    const isPerpetual = (symbol) => symbol.endsWith('.P');
+    const getBaseSymbol = (symbol) => isPerpetual(symbol) ? symbol.slice(0, -2) : symbol;
 
     // ===== UI UPDATE LOOP (Throttling) =====
     // Decouples high-frequency data (WS/Native) from React Rendering
@@ -99,23 +106,23 @@ export const useBinanceTickers = (symbols = []) => {
     }, [isNative]);
 
     // ===== WEB MODE =====
-    const connect = () => {
-        if (isNative) return; // Use native data on Android
-        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
-        if (wsRef.current) wsRef.current.close();
+    const connectSpot = (spotSymbols) => {
+        if (isNative || spotSymbols.length === 0) return;
+        if (wsSpotRef.current && wsSpotRef.current.readyState === WebSocket.OPEN) return;
+        if (wsSpotRef.current) wsSpotRef.current.close();
 
-        const streams = symbols.map(s => `${s.toLowerCase()}@miniTicker`).join('/');
-        const url = `${BINANCE_WS_URL}?streams=${streams}`;
+        const streams = spotSymbols.map(s => `${s.toLowerCase()}@miniTicker`).join('/');
+        const url = `${BINANCE_SPOT_WS}?streams=${streams}`;
 
-        console.log('Connecting to Binance WS...');
-        wsRef.current = new WebSocket(url);
+        console.log('Connecting to Binance Spot WS...');
+        wsSpotRef.current = new WebSocket(url);
 
-        wsRef.current.onopen = () => {
-            console.log('Connected to Binance WS');
+        wsSpotRef.current.onopen = () => {
+            console.log('Connected to Binance Spot WS');
             lastUpdateRef.current = Date.now();
         };
 
-        wsRef.current.onmessage = (event) => {
+        wsSpotRef.current.onmessage = (event) => {
             try {
                 const message = JSON.parse(event.data);
                 if (message.data) {
@@ -127,7 +134,7 @@ export const useBinanceTickers = (symbols = []) => {
                     const changePrice = price - openPrice;
                     const changePercent = openPrice > 0 ? (changePrice / openPrice) * 100 : 0;
 
-                    // Update Buffer
+                    // Update Buffer (use original symbol name)
                     bufferRef.current[symbol] = {
                         price: price,
                         change: changePrice,
@@ -135,31 +142,86 @@ export const useBinanceTickers = (symbols = []) => {
                     };
                 }
             } catch (err) {
-                console.error('Parse Error', err);
+                console.error('Spot Parse Error', err);
             }
         };
 
-        wsRef.current.onclose = () => {
-            console.log('WS Disconnected. Scheduling reconnect...');
-            cleanup();
-            reconnectTimeoutRef.current = setTimeout(connect, 3000);
+        wsSpotRef.current.onclose = () => {
+            console.log('Spot WS Disconnected. Scheduling reconnect...');
+            setTimeout(() => connectSpot(spotSymbols), 3000);
         };
 
-        wsRef.current.onerror = (err) => {
-            console.error('WS Error:', err);
-            wsRef.current.close();
+        wsSpotRef.current.onerror = (err) => {
+            console.error('Spot WS Error:', err);
+            wsSpotRef.current.close();
         };
     };
 
-    const cleanup = () => {
-        if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+    const connectFutures = (futuresSymbols) => {
+        if (isNative || futuresSymbols.length === 0) return;
+        if (wsFuturesRef.current && wsFuturesRef.current.readyState === WebSocket.OPEN) return;
+        if (wsFuturesRef.current) wsFuturesRef.current.close();
+
+        // Remove .P suffix for API
+        const baseSymbols = futuresSymbols.map(s => getBaseSymbol(s));
+        const streams = baseSymbols.map(s => `${s.toLowerCase()}@miniTicker`).join('/');
+        const url = `${BINANCE_FUTURES_WS}?streams=${streams}`;
+
+        console.log('Connecting to Binance Futures WS...');
+        wsFuturesRef.current = new WebSocket(url);
+
+        wsFuturesRef.current.onopen = () => {
+            console.log('Connected to Binance Futures WS');
+            lastUpdateRef.current = Date.now();
+        };
+
+        wsFuturesRef.current.onmessage = (event) => {
+            try {
+                const message = JSON.parse(event.data);
+                if (message.data) {
+                    lastUpdateRef.current = Date.now();
+                    const { s: baseSymbol, c: closeStr, o: openStr } = message.data;
+
+                    const price = parseFloat(closeStr);
+                    const openPrice = parseFloat(openStr);
+                    const changePrice = price - openPrice;
+                    const changePercent = openPrice > 0 ? (changePrice / openPrice) * 100 : 0;
+
+                    // Update Buffer (add .P suffix back)
+                    const displaySymbol = baseSymbol + '.P';
+                    bufferRef.current[displaySymbol] = {
+                        price: price,
+                        change: changePrice,
+                        changePercent: changePercent
+                    };
+                }
+            } catch (err) {
+                console.error('Futures Parse Error', err);
+            }
+        };
+
+        wsFuturesRef.current.onclose = () => {
+            console.log('Futures WS Disconnected. Scheduling reconnect...');
+            setTimeout(() => connectFutures(futuresSymbols), 3000);
+        };
+
+        wsFuturesRef.current.onerror = (err) => {
+            console.error('Futures WS Error:', err);
+            wsFuturesRef.current.close();
+        };
     };
+
 
     useEffect(() => {
         if (isNative) return; // Use native data on Android
         if (symbols.length === 0) return;
 
-        connect();
+        // Separate spot and futures symbols
+        const spotSymbols = symbols.filter(s => !isPerpetual(s));
+        const futuresSymbols = symbols.filter(s => isPerpetual(s));
+
+        connectSpot(spotSymbols);
+        connectFutures(futuresSymbols);
 
         watchdogIntervalRef.current = setInterval(() => {
             const now = Date.now();
@@ -168,17 +230,21 @@ export const useBinanceTickers = (symbols = []) => {
             if (timeSinceLastUpdate > 10000) {
                 console.warn(`No data for ${timeSinceLastUpdate}ms. Forcing reconnect...`);
                 lastUpdateRef.current = Date.now();
-                if (wsRef.current) wsRef.current.close();
-                else connect();
+                if (wsSpotRef.current) wsSpotRef.current.close();
+                if (wsFuturesRef.current) wsFuturesRef.current.close();
             }
         }, 5000);
 
         return () => {
-            cleanup();
+            if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
             if (watchdogIntervalRef.current) clearInterval(watchdogIntervalRef.current);
-            if (wsRef.current) {
-                wsRef.current.onclose = null;
-                wsRef.current.close();
+            if (wsSpotRef.current) {
+                wsSpotRef.current.onclose = null;
+                wsSpotRef.current.close();
+            }
+            if (wsFuturesRef.current) {
+                wsFuturesRef.current.onclose = null;
+                wsFuturesRef.current.close();
             }
         };
     }, [JSON.stringify(symbols), isNative]);

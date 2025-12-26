@@ -1,5 +1,5 @@
 const SYMBOLS_KEY = 'binance_symbols';
-const DEFAULT_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT'];
+const DEFAULT_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ZECUSDT'];
 
 export const getSymbols = () => {
     const stored = localStorage.getItem(SYMBOLS_KEY);
@@ -38,9 +38,9 @@ export const removeSymbol = (symbol) => {
 // Floating window config
 const CONFIG_KEY = 'floating_config';
 const DEFAULT_CONFIG = {
-    showSymbol: true,
-    fontSize: 14,
-    opacity: 0.85,
+    showSymbol: false,
+    fontSize: 10,
+    opacity: 0.5,
     itemsPerPage: 1
 };
 

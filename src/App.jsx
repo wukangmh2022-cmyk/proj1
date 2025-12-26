@@ -17,10 +17,11 @@ import { App as CapacitorApp } from '@capacitor/app';
 function HomePage() {
   const navigate = useNavigate();
   const [symbols, setSymbols] = useState(getSymbols());
-  const [showAddModal, setShowAddModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [alertModalSymbol, setAlertModalSymbol] = useState(null);
   const [newSymbol, setNewSymbol] = useState('');
+  const [searchSuggestions, setSearchSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [floatingActive, setFloatingActive] = useState(false);
   const [config, setConfig] = useState(getFloatingConfig());
   const floatingActiveRef = useRef(false);
@@ -34,8 +35,8 @@ function HomePage() {
 
     const handleBackButton = async () => {
       // 1. Close Modals if open
-      if (showAddModal || showSettings || alertModalSymbol) {
-        setShowAddModal(false);
+      if (showSettings || alertModalSymbol) {
+        // No add modal anymore
         setShowSettings(false);
         setAlertModalSymbol(null);
         return;
@@ -64,7 +65,7 @@ function HomePage() {
     return () => {
       listener.then(remove => remove.remove());
     };
-  }, [showAddModal, showSettings, alertModalSymbol, isEditMode]);
+  }, [showSettings, alertModalSymbol, isEditMode]);
 
   // Start native data service and sync alerts on mount (for Android)
   useEffect(() => {
@@ -123,12 +124,29 @@ function HomePage() {
   const tickers = useBinanceTickers(symbols);
   usePriceAlerts(tickers);
 
-  const handleAddSymbol = () => {
-    if (newSymbol.trim()) {
-      const updated = addSymbol(newSymbol);
+  const handleAddSymbol = (symbolToAdd) => {
+    const sym = symbolToAdd || newSymbol;
+    if (sym.trim()) {
+      const updated = addSymbol(sym);
       setSymbols([...updated]);
       setNewSymbol('');
-      setShowAddModal(false);
+      setShowSuggestions(false);
+    }
+  };
+
+  const handleSearchInput = (value) => {
+    setNewSymbol(value.toUpperCase());
+    if (value.trim().length > 0) {
+      // Generate suggestions: spot and perpetual
+      const base = value.toUpperCase().replace('.P', '');
+      const suggestions = [
+        base.includes('USDT') ? base : `${base}USDT`,
+        (base.includes('USDT') ? base : `${base}USDT`) + '.P'
+      ];
+      setSearchSuggestions(suggestions);
+      setShowSuggestions(true);
+    } else {
+      setShowSuggestions(false);
     }
   };
 
@@ -221,11 +239,90 @@ function HomePage() {
             <>
               <button className="btn btn-secondary" onClick={() => setIsEditMode(true)}>编辑</button>
               <button className="btn btn-secondary btn-icon" onClick={() => setShowSettings(true)}>⚙</button>
-              <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>+ 添加</button>
             </>
           )}
         </div>
       </div>
+
+      {/* Add Symbol Input (Below Header) */}
+      {!isEditMode && (
+        <div style={{ padding: '16px', background: '#0d1117', borderBottom: '1px solid rgba(255,255,255,0.1)', position: 'relative' }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <input
+              type="text"
+              placeholder="添加交易对 (如 BTC, ETHUSDT)"
+              value={newSymbol}
+              onChange={e => handleSearchInput(e.target.value)}
+              onKeyPress={e => { if (e.key === 'Enter') handleAddSymbol(); }}
+              style={{
+                flex: 1,
+                padding: '12px 16px',
+                background: '#161b22',
+                border: '1px solid rgba(255,255,255,0.2)',
+                borderRadius: '8px',
+                color: '#fff',
+                fontSize: '14px',
+                outline: 'none'
+              }}
+            />
+            <button
+              onClick={() => handleAddSymbol()}
+              style={{
+                padding: '12px 24px',
+                background: '#fcd535',
+                border: 'none',
+                borderRadius: '8px',
+                color: '#000',
+                fontSize: '14px',
+                fontWeight: 'bold',
+                cursor: 'pointer'
+              }}
+            >
+              添加
+            </button>
+          </div>
+
+          {/* Suggestions Dropdown */}
+          {showSuggestions && searchSuggestions.length > 0 && (
+            <div style={{
+              position: 'absolute',
+              top: '100%',
+              left: '16px',
+              right: '16px',
+              marginTop: '4px',
+              background: '#1e222d',
+              border: '1px solid rgba(252, 213, 53, 0.3)',
+              borderRadius: '8px',
+              overflow: 'hidden',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+              zIndex: 100
+            }}>
+              {searchSuggestions.map((sug, idx) => (
+                <div
+                  key={idx}
+                  onClick={() => handleAddSymbol(sug)}
+                  style={{
+                    padding: '12px 16px',
+                    cursor: 'pointer',
+                    borderBottom: idx < searchSuggestions.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    transition: 'background 0.2s'
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(252, 213, 53, 0.1)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                >
+                  <span style={{ color: '#fff', fontSize: '14px', fontWeight: '500' }}>{sug}</span>
+                  <span style={{ color: '#888', fontSize: '12px' }}>
+                    {sug.endsWith('.P') ? '永续' : '现货'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Ticker Grid with DND */}
       <DragDropContext onDragEnd={handleDragEnd}>
@@ -304,6 +401,7 @@ function HomePage() {
         </Droppable>
       </DragDropContext>
 
+
       {/* Floating Controls */}
       {!isEditMode && (
         <div className="floating-controls">
@@ -323,24 +421,6 @@ function HomePage() {
       )}
 
       {/* Modals */}
-      {showAddModal && (
-        <div className="modal-overlay" onClick={() => setShowAddModal(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <h2>添加交易对</h2>
-            <input
-              type="text"
-              placeholder="如 DOGEUSDT"
-              value={newSymbol}
-              onChange={e => setNewSymbol(e.target.value.toUpperCase())}
-              autoFocus
-            />
-            <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={() => setShowAddModal(false)}>取消</button>
-              <button className="btn btn-primary" onClick={handleAddSymbol}>添加</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {showSettings && (
         <div className="modal-overlay" onClick={() => setShowSettings(false)}>

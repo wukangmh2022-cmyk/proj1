@@ -1,8 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
 import { SMA, EMA } from 'technicalindicators';
 
-const BINANCE_REST_URL = 'https://api.binance.com/api/v3/klines';
-const BINANCE_WS_URL = 'wss://stream.binance.com:9443/ws';
+const BINANCE_SPOT_REST = 'https://api.binance.com/api/v3/klines';
+const BINANCE_FUTURES_REST = 'https://fapi.binance.com/fapi/v1/klines';
+const BINANCE_SPOT_WS = 'wss://stream.binance.com:9443/ws';
+const BINANCE_FUTURES_WS = 'wss://fstream.binance.com/ws';
+
+// Helper functions
+const isPerpetual = (symbol) => symbol.endsWith('.P');
+const getBaseSymbol = (symbol) => isPerpetual(symbol) ? symbol.slice(0, -2) : symbol;
+const getRestUrl = (symbol) => isPerpetual(symbol) ? BINANCE_FUTURES_REST : BINANCE_SPOT_REST;
+const getWsUrl = (symbol) => isPerpetual(symbol) ? BINANCE_FUTURES_WS : BINANCE_SPOT_WS;
 
 // subscriptions: [{ symbol: 'BTCUSDT', interval: '1m' }, ...]
 export const useBinanceCandles = (subscriptions = []) => {
@@ -20,7 +28,9 @@ export const useBinanceCandles = (subscriptions = []) => {
             const key = `${symbol}_${interval}`;
             if (historyLoadedRef.current.has(key)) return;
 
-            fetch(`${BINANCE_REST_URL}?symbol=${symbol}&interval=${interval}&limit=100`)
+            const baseSymbol = getBaseSymbol(symbol);
+            const restUrl = getRestUrl(symbol);
+            fetch(`${restUrl}?symbol=${baseSymbol}&interval=${interval}&limit=100`)
                 .then(res => res.json())
                 .then(data => {
                     if (!Array.isArray(data)) return;
@@ -37,16 +47,55 @@ export const useBinanceCandles = (subscriptions = []) => {
 
         if (wsRef.current) wsRef.current.close();
 
-        // Unique streams: btcusdt@kline_1m
-        const uniqueStreams = [...new Set(subscriptions.map(s => `${s.symbol.toLowerCase()}@kline_${s.interval}`))];
-        const url = `${BINANCE_WS_URL}/${uniqueStreams.join('/')}`;
+        // Group by spot/futures
+        const spotSubs = subscriptions.filter(s => !isPerpetual(s.symbol));
+        const futuresSubs = subscriptions.filter(s => isPerpetual(s.symbol));
 
+        // For simplicity, create ONE combined WS connection
+        // Binance WS supports multiple streams in one connection
+        const spotStreams = spotSubs.map(s => `${s.symbol.toLowerCase()}@kline_${s.interval}`);
+        const futuresStreams = futuresSubs.map(s => `${getBaseSymbol(s.symbol).toLowerCase()}@kline_${s.interval}`);
+
+        // We need TWO separate WS connections (spot and futures)
+        // But for simplicity in this hook, let's handle them separately
+        // Actually, we need to refactor to support multiple WS refs
+        // For now, let's use a simple approach: if ALL are spot, use spot WS; if ALL are futures, use futures WS
+        // Mixed case: we'll need to create 2 WS connections
+
+        // Simplified: Use spot WS for spot symbols, futures WS for futures symbols
+        // We'll create a combined handler
+        const allStreams = [];
+        let wsUrl = BINANCE_SPOT_WS;
+
+        if (spotSubs.length > 0 && futuresSubs.length === 0) {
+            // All spot
+            allStreams.push(...spotStreams);
+            wsUrl = BINANCE_SPOT_WS;
+        } else if (futuresSubs.length > 0 && spotSubs.length === 0) {
+            // All futures
+            allStreams.push(...futuresStreams);
+            wsUrl = BINANCE_FUTURES_WS;
+        } else if (spotSubs.length > 0 && futuresSubs.length > 0) {
+            // Mixed: For now, prioritize spot (limitation)
+            // TODO: Support dual WS connections
+            console.warn('Mixed spot/futures subscriptions not fully supported in useBinanceCandles');
+            allStreams.push(...spotStreams);
+            wsUrl = BINANCE_SPOT_WS;
+        }
+
+        if (allStreams.length === 0) return;
+
+        const url = `${wsUrl}/${allStreams.join('/')}`;
         wsRef.current = new WebSocket(url);
 
         wsRef.current.onmessage = (event) => {
             const msg = JSON.parse(event.data);
             if (msg.e === 'kline') {
-                const { s: symbol, k } = msg;
+                let { s: symbol, k } = msg;
+                // If this is from futures WS, add .P suffix back
+                if (wsUrl === BINANCE_FUTURES_WS) {
+                    symbol = symbol + '.P';
+                }
                 const interval = k.i;
                 const close = parseFloat(k.c);
 

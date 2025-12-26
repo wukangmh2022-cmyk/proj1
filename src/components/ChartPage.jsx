@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { createChart, CandlestickSeries, LineSeries, HistogramSeries } from 'lightweight-charts';
+import { getSymbols } from '../utils/storage';
 import '../App.css';
 
 const DRAW_MODES = { NONE: 'none', TRENDLINE: 'trendline', CHANNEL: 'channel', RECT: 'rect', HLINE: 'hline', FIB: 'fib' };
@@ -44,6 +45,8 @@ export default function ChartPage() {
 
     // Config Menu State
     const [menu, setMenu] = useState(null); // { x, y, type, id, data }
+    const [showSymbolMenu, setShowSymbolMenu] = useState(false);
+    const [symbolPrices, setSymbolPrices] = useState({});
     const inDrawMode = drawMode !== DRAW_MODES.NONE;
 
     // Enhanced Indicator State
@@ -60,7 +63,10 @@ export default function ChartPage() {
     });
     const indicatorsRef = useRef(indicators); // Sync ref for callbacks
 
-    const [subIndicator, setSubIndicator] = useState('NONE'); // NONE, RSI, MACD, KDJ
+    const [subIndicator, setSubIndicator] = useState(() => {
+        const saved = localStorage.getItem(`chart_subIndicator_${symbol}`);
+        return saved || 'NONE';
+    }); // NONE, RSI, MACD, KDJ
     const [showSubMenu, setShowSubMenu] = useState(false);
     const subSeriesRefs = useRef({}); // To store sub-chart series objects
 
@@ -495,7 +501,14 @@ export default function ChartPage() {
                     borderVisible: false,
                 });
             } else {
-                s = chart.addSeries(LineSeries, { color: cfg.color, lineWidth: cfg.width, visible: cfg.visible, crosshairMarkerVisible: false });
+                s = chart.addSeries(LineSeries, {
+                    color: cfg.color,
+                    lineWidth: cfg.width,
+                    visible: cfg.visible,
+                    crosshairMarkerVisible: false,
+                    priceLineVisible: false,
+                    lastValueVisible: false
+                });
             }
             maSeriesRefs.current[key] = s;
         });
@@ -755,7 +768,13 @@ export default function ChartPage() {
         const chart = chartRef.current;
 
         // Cleanup old
-        Object.values(subSeriesRefs.current).forEach(s => chart.removeSeries(s));
+        Object.values(subSeriesRefs.current).filter(s => s).forEach(s => {
+            try {
+                chart.removeSeries(s);
+            } catch (e) {
+                console.warn('Failed to remove series:', e);
+            }
+        });
         subSeriesRefs.current = {};
 
         if (subIndicator === 'RSI') {
@@ -802,6 +821,56 @@ export default function ChartPage() {
 
     }, [subIndicator]);
 
+    // Persist subIndicator
+    useEffect(() => {
+        localStorage.setItem(`chart_subIndicator_${symbol}`, subIndicator);
+    }, [subIndicator, symbol]);
+
+    // Fetch prices for symbol menu
+    useEffect(() => {
+        if (!showSymbolMenu) return;
+        const symbols = getSymbols();
+
+        const fetchPrices = async () => {
+            try {
+                const priceMap = {};
+
+                // Separate spot and perpetual symbols
+                const spotSymbols = symbols.filter(s => !s.endsWith('.P'));
+                const perpetualSymbols = symbols.filter(s => s.endsWith('.P'));
+
+                // Fetch spot prices
+                if (spotSymbols.length > 0) {
+                    const spotRes = await fetch(`https://api.binance.com/api/v3/ticker/price`);
+                    const spotData = await spotRes.json();
+                    spotData.forEach(item => {
+                        if (spotSymbols.includes(item.symbol)) {
+                            priceMap[item.symbol] = parseFloat(item.price);
+                        }
+                    });
+                }
+
+                // Fetch perpetual prices
+                if (perpetualSymbols.length > 0) {
+                    const futuresRes = await fetch(`https://fapi.binance.com/fapi/v1/ticker/price`);
+                    const futuresData = await futuresRes.json();
+                    futuresData.forEach(item => {
+                        // Add .P suffix back for display
+                        const displaySymbol = item.symbol + '.P';
+                        if (perpetualSymbols.includes(displaySymbol)) {
+                            priceMap[displaySymbol] = parseFloat(item.price);
+                        }
+                    });
+                }
+
+                setSymbolPrices(priceMap);
+            } catch (e) {
+                console.error('Failed to fetch prices', e);
+            }
+        };
+        fetchPrices();
+    }, [showSymbolMenu]);
+
     // Load data & Infinite Scroll
     useEffect(() => {
         if (!seriesRef.current || !chartRef.current) return;
@@ -817,7 +886,11 @@ export default function ChartPage() {
         // Initial Load
         const load = async () => {
             try {
-                const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=500`);
+                // Detect if symbol is perpetual (.P suffix)
+                const isPerpetual = symbol.endsWith('.P');
+                const baseSymbol = isPerpetual ? symbol.slice(0, -2) : symbol;
+                const apiBase = isPerpetual ? 'https://fapi.binance.com/fapi/v1' : 'https://api.binance.com/api/v3';
+                const res = await fetch(`${apiBase}/klines?symbol=${baseSymbol}&interval=${interval}&limit=500`);
                 const data = await res.json();
                 const formatted = data.map(d => ({ time: d[0] / 1000, open: +d[1], high: +d[2], low: +d[3], close: +d[4], volume: +d[5] }));
 
@@ -896,7 +969,10 @@ export default function ChartPage() {
                 const oldestTime = allDataRef.current[0].time * 1000;
                 isFetchingHistoryRef.current = true;
                 try {
-                    const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=500&endTime=${oldestTime - 1}`);
+                    const isPerpetual = symbol.endsWith('.P');
+                    const baseSymbol = isPerpetual ? symbol.slice(0, -2) : symbol;
+                    const apiBase = isPerpetual ? 'https://fapi.binance.com/fapi/v1' : 'https://api.binance.com/api/v3';
+                    const res = await fetch(`${apiBase}/klines?symbol=${baseSymbol}&interval=${interval}&limit=500&endTime=${oldestTime - 1}`);
                     const raw = await res.json();
                     if (Array.isArray(raw) && raw.length > 0) {
                         const newData = raw.map(d => ({ time: d[0] / 1000, open: +d[1], high: +d[2], low: +d[3], close: +d[4], volume: +d[5] }));
@@ -1370,9 +1446,9 @@ export default function ChartPage() {
     return (
         <div className="chart-page">
             <div className="chart-header" style={{ display: 'flex', flexDirection: 'column', width: '100%', gap: '0', padding: '0', background: '#161a25' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', padding: '10px 10px 5px 10px', gap: '10px' }}>
-                    <button className="back-btn" onClick={() => navigate(-1)} style={{ fontSize: '18px', background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', padding: 0 }}>←</button>
-                    <h2 style={{ margin: 0, fontSize: '16px', color: '#fff' }}>{symbol}</h2>
+                <div style={{ position: 'relative', width: '100%', padding: '10px 0 5px 0', minHeight: '40px' }}>
+                    <button className="back-btn" onClick={() => navigate(-1)} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', fontSize: '24px', background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', padding: 0, zIndex: 10 }}>←</button>
+                    <h2 onClick={() => setShowSymbolMenu(true)} style={{ margin: 0, fontSize: '16px', color: '#fff', fontWeight: 'bold', textAlign: 'center', width: '100%', cursor: 'pointer', userSelect: 'none' }}>{symbol}</h2>
                 </div>
                 <div className="interval-selector"
                     ref={intervalRef}
@@ -1749,8 +1825,43 @@ export default function ChartPage() {
                     <>
                         {/* Price label on right axis */}
                         {(() => {
-                            const price = seriesRef.current.coordinateToPrice(customCrosshair.y);
-                            if (price === null) return null;
+
+
+                            let value = null;
+                            let isSubChart = false;
+
+                            // Calculate boundary: when sub-indicator is active, main chart is ~64.9% of height
+                            const container = containerRef.current;
+                            const containerHeight = container?.clientHeight || 0;
+                            const mainChartHeight = subIndicator !== 'NONE' ? containerHeight * 0.649 : containerHeight;
+
+                            // Debug: log values to help fine-tune
+                            // console.log('Crosshair Y:', customCrosshair.y, 'Boundary:', mainChartHeight, 'In SubChart:', customCrosshair.y > mainChartHeight);
+
+                            // Check if crosshair is in sub-chart area
+                            if (customCrosshair.y > mainChartHeight && subIndicator !== 'NONE') {
+                                let subSeries = null;
+                                if (subIndicator === 'RSI' && subSeriesRefs.current.rsi) {
+                                    subSeries = subSeriesRefs.current.rsi;
+                                } else if (subIndicator === 'MACD' && subSeriesRefs.current.hist) {
+                                    subSeries = subSeriesRefs.current.hist;
+                                } else if (subIndicator === 'KDJ' && subSeriesRefs.current.k) {
+                                    subSeries = subSeriesRefs.current.k;
+                                }
+
+                                if (subSeries) {
+                                    value = subSeries.coordinateToPrice(customCrosshair.y);
+                                    isSubChart = true;
+                                }
+                            }
+
+                            // Fallback to main chart if not in sub-chart or no value yet
+                            if (value === null) {
+                                value = seriesRef.current.coordinateToPrice(customCrosshair.y);
+                            }
+
+                            if (value === null) return null;
+
                             return (
                                 <div style={{
                                     position: 'absolute',
@@ -1766,7 +1877,7 @@ export default function ChartPage() {
                                     zIndex: 20,
                                     boxShadow: '0 1px 2px rgba(0,0,0,0.3)'
                                 }}>
-                                    {price.toFixed(2)}
+                                    {isSubChart ? value.toFixed(2) : value.toFixed(2)}
                                 </div>
                             );
                         })()}
@@ -1781,7 +1892,7 @@ export default function ChartPage() {
                                 <div style={{
                                     position: 'absolute',
                                     left: `${customCrosshair.x - 40}px`,
-                                    bottom: '25px',
+                                    bottom: '2px',
                                     background: 'rgba(252,213,53,0.9)',
                                     color: '#000',
                                     padding: '4px 8px',
@@ -1956,6 +2067,68 @@ export default function ChartPage() {
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* Symbol Switcher Dropdown Menu */}
+            {showSymbolMenu && (
+                <>
+                    {/* Backdrop */}
+                    <div style={{
+                        position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+                        background: 'transparent', zIndex: 9998
+                    }} onClick={() => setShowSymbolMenu(false)} />
+
+                    {/* Dropdown */}
+                    <div style={{
+                        position: 'absolute',
+                        top: '60px', // Below header
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        width: '90%',
+                        maxWidth: '300px',
+                        background: 'rgba(20, 24, 35, 0.65)',
+                        borderRadius: '12px',
+                        border: '1px solid rgba(252, 213, 53, 0.3)',
+                        boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
+                        zIndex: 9999,
+                        maxHeight: '400px',
+                        overflowY: 'auto',
+                        padding: '12px'
+                    }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            {getSymbols().map(sym => {
+                                const price = symbolPrices[sym];
+                                const isCurrent = sym === symbol;
+                                return (
+                                    <div key={sym}
+                                        onClick={() => {
+                                            if (!isCurrent) {
+                                                navigate(`/chart/${sym}`);
+                                                setShowSymbolMenu(false);
+                                            }
+                                        }}
+                                        style={{
+                                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                            padding: '10px 14px',
+                                            background: isCurrent ? 'rgba(252, 213, 53, 0.1)' : 'transparent',
+                                            borderRadius: '8px',
+                                            cursor: isCurrent ? 'default' : 'pointer',
+                                            border: isCurrent ? '1px solid rgba(252, 213, 53, 0.6)' : '1px solid rgba(255, 255, 255, 0.08)',
+                                            transition: 'all 0.2s'
+                                        }}
+                                        onMouseEnter={e => { if (!isCurrent) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)'; }}
+                                        onMouseLeave={e => { if (!isCurrent) e.currentTarget.style.background = 'transparent'; }}
+                                    >
+                                        <span style={{ fontSize: '13px', color: isCurrent ? '#fcd535' : '#fff', fontWeight: isCurrent ? 'bold' : 'normal' }}>{sym}</span>
+                                        <span style={{ fontSize: '12px', color: '#00d68f', fontFamily: 'monospace' }}>
+                                            {price ? price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '...'}
+                                        </span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </>
             )}
         </div>
     );
