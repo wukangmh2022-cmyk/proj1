@@ -20,6 +20,7 @@ const parseInterval = (int) => {
     if (unit === 'h') return val * 3600;
     if (unit === 'd') return val * 86400;
     if (unit === 'w') return val * 604800;
+    if (unit === 'M') return val * 2592000;
     return 60;
 };
 
@@ -43,8 +44,10 @@ export default function ChartPage() {
 
     // Config Menu State
     const [menu, setMenu] = useState(null); // { x, y, type, id, data }
+    const inDrawMode = drawMode !== DRAW_MODES.NONE;
 
     // Enhanced Indicator State
+    const [showAddMenu, setShowAddMenu] = useState(false);
     const DEFAULT_INDICATORS = {
         ma1: { name: 'MA', period: 7, color: '#fcd535', width: 1, visible: true },
         ma2: { name: 'MA', period: 25, color: '#ff9f43', width: 1, visible: true },
@@ -73,6 +76,7 @@ export default function ChartPage() {
     const [activePoint, setActivePoint] = useState(null); // { time, price, x, y }
     const [cursor, setCursor] = useState(null);
     const [legendValues, setLegendValues] = useState({});
+    const [customCrosshair, setCustomCrosshair] = useState(null); // { x, y } for long-press crosshair
 
     const drawModeRef = useRef(DRAW_MODES.NONE);
 
@@ -125,15 +129,15 @@ export default function ChartPage() {
     const [activeHandle, setActiveHandle] = useState(null); // { id, index } - For Indirect Drag
     const [subMenuPos, setSubMenuPos] = useState(null); // { x, y, isBottom }
 
-    // Disable Chart Scroll/Scale when Active Handle is set
+    // Unified Chart Interaction Sync (Lock pan/zoom during drag or long-press)
     useEffect(() => {
         if (!chartRef.current) return;
-        if (activeHandle) {
-            chartRef.current.applyOptions({ handleScale: false, handleScroll: false });
-        } else {
-            chartRef.current.applyOptions({ handleScale: true, handleScroll: true });
-        }
-    }, [activeHandle]);
+        const isLocked = !!activeHandle || !!customCrosshair || !!dragState;
+        chartRef.current.applyOptions({
+            handleScroll: !isLocked,
+            handleScale: !isLocked
+        });
+    }, [activeHandle, customCrosshair, dragState]);
 
     const handleDragStart = (e, id, index) => {
         e.stopPropagation();
@@ -426,6 +430,28 @@ export default function ChartPage() {
                 prevTimeState = timeState;
                 prevPriceState = priceState;
                 updateScreenDrawings();
+
+                // Sync Sticky Crosshair Position during chart pan/zoom
+                if (customCrosshairRef.current) {
+                    const ch = customCrosshairRef.current;
+                    const newX = chart.timeScale().logicalToCoordinate(ch.logic);
+                    const newY = series.priceToCoordinate(ch.price);
+
+                    if (newX !== null && newY !== null) {
+                        // Only update if moved significantly (prevent jitter loops)
+                        if (Math.abs(newX - ch.x) > 0.5 || Math.abs(newY - ch.y) > 0.5) {
+                            setCustomCrosshair(prev => ({ ...prev, x: newX, y: newY }));
+                        }
+                    } else {
+                        // Off screen? could hide it or remove it. Let's remove it if totally off?
+                        // Or just keep it. It might come back.
+                        // Setting x,y to null might break render. 
+                        // Let's just update even if it's off-canvas coordinates.
+                        // Actually coordinate functions might return null.
+                        if (newX !== null) setCustomCrosshair(prev => ({ ...prev, x: newX })); // Partial update? No, usually distinct.
+                        // If null, it means off screen probably.
+                    }
+                }
             }
 
             frameId = requestAnimationFrame(checkSync);
@@ -529,15 +555,15 @@ export default function ChartPage() {
         return () => { window.removeEventListener('resize', resize); chart.remove(); };
     }, []);
 
-    // Toggle native crosshair visibility & mode
+    // Disable native crosshair completely - we'll implement our own
     useEffect(() => {
         if (!chartRef.current) return;
         const isDrawing = drawMode !== DRAW_MODES.NONE;
         chartRef.current.applyOptions({
             crosshair: {
-                mode: isDrawing ? 0 : 1, // 0: Normal, 1: Magnet
-                vertLine: { visible: !isDrawing, labelVisible: !isDrawing },
-                horzLine: { visible: !isDrawing, labelVisible: !isDrawing },
+                mode: 0, // Normal mode for drag-to-pan
+                vertLine: { visible: false, labelVisible: false },
+                horzLine: { visible: false, labelVisible: false },
             }
         });
     }, [drawMode]);
@@ -780,6 +806,9 @@ export default function ChartPage() {
     useEffect(() => {
         if (!seriesRef.current || !chartRef.current) return;
 
+        // Save interval preference
+        localStorage.setItem(`chart_interval_${symbol}`, interval);
+
         // Clear data ref immediately to avoid interval mismatch corruption (e.g. 1h data + 1d websocket update)
         allDataRef.current = [];
         setScreenDrawings([]); // Clear visuals immediately
@@ -791,10 +820,41 @@ export default function ChartPage() {
                 const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=500`);
                 const data = await res.json();
                 const formatted = data.map(d => ({ time: d[0] / 1000, open: +d[1], high: +d[2], low: +d[3], close: +d[4], volume: +d[5] }));
+
                 allDataRef.current = formatted;
                 seriesRef.current.setData(formatted);
                 updateIndicators(formatted);
-                chartRef.current.timeScale().fitContent();
+
+                // Restore Range logic
+                // Restore Range logic
+                const savedRange = localStorage.getItem(`chart_range_${symbol}_${interval}`);
+                let restored = false;
+                if (savedRange && formatted.length > 0) {
+                    try {
+                        const range = JSON.parse(savedRange);
+                        if (range && typeof range.from === 'number' && typeof range.to === 'number') {
+                            const total = formatted.length;
+                            // Check if valid. Allow small buffer for whitespace
+                            if (range.to < total + 100) {
+                                chartRef.current.timeScale().setVisibleLogicalRange(range);
+                                restored = true;
+                            } else {
+                                // Data mismatch. Restore Zoom Level (Span) but Align to Right Edge
+                                const span = range.to - range.from;
+                                chartRef.current.timeScale().setVisibleLogicalRange({
+                                    from: total - span,
+                                    to: total
+                                });
+                                restored = true;
+                            }
+                        }
+                    } catch (e) { console.error(e); }
+                }
+
+                if (!restored) {
+                    chartRef.current.timeScale().fitContent();
+                }
+
             } catch (e) { console.error(e); }
             setIsLoading(false);
         };
@@ -823,6 +883,15 @@ export default function ChartPage() {
 
         // Infinite Scroll Handler
         const handleScroll = async (newRange) => {
+            // Persistence: Save Range
+            const logicalRange = chartRef.current.timeScale().getVisibleLogicalRange();
+            if (logicalRange) {
+                if (saveRangeTimerRef.current) clearTimeout(saveRangeTimerRef.current);
+                saveRangeTimerRef.current = setTimeout(() => {
+                    localStorage.setItem(`chart_range_${symbol}_${interval}`, JSON.stringify(logicalRange));
+                }, 500);
+            }
+
             if (newRange && newRange.from < 20 && !isFetchingHistoryRef.current && allDataRef.current.length > 0) {
                 const oldestTime = allDataRef.current[0].time * 1000;
                 isFetchingHistoryRef.current = true;
@@ -875,14 +944,11 @@ export default function ChartPage() {
         // Not found exact, interpolate
         if (l === 0) {
             const diff = data[0].time - time;
-            const step = data[1] ? data[1].time - data[0].time : estimatedStep;
-            return -diff / step;
+            return -diff / estimatedStep;
         }
         if (l >= data.length) {
             const last = data[data.length - 1];
-            const prev = data[data.length - 2] || { time: last.time - estimatedStep };
-            const step = last.time - prev.time;
-            return (data.length - 1) + (time - last.time) / step;
+            return (data.length - 1) + (time - last.time) / estimatedStep;
         }
         const t1 = data[l - 1].time;
         const t2 = data[l].time;
@@ -897,14 +963,11 @@ export default function ChartPage() {
         const idx = Math.floor(logic);
         const ratio = logic - idx;
         if (idx < 0) {
-            const step = data[1] ? data[1].time - data[0].time : estimatedStep;
-            return data[0].time + logic * step;
+            return data[0].time + logic * estimatedStep;
         }
         if (idx >= data.length - 1) {
             const last = data[data.length - 1];
-            const prev = data[data.length - 2] || { time: last.time - estimatedStep };
-            const step = last.time - prev.time;
-            return last.time + (logic - (data.length - 1)) * step;
+            return last.time + (logic - (data.length - 1)) * estimatedStep;
         }
         const t1 = data[idx].time;
         const t2 = data[idx + 1].time;
@@ -931,6 +994,191 @@ export default function ChartPage() {
     }, [drawings, symbol]);
     // Load effect removed (Handled by lazy init + key remount)
 
+    // Long-press crosshair detection
+    const longPressTimerRef = useRef(null);
+    const saveRangeTimerRef = useRef(null); // For range persistence
+    const isLongPressingRef = useRef(false);
+    const toolbarRef = useRef(null); // For toolbar scroll
+    const toolbarDragRef = useRef({ isDragging: false, startX: 0, scrollLeft: 0 });
+    const intervalRef = useRef(null);
+    const intervalDragRef = useRef({ isDragging: false, startX: 0, scrollLeft: 0 });
+    const startCoordRef = useRef({ x: 0, y: 0 });
+    const lastCoordRef = useRef({ x: 0, y: 0 });
+    const customCrosshairRef = useRef(null);
+
+    // State checking refs (to avoid re-binding effect and killing timer on re-render)
+    const stateRefs = useRef({ drawMode, activeHandle, dragState });
+    useEffect(() => { stateRefs.current = { drawMode, activeHandle, dragState }; }, [drawMode, activeHandle, dragState]);
+    useEffect(() => { customCrosshairRef.current = customCrosshair; }, [customCrosshair]);
+
+    useEffect(() => {
+        const container = containerRef.current;
+        if (!container) return;
+
+        const handlePointerDown = (e) => {
+            // Check latest state from ref
+            const { drawMode, activeHandle, dragState } = stateRefs.current;
+            const isDrawing = drawMode !== DRAW_MODES.NONE;
+
+            // If in draw mode or dragging a handle, don't enable this custom interaction
+            if (isDrawing || dragState) return;
+
+            // Only handle left button / primary touch
+            if (e.button !== undefined && e.button !== 0) return;
+            // Ignore click on UI buttons/controls
+            if (e.target.closest('button') || e.target.closest('.mini-toolbar') || e.target.closest('.interval-selector')) return;
+
+            // IMPORTANT: Check if clicking on a control point (anchor)
+            // If so, we want to prioritize dragging over long-press crosshair
+            // But if we are just selecting a shape (not anchor), we MIGHT want long press to work?
+            // User requirement: "Adding a shape... stable nothing happens".
+            // If we click a shape, it gets selected -> re-render. Since we removed deps, timer should stay.
+            // But we should act conservatively: if hitting an anchor, DEFINITELY return.
+            const isControlPoint = e.target.tagName === 'circle' && parseFloat(e.target.getAttribute('r')) >= 5;
+            if (isControlPoint) return;
+
+            // Force Clear Active Handle if clicking blank
+            if (activeHandle) {
+                setActiveHandle(null);
+                // If not clicking a shape, clear selection too
+                const isShape = ['line', 'rect', 'path', 'g'].includes(e.target.tagName);
+                if (!isShape) {
+                    setSelectedId(null);
+                    setMenu(null);
+                }
+                return;
+            }
+
+            const clientX = e.clientX;
+            const clientY = e.clientY;
+
+            startCoordRef.current = { x: clientX, y: clientY };
+            lastCoordRef.current = { x: clientX, y: clientY };
+            isLongPressingRef.current = false;
+
+            if (customCrosshairRef.current) {
+                // Mode: Virtual Drag (Crosshair already active)
+                try { container.setPointerCapture(e.pointerId); } catch (err) { }
+            } else {
+                // Mode: Idle (Try to detect long press)
+
+                const rect = container.getBoundingClientRect();
+                const localX = clientX - rect.left;
+                const localY = clientY - rect.top;
+
+                if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+                longPressTimerRef.current = setTimeout(() => {
+                    isLongPressingRef.current = true;
+
+                    // Trigger Crosshair
+                    if (chartRef.current && seriesRef.current) {
+                        const logic = chartRef.current.timeScale().coordinateToLogical(localX);
+                        const price = seriesRef.current.coordinateToPrice(localY);
+                        setCustomCrosshair({ x: localX, y: localY, logic, price });
+                        // We must re-instantiate capture here because it might have been lost
+                        try { container.setPointerCapture(e.pointerId); } catch (err) { }
+                    }
+                }, 800);
+            }
+        };
+
+        const handlePointerMove = (e) => {
+            const clientX = e.clientX;
+            const clientY = e.clientY;
+            const dx = clientX - lastCoordRef.current.x;
+            const dy = clientY - lastCoordRef.current.y;
+            lastCoordRef.current = { x: clientX, y: clientY };
+
+            if (customCrosshairRef.current && !isLongPressingRef.current) {
+                // Virtual Drag: Move crosshair by delta
+                setCustomCrosshair(prev => {
+                    if (!prev) return null;
+                    const newX = prev.x + dx;
+                    const newY = prev.y + dy;
+                    if (chartRef.current && seriesRef.current) {
+                        const logic = chartRef.current.timeScale().coordinateToLogical(newX);
+                        const price = seriesRef.current.coordinateToPrice(newY);
+                        return { ...prev, x: newX, y: newY, logic, price };
+                    }
+                    return { ...prev, x: newX, y: newY };
+                });
+                return;
+            }
+
+            // Long Press Cancel Logic
+            if (longPressTimerRef.current && !customCrosshairRef.current) {
+                const totalDx = Math.abs(clientX - startCoordRef.current.x);
+                const totalDy = Math.abs(clientY - startCoordRef.current.y);
+                if (totalDx > 10 || totalDy > 10) {
+                    clearTimeout(longPressTimerRef.current);
+                    longPressTimerRef.current = null;
+                }
+            }
+
+            // Initial positioning during long press
+            if (isLongPressingRef.current) {
+                const rect = container.getBoundingClientRect();
+                const localX = clientX - rect.left;
+                const localY = clientY - rect.top;
+                if (chartRef.current && seriesRef.current) {
+                    const logic = chartRef.current.timeScale().coordinateToLogical(localX);
+                    const price = seriesRef.current.coordinateToPrice(localY);
+                    setCustomCrosshair({ x: localX, y: localY, logic, price });
+                }
+            }
+        };
+
+        const handlePointerUp = (e) => {
+            // Cancel Timer
+            if (longPressTimerRef.current) {
+                clearTimeout(longPressTimerRef.current);
+                longPressTimerRef.current = null;
+            }
+
+            if (customCrosshairRef.current && !isLongPressingRef.current) {
+                // Click check
+                const totalDx = Math.abs(e.clientX - startCoordRef.current.x);
+                const totalDy = Math.abs(e.clientY - startCoordRef.current.y);
+                if (totalDx < 5 && totalDy < 5) {
+                    setCustomCrosshair(null);
+                }
+            }
+
+            try { container.releasePointerCapture(e.pointerId); } catch (err) { }
+            isLongPressingRef.current = false;
+        };
+
+        const handlePointerCancel = (e) => {
+            handlePointerUp(e);
+        };
+
+        // Use Capture for pointerdown to detect presses even on drawings
+        container.addEventListener('pointerdown', handlePointerDown, { capture: true });
+        window.addEventListener('pointermove', handlePointerMove);
+        window.addEventListener('pointerup', handlePointerUp);
+        window.addEventListener('pointercancel', handlePointerCancel);
+
+        return () => {
+            container.removeEventListener('pointerdown', handlePointerDown, { capture: true });
+            window.removeEventListener('pointermove', handlePointerMove);
+            window.removeEventListener('pointerup', handlePointerUp);
+            window.removeEventListener('pointercancel', handlePointerCancel);
+            if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+        };
+    }, []); // Empty dependency array! Robust against re-renders!
+
+    // Apply scroll/scale lock when custom crosshair or activeHandle is active
+    useEffect(() => {
+        if (!chartRef.current) return;
+        // Lock chart if Crosshair is active OR Dragging something
+        const shouldLock = !!customCrosshair || !!activeHandle;
+        chartRef.current.applyOptions({
+            handleScroll: !shouldLock,
+            handleScale: !shouldLock,
+            // Disable kinetic scroll to prevent conflict
+            kineticScroll: { touch: !shouldLock, mouse: !shouldLock }
+        });
+    }, [customCrosshair, activeHandle]);
     const deleteSelected = () => { setDrawings(p => p.filter(d => d.id !== selectedId)); setSelectedId(null); };
     const clearAll = () => { setDrawings([]); setSelectedId(null); };
     // Virtual Cursor Interaction Logic
@@ -985,10 +1233,10 @@ export default function ChartPage() {
 
             const type = drawModeRef.current;
             if (type === 'hline') {
-                drawing = { id: genId('hline'), type: 'hline', price: newPending[0].price };
+                drawing = { id: genId('hline'), type: 'hline', price: newPending[0].price, width: 1 };
             } else {
                 // Unified: All time-based drawings use 'points'
-                drawing = { id: genId(type), type, points: newPending.map(p => ({ ...p, time: getTime(p.logic) })) };
+                drawing = { id: genId(type), type, points: newPending.map(p => ({ ...p, time: getTime(p.logic) })), width: 1 };
             }
             setDrawings(prev => [...prev, drawing]);
             setPendingPoints([]);
@@ -1115,29 +1363,63 @@ export default function ChartPage() {
         return null; // Should be handled by channel block
     };
 
-    const intervals = '1m,5m,15m,30m,1h,4h,1d,3d,1w'.split(',');
-    const inDrawMode = drawMode !== DRAW_MODES.NONE;
+    const intervals = '1m,5m,15m,30m,1h,2h,4h,8h,1d,3d,1w,1M'.split(',');
     const pointsNeeded = { hline: 1, trendline: 2, rect: 2, channel: 3, fib: 3 };
     const currentNeeded = pointsNeeded[drawMode] || 0;
 
     return (
         <div className="chart-page">
-            <div className="chart-header">
-                <button className="back-btn" onClick={() => navigate(-1)}>←</button>
-                <h2 style={{ margin: 0, fontSize: '16px' }}>{symbol}</h2>
-                <div className="interval-selector">
-                    {intervals.map(i => <button key={i} className={interval === i ? 'active' : ''} onClick={() => setInterval(i)}>{i}</button>)}
+            <div className="chart-header" style={{ display: 'flex', flexDirection: 'column', width: '100%', gap: '0', padding: '0', background: '#161a25' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', padding: '10px 10px 5px 10px', gap: '10px' }}>
+                    <button className="back-btn" onClick={() => navigate(-1)} style={{ fontSize: '18px', background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', padding: 0 }}>←</button>
+                    <h2 style={{ margin: 0, fontSize: '16px', color: '#fff' }}>{symbol}</h2>
+                </div>
+                <div className="interval-selector"
+                    ref={intervalRef}
+                    onPointerDown={(e) => {
+                        intervalDragRef.current = { isDragging: false, startX: e.pageX, scrollLeft: e.currentTarget.scrollLeft };
+                        e.currentTarget.setPointerCapture(e.pointerId);
+                    }}
+                    onPointerMove={(e) => {
+                        if (e.pointerType === 'mouse' && e.buttons !== 1) return;
+                        const drag = intervalDragRef.current;
+                        const walk = e.pageX - drag.startX;
+                        if (Math.abs(walk) > 5) drag.isDragging = true;
+                        if (drag.isDragging) {
+                            e.currentTarget.scrollLeft = drag.scrollLeft - walk;
+                            e.preventDefault();
+                        }
+                    }}
+                    onPointerUp={(e) => e.currentTarget.releasePointerCapture(e.pointerId)}
+                    onClickCapture={(e) => {
+                        if (intervalDragRef.current.isDragging) {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            intervalDragRef.current.isDragging = false;
+                        }
+                    }}
+                    style={{
+                        display: 'flex', flexWrap: 'nowrap', gap: '8px', overflowX: 'auto',
+                        whiteSpace: 'nowrap', scrollbarWidth: 'none', msOverflowStyle: 'none',
+                        touchAction: 'none', userSelect: 'none', cursor: 'grab',
+                        width: '100%', padding: '0 10px 10px 10px', alignItems: 'center', boxSizing: 'border-box'
+                    }}
+                >
+                    <style>{`.interval-selector::-webkit-scrollbar { display: none; }`}</style>
+                    {intervals.map(i => <button key={i} className={interval === i ? 'active' : ''} onClick={() => setInterval(i)} style={{ flexShrink: 0 }}>{i}</button>)}
                 </div>
             </div>
 
             <div ref={containerRef} className="chart-container"
-                style={{ position: 'relative', cursor: inDrawMode ? 'crosshair' : 'default', touchAction: activeHandle ? 'none' : 'auto' }}
-                onPointerDown={(e) => {
-                    // Indirect Drag Start
-                    if (activeHandle && !dragState) {
-                        handleDragStart(e, activeHandle.id, activeHandle.index);
-                    }
+                style={{
+                    position: 'relative',
+                    cursor: inDrawMode ? 'crosshair' : 'default',
+                    touchAction: 'none',
+                    userSelect: 'none',
+                    WebkitUserSelect: 'none',
+                    WebkitTouchCallout: 'none'
                 }}
+                onContextMenu={(e) => e.preventDefault()}
                 onClick={() => { setSelectedId(null); setMenu(null); setActiveHandle(null); }}>
 
                 {/* Legend */}
@@ -1336,6 +1618,16 @@ export default function ChartPage() {
                                 <circle cx={activePoint.x} cy={activePoint.y} r="5" fill="transparent" stroke={getColor(drawMode)} strokeWidth="2" />
                             </g>
                         )}
+                        {/* Custom long-press crosshair */}
+                        {customCrosshair && !inDrawMode && (
+                            <g>
+                                {/* Crosshair lines - free positioning, no price snap */}
+                                <line x1={0} y1={customCrosshair.y} x2="100%" y2={customCrosshair.y} stroke="rgba(252,213,53,0.8)" strokeWidth="1" strokeDasharray="4,4" />
+                                <line x1={customCrosshair.x} y1={0} x2={customCrosshair.x} y2="100%" stroke="rgba(252,213,53,0.8)" strokeWidth="1" strokeDasharray="4,4" />
+                                {/* Center dot */}
+                                <circle cx={customCrosshair.x} cy={customCrosshair.y} r="4" fill="rgba(252,213,53,0.3)" stroke="rgba(252,213,53,1)" strokeWidth="2" />
+                            </g>
+                        )}
                         {/* Confirmed pending points (Solid Anchor) */}
                         {pendingPoints.map((p, i) => {
                             const sp = logicToScreen(p.logic, p.price);
@@ -1412,7 +1704,7 @@ export default function ChartPage() {
                                     {/* Hit Area */}
                                     <line x1={0} y1={d.screenY} x2="100%" y2={d.screenY} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
                                     {/* Visible */}
-                                    <line x1={0} y1={d.screenY} x2="100%" y2={d.screenY} stroke={color} strokeWidth={sel ? (d.width || 2) + 1 : (d.width || 2)} pointerEvents="none" />
+                                    <line x1={0} y1={d.screenY} x2="100%" y2={d.screenY} stroke={color} strokeWidth={sel ? (d.width || 1) + 1 : (d.width || 1)} pointerEvents="none" />
                                     <text x={5} y={d.screenY - 5} fill={color} fontSize="10" pointerEvents="none">{d.id}</text>
                                     {sel && <circle cx={(containerRef.current?.clientWidth || 300) / 2} cy={d.screenY} r="7" fill={activeHandle?.id === d.id && activeHandle?.index === 0 ? "#fff" : color} stroke={activeHandle?.id === d.id && activeHandle?.index === 0 ? color : "#fff"} strokeWidth="2" cursor="ns-resize" pointerEvents="all" {...anchorHandlers(0)} />}
                                 </g>
@@ -1424,7 +1716,7 @@ export default function ChartPage() {
                                         {/* Hit Area */}
                                         <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke="transparent" strokeWidth="15" cursor="pointer" pointerEvents="all" {...handlers} />
                                         {/* Visible */}
-                                        <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke={color} strokeWidth={d.width || 2} pointerEvents="none" />
+                                        <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke={color} strokeWidth={d.width || 1} pointerEvents="none" />
                                         {sel && d.screenPoints.map((p, i) => (
                                             <circle key={i} cx={p.x} cy={p.y} r="6" fill={activeHandle?.id === d.id && activeHandle?.index === i ? "#fff" : color} stroke={activeHandle?.id === d.id && activeHandle?.index === i ? color : "#fff"} strokeWidth="2" cursor="crosshair" pointerEvents="all" {...anchorHandlers(i)} />
                                         ))}
@@ -1439,7 +1731,7 @@ export default function ChartPage() {
                                 const h = Math.abs(p2.y - p1.y);
                                 return (
                                     <g key={d.id}>
-                                        <rect x={x} y={y} width={w} height={h} fill={`${color}20`} stroke={color} strokeWidth={sel ? (d.width || 2) + 1 : (d.width || 2)} pointerEvents="all" cursor="pointer" {...handlers} />
+                                        <rect x={x} y={y} width={w} height={h} fill={`${color}20`} stroke={color} strokeWidth={sel ? (d.width || 1) + 1 : (d.width || 1)} pointerEvents="all" cursor="pointer" {...handlers} />
                                         {sel && <><circle cx={p1.x} cy={p1.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 0)} /><circle cx={p2.x} cy={p2.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 1)} /></>}
                                         <text x={x + 5} y={y - 5} fill={color} fontSize="10" pointerEvents="none">{d.id}</text>
                                     </g>
@@ -1451,6 +1743,62 @@ export default function ChartPage() {
                         })}
                     </g>
                 </svg>
+
+                {/* Custom Crosshair Labels */}
+                {customCrosshair && !inDrawMode && chartRef.current && seriesRef.current && (
+                    <>
+                        {/* Price label on right axis */}
+                        {(() => {
+                            const price = seriesRef.current.coordinateToPrice(customCrosshair.y);
+                            if (price === null) return null;
+                            return (
+                                <div style={{
+                                    position: 'absolute',
+                                    right: '2px', // Align to right axis with small padding
+                                    top: `${customCrosshair.y - 12}px`,
+                                    background: 'rgba(252,213,53,0.9)', // Unified Yellow Style
+                                    color: '#000',
+                                    borderRadius: '4px',
+                                    padding: '4px 8px',
+                                    fontSize: '11px',
+                                    fontWeight: 'bold',
+                                    pointerEvents: 'none',
+                                    zIndex: 20,
+                                    boxShadow: '0 1px 2px rgba(0,0,0,0.3)'
+                                }}>
+                                    {price.toFixed(2)}
+                                </div>
+                            );
+                        })()}
+                        {/* Time label on bottom axis */}
+                        {(() => {
+                            const logic = chartRef.current.timeScale().coordinateToLogical(customCrosshair.x);
+                            if (logic === null) return null;
+                            const time = getTime(logic);
+                            const date = new Date(time * 1000);
+                            const timeStr = `${date.getMonth() + 1}/${date.getDate()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+                            return (
+                                <div style={{
+                                    position: 'absolute',
+                                    left: `${customCrosshair.x - 40}px`,
+                                    bottom: '25px',
+                                    background: 'rgba(252,213,53,0.9)',
+                                    color: '#000',
+                                    padding: '4px 8px',
+                                    borderRadius: '4px',
+                                    fontSize: '11px',
+                                    fontWeight: 'bold',
+                                    pointerEvents: 'none',
+                                    zIndex: 15,
+                                    whiteSpace: 'nowrap'
+                                }}>
+                                    {timeStr}
+                                </div>
+                            );
+                        })()}
+                    </>
+                )}
+
                 {/* Interaction Layer for Virtual Cursor */}
                 {inDrawMode && (
                     <div
@@ -1462,7 +1810,45 @@ export default function ChartPage() {
                 )}
             </div>
 
-            <div className="drawing-toolbar">
+            <div className="drawing-toolbar"
+                ref={toolbarRef}
+                onPointerDown={(e) => {
+                    toolbarDragRef.current = { isDragging: false, startX: e.pageX, scrollLeft: e.currentTarget.scrollLeft };
+                    e.currentTarget.setPointerCapture(e.pointerId);
+                }}
+                onPointerMove={(e) => {
+                    if (e.pointerType === 'mouse' && e.buttons !== 1) return;
+                    const drag = toolbarDragRef.current;
+                    const walk = e.pageX - drag.startX;
+                    if (Math.abs(walk) > 5) drag.isDragging = true;
+                    if (drag.isDragging) {
+                        e.currentTarget.scrollLeft = drag.scrollLeft - walk;
+                    }
+                }}
+                onPointerUp={(e) => {
+                    e.currentTarget.releasePointerCapture(e.pointerId);
+                }}
+                onClickCapture={(e) => {
+                    if (toolbarDragRef.current.isDragging) {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        toolbarDragRef.current.isDragging = false;
+                    }
+                }}
+                style={{
+                    overflowX: 'auto', // Keep for basic support
+                    whiteSpace: 'nowrap',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '10px 8px',
+                    scrollbarWidth: 'none', /* Firefox */
+                    msOverflowStyle: 'none', /* IE/Edge */
+                    cursor: 'grab',
+                    userSelect: 'none',
+                    touchAction: 'none' // Important: Disable browser handling of gestures
+                }}>
+                <style>{`.drawing-toolbar::-webkit-scrollbar { display: none; }`}</style>
                 <div style={{ position: 'relative' }}>
                     <button className={subIndicator !== 'NONE' ? 'active' : ''}
                         onClick={(e) => {
@@ -1503,6 +1889,9 @@ export default function ChartPage() {
                 {selectedId && <button onClick={deleteSelected} style={{ color: '#ff4757' }}>🗑</button>}
                 {drawings.length > 0 && !selectedId && <button onClick={clearAll} style={{ color: '#ff4757', opacity: 0.6 }}>🗑</button>}
                 {selectedId && <span style={{ color: '#00d68f', fontSize: '11px', marginLeft: '6px' }}>{selectedId}</span>}
+
+                {/* Add More Button */}
+                <button onClick={() => setShowAddMenu(true)} style={{ marginLeft: '8px', fontSize: '16px' }}>+</button>
             </div>
 
             {/* Sub Indicator Menu (Fixed Global Position) */}
@@ -1528,6 +1917,44 @@ export default function ChartPage() {
                             {type === 'NONE' ? '无' : type}
                         </button>
                     ))}
+                </div>
+            )}
+
+            {/* Add More Tools Modal */}
+            {showAddMenu && (
+                <div style={{
+                    position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+                    background: 'rgba(0,0,0,0.6)', zIndex: 10000,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                }} onClick={() => setShowAddMenu(false)}>
+                    <div style={{
+                        background: '#1e222d', padding: '20px', borderRadius: '16px',
+                        width: '85%', maxWidth: '360px', maxHeight: '80%', overflowY: 'auto',
+                        position: 'relative', border: '1px solid #2a2e39',
+                        boxShadow: '0 10px 40px rgba(0,0,0,0.5)'
+                    }} onClick={e => e.stopPropagation()}>
+                        <button onClick={() => setShowAddMenu(false)} style={{
+                            position: 'absolute', top: '15px', right: '15px',
+                            background: 'transparent', border: 'none', color: '#666', fontSize: '24px', cursor: 'pointer'
+                        }}>×</button>
+                        <h3 style={{ marginTop: 0, marginBottom: '24px', color: '#fcd535', fontSize: '18px' }}>添加绘图工具</h3>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
+                            {['交易', '波浪', '江恩', '形态', '形状', '测量', '标注'].map((cat, i) => (
+                                <div key={cat} onClick={() => alert('即将推出: ' + cat)} style={{
+                                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'pointer'
+                                }}>
+                                    <div style={{
+                                        width: '56px', height: '56px', background: '#2a2e39', borderRadius: '12px',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#00d68f', fontSize: '24px'
+                                    }}>
+                                        {/* Simple icons for now */}
+                                        {i === 0 ? '📊' : i === 1 ? '🌊' : i === 2 ? '📐' : i === 3 ? '🧩' : i === 4 ? '⬜' : i === 5 ? '📏' : '📝'}
+                                    </div>
+                                    <span style={{ fontSize: '11px', color: '#999', textAlign: 'center' }}>{cat}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
                 </div>
             )}
         </div>
