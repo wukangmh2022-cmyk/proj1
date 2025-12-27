@@ -181,6 +181,7 @@ function HomePage() {
       }
       await FloatingWidget.start();
       setFloatingActive(true);
+      localStorage.setItem('floating_active', 'true'); // Persist state
       floatingActiveRef.current = true;
       await FloatingWidget.setSymbols({ symbols });
       const currentConfig = getFloatingConfig();
@@ -201,6 +202,7 @@ function HomePage() {
       floatingActiveRef.current = false;
       await FloatingWidget.stop();
       setFloatingActive(false);
+      localStorage.removeItem('floating_active'); // Clear state
     } catch (e) {
       console.error(e);
     }
@@ -223,6 +225,19 @@ function HomePage() {
       }
     }
   };
+
+  // Auto-start floating widget if persisted
+  useEffect(() => {
+    const shouldStart = Capacitor.isNativePlatform() && localStorage.getItem('floating_active') === 'true';
+    if (shouldStart) {
+      // Chain after startData to ensure Service is ready
+      // Give it a solid 1s delay to allow App resume and Permission checks
+      setTimeout(() => {
+        console.log('Auto-starting Floating Widget...');
+        startFloating();
+      }, 1000);
+    }
+  }, []);
 
   return (
     <div className="app-container" onClick={() => {
@@ -275,7 +290,10 @@ function HomePage() {
                 color: '#000',
                 fontSize: '14px',
                 fontWeight: 'bold',
-                cursor: 'pointer'
+                fontWeight: 'bold',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                flexShrink: 0
               }}
             >
               添加

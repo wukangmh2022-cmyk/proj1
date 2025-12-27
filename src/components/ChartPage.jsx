@@ -4,6 +4,7 @@ import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { createChart, CandlestickSeries, LineSeries, HistogramSeries } from 'lightweight-charts';
 import { getSymbols } from '../utils/storage';
+import { useBinanceTickers } from '../hooks/useBinanceTickers';
 import '../App.css';
 
 const DRAW_MODES = { NONE: 'none', TRENDLINE: 'trendline', CHANNEL: 'channel', RECT: 'rect', HLINE: 'hline', FIB: 'fib' };
@@ -56,6 +57,12 @@ export default function ChartPage() {
     const [symbolPrices, setSymbolPrices] = useState({});
     const inDrawMode = drawMode !== DRAW_MODES.NONE;
 
+    // Use dynamic tickers for symbol menu and other UI
+    // Ensure we start with all symbols
+    const [allSymbols] = useState(() => getSymbols());
+    const liveTickers = useBinanceTickers(allSymbols);
+
+
     // Enhanced Indicator State
     const [showAddMenu, setShowAddMenu] = useState(false);
     const DEFAULT_INDICATORS = {
@@ -98,8 +105,8 @@ export default function ChartPage() {
 
     const getLogic = useCallback((time) => {
         const data = allDataRef.current;
-        if (!data || !data.length) return 0;
-        // Binary search
+        if (data.length === 0) return null; // Return null instead of 0 to avoid zeroing
+        // Binary search for closest time
         let l = 0, r = data.length - 1;
         while (l <= r) {
             const mid = (l + r) >> 1;
@@ -340,7 +347,7 @@ export default function ChartPage() {
             // Debug Log
             // console.log(`[getLogic] Time: ${time}, Interval: ${interval}, EstStep: ${estimatedStep}`);
 
-            if (data.length === 0) return 0;
+            if (data.length === 0) return null; // Return null instead of 0 to avoid zeroing
             // Binary search for closest time
             let l = 0, r = data.length - 1;
             while (l <= r) {
@@ -833,50 +840,8 @@ export default function ChartPage() {
         localStorage.setItem(`chart_subIndicator_${symbol}`, subIndicator);
     }, [subIndicator, symbol]);
 
-    // Fetch prices for symbol menu
-    useEffect(() => {
-        if (!showSymbolMenu) return;
-        const symbols = getSymbols();
+    // Resume Data Gap Fill logic removed as per user request (handled by backend/other commit)
 
-        const fetchPrices = async () => {
-            try {
-                const priceMap = {};
-
-                // Separate spot and perpetual symbols
-                const spotSymbols = symbols.filter(s => !s.endsWith('.P'));
-                const perpetualSymbols = symbols.filter(s => s.endsWith('.P'));
-
-                // Fetch spot prices
-                if (spotSymbols.length > 0) {
-                    const spotRes = await fetch(`https://api.binance.com/api/v3/ticker/price`);
-                    const spotData = await spotRes.json();
-                    spotData.forEach(item => {
-                        if (spotSymbols.includes(item.symbol)) {
-                            priceMap[item.symbol] = parseFloat(item.price);
-                        }
-                    });
-                }
-
-                // Fetch perpetual prices
-                if (perpetualSymbols.length > 0) {
-                    const futuresRes = await fetch(`https://fapi.binance.com/fapi/v1/ticker/price`);
-                    const futuresData = await futuresRes.json();
-                    futuresData.forEach(item => {
-                        // Add .P suffix back for display
-                        const displaySymbol = item.symbol + '.P';
-                        if (perpetualSymbols.includes(displaySymbol)) {
-                            priceMap[displaySymbol] = parseFloat(item.price);
-                        }
-                    });
-                }
-
-                setSymbolPrices(priceMap);
-            } catch (e) {
-                console.error('Failed to fetch prices', e);
-            }
-        };
-        fetchPrices();
-    }, [showSymbolMenu]);
 
     // Load data & Infinite Scroll
     useEffect(() => {
@@ -904,6 +869,8 @@ export default function ChartPage() {
                 allDataRef.current = formatted;
                 seriesRef.current.setData(formatted);
                 updateIndicators(formatted);
+                // Force redraw drawings with new data time-scale, using rAF to ensure TimeScale is ready
+                requestAnimationFrame(() => updateScreenDrawings());
 
                 // Restore Range logic
                 // Restore Range logic
@@ -1066,7 +1033,7 @@ export default function ChartPage() {
     // Back
     useEffect(() => {
         if (!Capacitor.isNativePlatform()) return;
-        const l = CapacitorApp.addListener('backButton', () => navigate(-1));
+        const l = CapacitorApp.addListener('backButton', () => navigate('/'));
         return () => { l.then(r => r.remove()); };
     }, [navigate]);
 
@@ -1454,7 +1421,7 @@ export default function ChartPage() {
         <div className="chart-page">
             <div className="chart-header" style={{ display: 'flex', flexDirection: 'column', width: '100%', gap: '0', padding: '0', background: '#161a25' }}>
                 <div style={{ position: 'relative', width: '100%', padding: '10px 0 5px 0', minHeight: '40px' }}>
-                    <button className="back-btn" onClick={() => navigate(-1)} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', fontSize: '24px', background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', padding: 0, zIndex: 10 }}>←</button>
+                    <button className="back-btn" onClick={() => navigate('/')} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', fontSize: '24px', background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', padding: 0, zIndex: 10 }}>←</button>
                     <h2 onClick={() => setShowSymbolMenu(true)} style={{ margin: 0, fontSize: '16px', color: '#fff', fontWeight: 'bold', textAlign: 'center', width: '100%', cursor: 'pointer', userSelect: 'none' }}>{symbol}</h2>
                 </div>
                 <div className="interval-selector"
@@ -2103,8 +2070,8 @@ export default function ChartPage() {
                         padding: '12px'
                     }}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                            {getSymbols().map(sym => {
-                                const price = symbolPrices[sym];
+                            {allSymbols.map(sym => {
+                                const price = liveTickers[sym]?.price;
                                 const isCurrent = sym === symbol;
                                 return (
                                     <div key={sym}
