@@ -32,7 +32,14 @@ export default function ChartPage() {
     const chartRef = useRef(null);
     const seriesRef = useRef(null);
 
-    const [interval, setIntervalState] = useState(localStorage.getItem(`chart_interval_${symbol}`) || '1h');
+    const [interval, setIntervalState] = useState(() => {
+        const saved = localStorage.getItem(`chart_interval_${symbol}`);
+        // Fix for corrupted localStorage from previous bug
+        if (saved && !saved.includes('object') && parseInterval(saved) !== 60) {
+            return saved;
+        }
+        return '1h';
+    });
     const [drawMode, setDrawModeState] = useState(DRAW_MODES.NONE);
     // Lazy init drawings to avoid empty state overwriting storage
     const [drawings, setDrawings] = useState(() => {
