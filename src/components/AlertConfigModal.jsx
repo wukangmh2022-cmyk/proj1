@@ -27,6 +27,7 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
 
     const [activeTab, setActiveTab] = useState('new');
     const [myAlerts, setMyAlerts] = useState([]);
+    const [history, setHistory] = useState([]);
     const [editId, setEditId] = useState(null);
 
     // Drawings

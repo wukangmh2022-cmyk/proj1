@@ -328,7 +328,35 @@ export default function ChartPage() {
     // Data <-> Screen
     const logicToScreen = useCallback((logic, price) => {
         if (!chartRef.current || !seriesRef.current || logic === null || isNaN(logic)) return null;
-        const x = chartRef.current.timeScale().logicalToCoordinate(logic);
+
+        const timeScale = chartRef.current.timeScale();
+        let x = timeScale.logicalToCoordinate(logic);
+
+        // FIX: Handle "Zeroing" bug where library returns 0 or clamps for off-screen points
+        // If x is 0 or very close to 0, but logic suggests it should be far left/right,
+        // we manually extrapolate.
+        const visibleRange = timeScale.getVisibleLogicalRange();
+        if (visibleRange) {
+            const { from, to } = visibleRange;
+            const width = timeScale.width();
+            // If point is significantly to the left of visible range, X should be negative
+            if (logic < from && (x === null || x >= 0)) {
+                const rangeSize = to - from;
+                const pxPerLogic = rangeSize > 0 ? (width / rangeSize) : 0;
+                if (pxPerLogic > 0) {
+                    x = (logic - from) * pxPerLogic; // Will be negative
+                }
+            }
+            // Handle right side if needed (usually less critical for "zeroing" aligned to left)
+            if (logic > to && (x === null || x <= width)) {
+                const rangeSize = to - from;
+                const pxPerLogic = rangeSize > 0 ? (width / rangeSize) : 0;
+                if (pxPerLogic > 0) {
+                    x = width + (logic - to) * pxPerLogic;
+                }
+            }
+        }
+
         const y = seriesRef.current.priceToCoordinate(price);
         return (x !== null && y !== null) ? { x, y } : null;
     }, []);

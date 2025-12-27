@@ -471,7 +471,7 @@ function HomePage() {
       {alertModalSymbol && (
         <AlertConfigModal
           symbol={alertModalSymbol}
-          currentPrice={tickers[alertModalSymbol]?.price}
+          currentPrice={tickers[alertModalSymbol]?.price || ''}
           onClose={() => setAlertModalSymbol(null)}
         />
       )}
