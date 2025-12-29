@@ -601,7 +601,7 @@ public class FloatingWindowService extends Service {
         if (hasActiveAlerts) {
             if (wakeLock == null) {
                 android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
-                wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "BinanceMonitor::AlertService");
+                wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "AmazeMonitor::AlertService");
             }
             if (!wakeLock.isHeld()) {
                 wakeLock.acquire();

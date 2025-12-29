@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">BinanceMonitor</string>
-    <string name="title_activity_main">BinanceMonitor</string>
+    <string name="app_name">AmazeMonitor</string>
+    <string name="title_activity_main">AmazeMonitor</string>
     <string name="package_name">com.binance.pricemonitor</string>
     <string name="custom_url_scheme">com.binance.pricemonitor</string>
 </resources>

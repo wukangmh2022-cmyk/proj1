@@ -51,7 +51,7 @@
   },
   "build": {
     "appId": "com.binance.pricemonitor",
-    "productName": "BinanceMonitor",
+    "productName": "AmazeMonitor",
     "files": [
       "dist/**/*",
       "electron/**/*"
