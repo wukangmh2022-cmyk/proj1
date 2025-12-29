@@ -1155,6 +1155,9 @@ export default function ChartPage() {
                 }, 500);
             }
 
+            // Recompute drawing screen positions when view changes
+            requestAnimationFrame(() => updateScreenDrawings());
+
             if (newRange && newRange.from < 20 && !isFetchingHistoryRef.current && allDataRef.current.length > 0) {
                 const oldestTime = allDataRef.current[0].time * 1000;
                 isFetchingHistoryRef.current = true;
