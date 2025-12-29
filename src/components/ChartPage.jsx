@@ -115,7 +115,6 @@ export default function ChartPage() {
     const [isLoading, setIsLoading] = useState(true);
     const [selectedId, setSelectedId] = useState(null);
     const [isLandscape, setIsLandscape] = useState(false);
-    const selectCandidateRef = useRef(null); // {id, x, y, t}
     const tapSelectedRef = useRef(false);
     // Orientation toggle removed per latest request (rely on system auto-rotate)
 
@@ -1833,34 +1832,23 @@ export default function ChartPage() {
                     const y = e.clientY - rect.top;
                     const hitId = hitTestDrawing(x, y);
                     if (hitId) {
-                        selectCandidateRef.current = { id: hitId, x: e.clientX, y: e.clientY, t: Date.now() };
+                        setSelectedId(hitId);
+                        tapSelectedRef.current = true;
                     } else {
-                        selectCandidateRef.current = null;
+                        tapSelectedRef.current = false;
                     }
                 }}
-                onPointerMoveCapture={(e) => {
-                    // Do not cancel candidate on small moves; allow tap selection even with minor drift
-                }}
-                onPointerUpCapture={(e) => {
-                    const cand = selectCandidateRef.current;
+                onPointerUpCapture={() => {
+                    // reset tap flag after gesture end
                     tapSelectedRef.current = false;
-                    if (cand) {
-                        const dt = Date.now() - (cand.t || Date.now());
-                        // Treat as tap only if quick and without movement
-                        if (dt < 350) {
-                            setSelectedId(cand.id);
-                            tapSelectedRef.current = true;
-                        }
-                    }
-                    selectCandidateRef.current = null;
                 }}
                 onPointerCancelCapture={() => {
-                    selectCandidateRef.current = null;
+                    tapSelectedRef.current = false;
                 }}
                 onPointerLeaveCapture={() => {
-                    selectCandidateRef.current = null;
+                    tapSelectedRef.current = false;
                 }}
-                onClick={(e) => {
+                onClick={() => {
                     if (tapSelectedRef.current) {
                         tapSelectedRef.current = false;
                         return;
