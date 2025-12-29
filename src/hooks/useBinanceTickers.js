@@ -223,6 +223,38 @@ export const useBinanceTickers = (symbols = []) => {
         connectSpot(spotSymbols);
         connectFutures(futuresSymbols);
 
+        // One-shot REST fallback to seed prices (useful for .P before WS ticks land)
+        const seedPrices = async () => {
+            try {
+                const updates = {};
+                // Spot
+                await Promise.all(spotSymbols.map(async (s) => {
+                    try {
+                        const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${s}`);
+                        const json = await res.json();
+                        const price = parseFloat(json.price);
+                        if (!Number.isNaN(price)) updates[s] = { price, change: 0, changePercent: 0 };
+                    } catch (_) { }
+                }));
+                // Futures
+                await Promise.all(futuresSymbols.map(async (s) => {
+                    try {
+                        const base = getBaseSymbol(s);
+                        const res = await fetch(`https://fapi.binance.com/fapi/v1/ticker/price?symbol=${base}`);
+                        const json = await res.json();
+                        const price = parseFloat(json.price);
+                        if (!Number.isNaN(price)) updates[s] = { price, change: 0, changePercent: 0 };
+                    } catch (_) { }
+                }));
+                if (Object.keys(updates).length > 0) {
+                    setTickers(prev => ({ ...prev, ...updates }));
+                }
+            } catch (e) {
+                console.error('Seed price fetch failed', e);
+            }
+        };
+        seedPrices();
+
         watchdogIntervalRef.current = setInterval(() => {
             const now = Date.now();
             const timeSinceLastUpdate = now - lastUpdateRef.current;
