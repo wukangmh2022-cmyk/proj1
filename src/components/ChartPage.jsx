@@ -1227,17 +1227,11 @@ export default function ChartPage() {
         return (l - 1) + (time - t1) / (t2 - t1);
     };
 
+    // Project by first mapping time -> logical index using current data, then apply robust logicToScreen
     const timeToScreen = useCallback((time, price) => {
-        if (!chartRef.current || !seriesRef.current) return null;
-        const ts = chartRef.current.timeScale();
-        let x = ts.timeToCoordinate(time);
-        if (x === null) {
-            // If timeScale can't place it (e.g., outside range), fall back to logical mapping with extrapolation
-            const logic = getLogicFromTime(time);
-            if (logic !== null) return logicToScreen(logic, price);
-        }
-        const y = seriesRef.current.priceToCoordinate(price);
-        return (x !== null && y !== null) ? { x, y } : null;
+        const logic = getLogicFromTime(time);
+        if (logic === null) return null;
+        return logicToScreen(logic, price);
     }, [logicToScreen, interval]);
 
     const getTimeFromLogic = (logic) => {
