@@ -8,7 +8,7 @@ import { useBinanceTickers } from '../hooks/useBinanceTickers';
 import '../App.css';
 
 const DRAW_MODES = { NONE: 'none', TRENDLINE: 'trendline', CHANNEL: 'channel', RECT: 'rect', HLINE: 'hline', FIB: 'fib' };
-const FIB_RATIOS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+const FIB_RATIOS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.382, 1.618, 2.618, 3.618];
 const LABEL_PREFIX = { hline: 'h', trendline: 't', rect: 'r', channel: 'c', fib: 'f' };
 
 // Helper to parse interval to seconds
@@ -93,6 +93,7 @@ export default function ChartPage() {
         labelsInitializedRef.current = true;
     }, [drawings]);
     const [screenDrawings, setScreenDrawings] = useState([]);
+    const [loadingStage, setLoadingStage] = useState('');
     const [isLoading, setIsLoading] = useState(true);
     const [selectedId, setSelectedId] = useState(null);
 
@@ -1056,6 +1057,7 @@ export default function ChartPage() {
     // Load data & Infinite Scroll
     useEffect(() => {
         if (!seriesRef.current || !chartRef.current) return;
+        let stageTimer;
 
         // Save interval preference
         localStorage.setItem(`chart_interval_${symbol}`, interval);
@@ -1064,6 +1066,7 @@ export default function ChartPage() {
         allDataRef.current = [];
         setScreenDrawings([]); // Clear visuals immediately
         setIsLoading(true);
+        setLoadingStage('连接中...');
 
         const isPerpetual = symbol.endsWith('.P');
         const baseSymbol = isPerpetual ? symbol.slice(0, -2) : symbol;
@@ -1075,6 +1078,7 @@ export default function ChartPage() {
             try {
                 const res = await fetch(`${apiBase}/klines?symbol=${baseSymbol}&interval=${interval}&limit=500`);
                 const data = await res.json();
+                setLoadingStage('数据处理中...');
                 const formatted = data.map(d => ({ time: d[0] / 1000, open: +d[1], high: +d[2], low: +d[3], close: +d[4], volume: +d[5] }));
 
                 allDataRef.current = formatted;
@@ -1115,8 +1119,10 @@ export default function ChartPage() {
                     chartRef.current.timeScale().fitContent();
                 }
 
-            } catch (e) { console.error(e); }
+            } catch (e) { console.error(e); setLoadingStage('加载失败'); }
             setIsLoading(false);
+            // Clear stage shortly after finishing to avoid stale text
+            stageTimer = setTimeout(() => setLoadingStage(''), 300);
         };
         load();
 
@@ -1185,6 +1191,7 @@ export default function ChartPage() {
         return () => {
             ws.close();
             if (chartRef.current) chartRef.current.timeScale().unsubscribeVisibleLogicalRangeChange(handleScroll);
+            if (stageTimer) clearTimeout(stageTimer);
         };
     }, [symbol, interval]);
 
@@ -1511,7 +1518,11 @@ export default function ChartPage() {
             } else {
                 // Unified: All time-based drawings use 'points'
                 const { label } = allocLabel(type);
-                drawing = { id: label, label, type, points: newPending.map(p => ({ ...p, time: getTime(p.logic) })), width: 1 };
+                const base = { id: label, label, type, points: newPending.map(p => ({ ...p, time: getTime(p.logic) })), width: 1 };
+                if (type === 'fib') {
+                    base.fibVisible = { 0: true, 0.236: true, 0.382: true, 0.5: true, 0.618: true, 0.786: true, 1: true, 1.382: true };
+                }
+                drawing = base;
             }
             setDrawings(prev => [...prev, drawing]);
             setPendingPoints([]);
@@ -1612,6 +1623,8 @@ export default function ChartPage() {
 
             return (<g key={d.id}>
                 {FIB_RATIOS.map((r, i) => {
+                    const isVisible = d.fibVisible ? d.fibVisible[r] !== false : true;
+                    if (!isVisible) return null;
                     const fx1 = p0.x + shiftX * r;
                     const fy1 = p0.y + shiftY * r;
                     const fx2 = p1.x + shiftX * r;
@@ -1826,27 +1839,43 @@ export default function ChartPage() {
                                             </div>
                                             {drawings.find(d => d.id === targetId)?.type === 'fib' && (
                                                 <div style={{ marginTop: 8 }}>
-                                                    <label style={{ fontSize: 12, color: '#888', marginBottom: 4, display: 'block' }}>Fib 分层颜色</label>
-                                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+                                                    <label style={{ fontSize: 12, color: '#888', marginBottom: 4, display: 'block' }}>Fib 分层</label>
+                                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
                                                         {FIB_RATIOS.map(r => {
                                                             const d = drawings.find(dd => dd.id === targetId);
                                                             const c = (d.fibColors && d.fibColors[r]) ? d.fibColors[r] : d.color; // Fallback to main color
+                                                            const visible = d.fibVisible ? d.fibVisible[r] !== false : true;
                                                             return (
-                                                                <div key={r} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, background: '#2a2e39', padding: 4, borderRadius: 4 }}>
-                                                                    <span style={{ fontSize: 10, color: '#aaa' }}>{r}</span>
-                                                                    <div style={{ position: 'relative', width: 20, height: 20 }}>
-                                                                        <input type="color" value={c}
+                                                                <div key={r} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, background: '#2a2e39', padding: 6, borderRadius: 6 }}>
+                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                                        <input
+                                                                            type="checkbox"
+                                                                            checked={visible}
                                                                             onChange={(e) => {
-                                                                                const newC = e.target.value;
+                                                                                const checked = e.target.checked;
                                                                                 setDrawings(prev => prev.map(dd => {
                                                                                     if (dd.id !== targetId) return dd;
-                                                                                    return { ...dd, fibColors: { ...(dd.fibColors || {}), [r]: newC } };
+                                                                                    return { ...dd, fibVisible: { ...(dd.fibVisible || {}), [r]: checked } };
                                                                                 }));
                                                                             }}
-                                                                            style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }}
                                                                         />
-                                                                        <div style={{ width: '100%', height: '100%', borderRadius: '50%', background: c, border: '1px solid #fff' }} />
+                                                                        <span style={{ fontSize: 11, color: '#ccc' }}>{r}</span>
                                                                     </div>
+                                                                    {visible && (
+                                                                        <div style={{ position: 'relative', width: 20, height: 20 }}>
+                                                                            <input type="color" value={c}
+                                                                                onChange={(e) => {
+                                                                                    const newC = e.target.value;
+                                                                                    setDrawings(prev => prev.map(dd => {
+                                                                                        if (dd.id !== targetId) return dd;
+                                                                                        return { ...dd, fibColors: { ...(dd.fibColors || {}), [r]: newC } };
+                                                                                    }));
+                                                                                }}
+                                                                                style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }}
+                                                                            />
+                                                                            <div style={{ width: '100%', height: '100%', borderRadius: '50%', background: c, border: '1px solid #fff' }} />
+                                                                        </div>
+                                                                    )}
                                                                 </div>
                                                             );
                                                         })}
@@ -1883,7 +1912,32 @@ export default function ChartPage() {
                     );
                 })()}
 
-                {isLoading && <div className="chart-loading">加载中...</div>}
+                {(isLoading || loadingStage) && (
+                    <div style={{
+                        position: 'absolute',
+                        inset: 0,
+                        zIndex: 80,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        pointerEvents: 'none',
+                        background: 'rgba(0,0,0,0.25)'
+                    }}>
+                        <div style={{
+                            padding: '10px 14px',
+                            borderRadius: '10px',
+                            background: 'rgba(22, 26, 37, 0.9)',
+                            border: '1px solid #2a2e39',
+                            color: '#e5e7eb',
+                            fontSize: '13px',
+                            boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+                            minWidth: '140px',
+                            textAlign: 'center'
+                        }}>
+                            {loadingStage || '加载中...'}
+                        </div>
+                    </div>
+                )}
 
                 <svg
                     style={{
