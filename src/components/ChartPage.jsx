@@ -1869,18 +1869,11 @@ export default function ChartPage() {
                 {isLoading && <div className="chart-loading">加载中...</div>}
 
                 <svg
-                    onPointerDown={(e) => {
-                        logInteract('svg pointerDown', {
-                            tag: e.target?.tagName,
-                            id: e.target?.id,
-                            class: e.target?.getAttribute?.('class'),
-                            type: e.pointerType
-                        });
-                    }}
                     style={{
                         position: 'absolute', top: 0, left: 0,
                         width: '100%', height: '100%',
-                        pointerEvents: 'auto', zIndex: 10
+                        // Let blank areas fall through to chart; child elements override pointerEvents individually
+                        pointerEvents: 'none', zIndex: 10
                     }}>
                     {/* ClipPath to exclude axis areas */}
                     <defs>
