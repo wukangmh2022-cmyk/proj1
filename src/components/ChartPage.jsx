@@ -1617,7 +1617,7 @@ export default function ChartPage() {
                                     stroke="transparent"
                                     strokeWidth="20"
                                     cursor="pointer"
-                                    pointerEvents="stroke"
+                                    pointerEvents="all"
                                     onPointerDown={(e) => {
                                         e.stopPropagation();
                                         logInteract('fib pointerDown', d.id, e.pointerType);
@@ -1964,10 +1964,6 @@ export default function ChartPage() {
                                     const rect = containerRef.current.getBoundingClientRect();
                                     setMenu({ x: e.clientX - rect.left, y: e.clientY - rect.top, type: 'drawing', id: d.id });
                                     setSelectedId(d.id);
-                                },
-                                onPointerDown: (e) => {
-                                    // Make sure we stop propagation so background doesn't get it (though background uses click)
-                                    e.stopPropagation();
                                 }
                             };
                             const anchorHandlers = (idx) => ({
@@ -1995,14 +1991,14 @@ export default function ChartPage() {
                                         stroke="transparent"
                                         strokeWidth="20"
                                         cursor="pointer"
-                                    pointerEvents="stroke"
-                                    onPointerDown={(e) => {
-                                        e.stopPropagation();
-                                        setSelectedId(d.id);
-                                        handleDragStart(e, d.id, -1);
-                                    }}
-                                    {...handlers}
-                                />
+                                        pointerEvents="all"
+                                        onPointerDown={(e) => {
+                                            e.stopPropagation();
+                                            setSelectedId(d.id);
+                                            handleDragStart(e, d.id, -1);
+                                        }}
+                                        {...handlers}
+                                    />
                                     {/* Visible */}
                                     <line x1={0} y1={d.screenY} x2="100%" y2={d.screenY} stroke={color} strokeWidth={sel ? (d.width || 1) + 1 : (d.width || 1)} pointerEvents="none" />
                                     <text x={5} y={d.screenY - 5} fill={color} fontSize="10" pointerEvents="none">{d.label || d.id}</text>
@@ -2022,7 +2018,7 @@ export default function ChartPage() {
                                             stroke="transparent"
                                             strokeWidth="15"
                                             cursor="pointer"
-                                            pointerEvents="stroke"
+                                            pointerEvents="all"
                                             onPointerDown={(e) => {
                                                 e.stopPropagation();
                                                 logInteract('trendline pointerDown', d.id, e.pointerType);
