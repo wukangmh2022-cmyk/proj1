@@ -116,7 +116,6 @@ export default function ChartPage() {
     const [selectedId, setSelectedId] = useState(null);
     const [isLandscape, setIsLandscape] = useState(false);
     const tapCandidateRef = useRef(null); // { id, x, y }
-    const tapCandidateRef = useRef(null); // { id, x, y }
     // Orientation toggle removed per latest request (rely on system auto-rotate)
 
     // Config Menu State
