@@ -520,21 +520,7 @@ export default function ChartPage() {
         return (x !== null && y !== null) ? { x, y } : null;
     }, []);
 
-    const timeToScreen = useCallback((time, price) => {
-        if (!chartRef.current || !seriesRef.current) return null;
-        const ts = chartRef.current.timeScale();
-        let x = ts.timeToCoordinate(time);
-        if (x === null) {
-            // Fallback to logical path if time isn't on current scale
-            const l = ts.coordinateToLogical ? ts.coordinateToLogical(0) : null;
-            const logic = getLogicFromTime ? getLogicFromTime(time) : null;
-            if (logic !== null) {
-                x = ts.logicalToCoordinate ? ts.logicalToCoordinate(logic) : null;
-            }
-        }
-        const y = seriesRef.current.priceToCoordinate(price);
-        return (x !== null && y !== null) ? { x, y } : null;
-    }, []);
+    // NOTE: keep time->logic conversion near the data helpers to avoid interval drift
 
     // Recalculate indicators on state change
     useEffect(() => {
@@ -1231,6 +1217,19 @@ export default function ChartPage() {
         const t2 = data[l].time;
         return (l - 1) + (time - t1) / (t2 - t1);
     };
+
+    const timeToScreen = useCallback((time, price) => {
+        if (!chartRef.current || !seriesRef.current) return null;
+        const ts = chartRef.current.timeScale();
+        let x = ts.timeToCoordinate(time);
+        if (x === null) {
+            // If timeScale can't place it (e.g., outside range), fall back to logical mapping with extrapolation
+            const logic = getLogicFromTime(time);
+            if (logic !== null) return logicToScreen(logic, price);
+        }
+        const y = seriesRef.current.priceToCoordinate(price);
+        return (x !== null && y !== null) ? { x, y } : null;
+    }, [logicToScreen, interval]);
 
     const getTimeFromLogic = (logic) => {
         if (!allDataRef.current || allDataRef.current.length === 0) return null;
