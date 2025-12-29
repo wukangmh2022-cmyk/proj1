@@ -1747,13 +1747,16 @@ export default function ChartPage() {
                         }}
                     >
                         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                            {/* frame */}
                             <rect x="4" y="4" width="16" height="16" rx="2" ry="2" />
-                            {/* top-right arrow pointing inward */}
-                            <path d="M16 5 l3 0 0 3" />
-                            <path d="M16 8 l3 -3" />
-                            {/* bottom-left arrow pointing inward */}
-                            <path d="M5 16 l0 3 3 0" />
-                            <path d="M5 16 l3 3" />
+                            {/* arrow from center to top-right */}
+                            <path d="M12 12 L18 6" />
+                            <path d="M18 6 L18 9" />
+                            <path d="M18 6 L15 6" />
+                            {/* arrow from center to bottom-left */}
+                            <path d="M12 12 L6 18" />
+                            <path d="M6 18 L6 15" />
+                            <path d="M6 18 L9 18" />
                         </svg>
                     </button>
                 </div>
