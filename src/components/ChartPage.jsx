@@ -1625,14 +1625,16 @@ export default function ChartPage() {
         return Math.hypot(px - (x1 + t * C), py - (y1 + t * D));
     };
 
+    const HIT_TOL = 20; // generous tolerance for tap hit-testing
+
     const hitTestDrawing = useCallback((x, y) => {
         for (const d of screenDrawings) {
             if (!d) continue;
             if (d.type === 'hline') {
-                if (Math.abs(y - d.screenY) <= 12) return d.id;
+                if (Math.abs(y - d.screenY) <= HIT_TOL) return d.id;
             } else if (d.type === 'trendline' && d.screenPoints?.length >= 2) {
                 const [a, b] = d.screenPoints;
-                if (ptLineDist(x, y, a.x, a.y, b.x, b.y) <= 12) return d.id;
+                if (ptLineDist(x, y, a.x, a.y, b.x, b.y) <= HIT_TOL) return d.id;
             } else if (d.type === 'channel' && d.screenPoints?.length >= 3) {
                 const [p0, p1, p2] = d.screenPoints;
                 const p3 = { x: p2.x - (p1.x - p0.x), y: p2.y - (p1.y - p0.y) };
@@ -1640,7 +1642,7 @@ export default function ChartPage() {
                     [p0, p1], [p2, p3], // main parallels
                     [p0, p3], [p1, p2]  // connectors
                 ];
-                if (segs.some(([s, e]) => ptLineDist(x, y, s.x, s.y, e.x, e.y) <= 12)) return d.id;
+                if (segs.some(([s, e]) => ptLineDist(x, y, s.x, s.y, e.x, e.y) <= HIT_TOL)) return d.id;
             } else if (d.type === 'fib' && d.screenPoints?.length >= 3) {
                 const [p0, p1, p2] = d.screenPoints;
                 const shiftX = p2.x - p1.x;
@@ -1652,10 +1654,10 @@ export default function ChartPage() {
                     const fy1 = p0.y + shiftY * r;
                     const fx2 = p1.x + shiftX * r;
                     const fy2 = p1.y + shiftY * r;
-                    if (ptLineDist(x, y, fx1, fy1, fx2, fy2) <= 12) return d.id;
+                    if (ptLineDist(x, y, fx1, fy1, fx2, fy2) <= HIT_TOL) return d.id;
                 }
                 // Diagonal hit to catch sparse line clicks
-                if (ptLineDist(x, y, p0.x, p0.y, p2.x, p2.y) <= 12) return d.id;
+                if (ptLineDist(x, y, p0.x, p0.y, p2.x, p2.y) <= HIT_TOL) return d.id;
             } else if (d.type === 'rect' && d.screenPoints?.length >= 2) {
                 const [p1, p2] = d.screenPoints;
                 const minX = Math.min(p1.x, p2.x), maxX = Math.max(p1.x, p2.x);
