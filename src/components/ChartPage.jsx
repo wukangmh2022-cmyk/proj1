@@ -1698,8 +1698,8 @@ export default function ChartPage() {
                 setSelectedId(d.id);
             },
             onPointerDown: (e) => {
+                if (selectedId !== d.id) return; // allow chart pan when not selected
                 e.stopPropagation();
-                setSelectedId(d.id);
                 handleDragStart(e, d.id, -1);
             }
         };
@@ -1759,8 +1759,6 @@ export default function ChartPage() {
         if (isFib) {
             const shiftX = p2.x - p1.x;
             const shiftY = p2.y - p1.y;
-            const FIB_RATIOS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.618];
-
             return (<g key={d.id}>
                 {FIB_RATIOS.map((r, i) => {
                     const isVisible = d.fibVisible ? d.fibVisible[r] !== false : (r <= 1);
@@ -1789,9 +1787,9 @@ export default function ChartPage() {
                                     cursor="pointer"
                                     pointerEvents="all"
                                     onPointerDown={(e) => {
+                                        if (selectedId !== d.id) return; // allow chart pan when not selected
                                         e.stopPropagation();
                                         logInteract('fib pointerDown', d.id, e.pointerType);
-                                        setSelectedId(d.id);
                                         handleDragStart(e, d.id, -1);
                                     }}
                                     {...handlers}
@@ -2209,17 +2207,17 @@ export default function ChartPage() {
                                         y1={d.screenY}
                                         x2="100%"
                                         y2={d.screenY}
-                                        stroke="transparent"
-                                        strokeWidth="20"
-                                        cursor="pointer"
-                                        pointerEvents="all"
-                                        onPointerDown={(e) => {
+                                    stroke="transparent"
+                                    strokeWidth="20"
+                                    cursor="pointer"
+                                    pointerEvents="all"
+                                    onPointerDown={(e) => {
+                                            if (selectedId !== d.id) return; // allow chart pan when not selected
                                             e.stopPropagation();
-                                            setSelectedId(d.id);
                                             handleDragStart(e, d.id, -1);
-                                        }}
-                                        {...handlers}
-                                    />
+                                    }}
+                                    {...handlers}
+                                />
                                     {/* Visible */}
                                     <line x1={0} y1={d.screenY} x2="100%" y2={d.screenY} stroke={color} strokeWidth={sel ? (d.width || 1) + 1 : (d.width || 1)} pointerEvents="none" />
                                     <text x={5} y={d.screenY - 5} fill={color} fontSize="10" pointerEvents="none">{d.label || d.id}</text>
@@ -2241,9 +2239,9 @@ export default function ChartPage() {
                                             cursor="pointer"
                                             pointerEvents="all"
                                             onPointerDown={(e) => {
+                                                if (selectedId !== d.id) return; // allow chart pan when not selected
                                                 e.stopPropagation();
                                                 logInteract('trendline pointerDown', d.id, e.pointerType);
-                                                setSelectedId(d.id);
                                                 handleDragStart(e, d.id, -1);
                                             }}
                                             {...handlers}
@@ -2275,10 +2273,9 @@ export default function ChartPage() {
                     pointerEvents="all"
                     cursor="grab"
                     onPointerDown={(e) => {
+                        if (selectedId !== d.id) return; // allow chart pan if not selected
                         e.stopPropagation();
                         logInteract('rect pointerDown', d.id, e.pointerType);
-                        // Allow dragging even if not pre-selected
-                        setSelectedId(d.id);
                         handleDragStart(e, d.id, -1);
                     }}
                     {...handlers}
