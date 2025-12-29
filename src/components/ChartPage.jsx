@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useContext } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { createChart, CandlestickSeries, LineSeries, HistogramSeries } from 'lightweight-charts';
 import { getSymbols } from '../utils/storage';
 import { useBinanceTickers } from '../hooks/useBinanceTickers';
+import { LoadingContext } from '../context/LoadingContext';
 import '../App.css';
 
 const DRAW_MODES = { NONE: 'none', TRENDLINE: 'trendline', CHANNEL: 'channel', RECT: 'rect', HLINE: 'hline', FIB: 'fib' };
@@ -96,6 +97,13 @@ export default function ChartPage() {
     const [loadingStage, setLoadingStage] = useState('');
     const [isLoading, setIsLoading] = useState(true);
     const [selectedId, setSelectedId] = useState(null);
+    const { setStage: setGlobalStage } = useContext(LoadingContext);
+    useEffect(() => {
+        if (!setGlobalStage) return;
+        const text = loadingStage || (isLoading ? '加载中...' : '');
+        setGlobalStage(text);
+        return () => setGlobalStage('');
+    }, [loadingStage, isLoading, setGlobalStage]);
 
     // Config Menu State
     const [menu, setMenu] = useState(null); // { x, y, type, id, data }
@@ -1911,33 +1919,6 @@ export default function ChartPage() {
                         </div>
                     );
                 })()}
-
-                {(isLoading || loadingStage) && (
-                    <div style={{
-                        position: 'absolute',
-                        inset: 0,
-                        zIndex: 80,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        pointerEvents: 'none',
-                        background: 'rgba(0,0,0,0.25)'
-                    }}>
-                        <div style={{
-                            padding: '10px 14px',
-                            borderRadius: '10px',
-                            background: 'rgba(22, 26, 37, 0.9)',
-                            border: '1px solid #2a2e39',
-                            color: '#e5e7eb',
-                            fontSize: '13px',
-                            boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
-                            minWidth: '140px',
-                            textAlign: 'center'
-                        }}>
-                            {loadingStage || '加载中...'}
-                        </div>
-                    </div>
-                )}
 
                 <svg
                     style={{
