@@ -152,52 +152,17 @@ export default function ChartPage() {
         return false;
     };
 
-    const requestFullscreen = async () => {
-        const el = document.documentElement;
-        if (!el || !el.requestFullscreen) return false;
-        try {
-            await el.requestFullscreen();
-            return true;
-        } catch (e) {
-            console.warn('fullscreen request failed', e);
-            return false;
-        }
-    };
-
-    const exitFullscreen = async () => {
-        try {
-            if (document.fullscreenElement && document.exitFullscreen) {
-                await document.exitFullscreen();
-            }
-        } catch (e) {
-            // ignore
-        }
-    };
-
     const toggleOrientation = async () => {
         const targetLandscape = !isLandscape;
         const mode = targetLandscape ? 'landscape-primary' : 'portrait-primary';
 
-        // Try direct lock first
-        let locked = await lockOrientation(mode);
-
-        // If failed (common on web), try fullscreen + lock
+        const locked = await lockOrientation(mode);
         if (!locked) {
-            const fs = await requestFullscreen();
-            if (fs) {
-                locked = await lockOrientation(mode);
-                if (!locked) {
-                    await exitFullscreen();
-                }
-            }
+            // 不支持锁定时，让系统自动旋转，提示用户开启自动旋转
+            console.warn('orientation lock unsupported; rely on system auto-rotate');
+            return;
         }
 
-        // If everything failed, unlock if possible and just reflect actual state
-        if (!locked && window.screen?.orientation?.unlock) {
-            try { window.screen.orientation.unlock(); } catch (err) { }
-        }
-
-        // Update UI state based on actual orientation if available; fallback to target
         const nowLandscape = window.screen?.orientation?.type?.includes('landscape') ?? targetLandscape;
         setIsLandscape(nowLandscape);
     };
@@ -1812,7 +1777,7 @@ export default function ChartPage() {
     const currentNeeded = pointsNeeded[drawMode] || 0;
 
     return (
-        <div className="chart-page">
+        <div className="chart-page" style={{ minHeight: '100vh' }}>
             <div className="chart-header" style={{ display: 'flex', flexDirection: 'column', width: '100%', gap: '0', padding: '0', background: '#161a25' }}>
                 <div style={{ position: 'relative', width: '100%', padding: '10px 0 5px 0', minHeight: '40px' }}>
                     <button className="back-btn" onClick={() => navigate('/')} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', fontSize: '24px', background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', padding: 0, zIndex: 10 }}>←</button>
@@ -1820,6 +1785,7 @@ export default function ChartPage() {
                     <button
                         onClick={toggleOrientation}
                         title="旋转屏幕"
+                        tabIndex={-1}
                         style={{
                             position: 'absolute',
                             right: '8px',
@@ -1828,6 +1794,7 @@ export default function ChartPage() {
                             fontSize: '18px',
                             background: 'transparent',
                             border: 'none',
+                            outline: 'none',
                             color: '#fff',
                             cursor: 'pointer',
                             padding: 4,
