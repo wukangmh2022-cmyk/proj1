@@ -1630,13 +1630,33 @@ export default function ChartPage() {
             if (!d) continue;
             if (d.type === 'hline') {
                 if (Math.abs(y - d.screenY) <= 12) return d.id;
-            } else if ((d.type === 'trendline' || d.type === 'fib' || d.type === 'channel') && d.screenPoints && d.screenPoints.length >= 2) {
-                const pts = d.screenPoints;
-                for (let i = 0; i < pts.length - 1; i++) {
-                    const a = pts[i], b = pts[i + 1];
-                    if (ptLineDist(x, y, a.x, a.y, b.x, b.y) <= 12) return d.id;
+            } else if (d.type === 'trendline' && d.screenPoints?.length >= 2) {
+                const [a, b] = d.screenPoints;
+                if (ptLineDist(x, y, a.x, a.y, b.x, b.y) <= 12) return d.id;
+            } else if (d.type === 'channel' && d.screenPoints?.length >= 3) {
+                const [p0, p1, p2] = d.screenPoints;
+                const p3 = { x: p2.x - (p1.x - p0.x), y: p2.y - (p1.y - p0.y) };
+                const segs = [
+                    [p0, p1], [p2, p3], // main parallels
+                    [p0, p3], [p1, p2]  // connectors
+                ];
+                if (segs.some(([s, e]) => ptLineDist(x, y, s.x, s.y, e.x, e.y) <= 12)) return d.id;
+            } else if (d.type === 'fib' && d.screenPoints?.length >= 3) {
+                const [p0, p1, p2] = d.screenPoints;
+                const shiftX = p2.x - p1.x;
+                const shiftY = p2.y - p1.y;
+                for (const r of FIB_RATIOS) {
+                    const visible = d.fibVisible ? d.fibVisible[r] !== false : (r <= 1);
+                    if (!visible) continue;
+                    const fx1 = p0.x + shiftX * r;
+                    const fy1 = p0.y + shiftY * r;
+                    const fx2 = p1.x + shiftX * r;
+                    const fy2 = p1.y + shiftY * r;
+                    if (ptLineDist(x, y, fx1, fy1, fx2, fy2) <= 12) return d.id;
                 }
-            } else if (d.type === 'rect' && d.screenPoints && d.screenPoints.length >= 2) {
+                // Diagonal hit to catch sparse line clicks
+                if (ptLineDist(x, y, p0.x, p0.y, p2.x, p2.y) <= 12) return d.id;
+            } else if (d.type === 'rect' && d.screenPoints?.length >= 2) {
                 const [p1, p2] = d.screenPoints;
                 const minX = Math.min(p1.x, p2.x), maxX = Math.max(p1.x, p2.x);
                 const minY = Math.min(p1.y, p2.y), maxY = Math.max(p1.y, p2.y);
