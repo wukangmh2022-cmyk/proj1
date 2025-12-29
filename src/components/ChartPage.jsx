@@ -1747,11 +1747,11 @@ export default function ChartPage() {
                                     cursor="pointer"
                                     pointerEvents="all"
                                     onPointerDown={(e) => {
-                                        e.stopPropagation();
                                         if (selectedId !== d.id) {
                                             setSelectedId(d.id);
                                             return;
                                         }
+                                        e.stopPropagation();
                                         logInteract('fib pointerDown', d.id, e.pointerType);
                                         handleDragStart(e, d.id, -1);
                                     }}
@@ -2172,16 +2172,16 @@ export default function ChartPage() {
                                     y1={d.screenY}
                                     x2="100%"
                                     y2={d.screenY}
-                                    stroke="transparent"
-                                    strokeWidth="20"
-                                    cursor="pointer"
-                                    pointerEvents="all"
-                                    onPointerDown={(e) => {
-                                            if (selectedId !== d.id) { setSelectedId(d.id); return; }
-                                            e.stopPropagation();
-                                            handleDragStart(e, d.id, -1);
-                                    }}
-                                    {...handlers}
+                                        stroke="transparent"
+                                        strokeWidth="20"
+                                        cursor="pointer"
+                                        pointerEvents="all"
+                                        onPointerDown={(e) => {
+                                                if (selectedId !== d.id) { setSelectedId(d.id); return; }
+                                                e.stopPropagation();
+                                                handleDragStart(e, d.id, -1);
+                                        }}
+                                        {...handlers}
                                 />
                                     {/* Visible */}
                                     <line x1={0} y1={d.screenY} x2="100%" y2={d.screenY} stroke={color} strokeWidth={sel ? (d.width || 1) + 1 : (d.width || 1)} pointerEvents="none" />
