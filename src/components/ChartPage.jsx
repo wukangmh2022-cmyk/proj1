@@ -193,15 +193,16 @@ export default function ChartPage() {
     const [activeHandle, setActiveHandle] = useState(null); // { id, index } - For Indirect Drag
     const [subMenuPos, setSubMenuPos] = useState(null); // { x, y, isBottom }
 
-    // Unified Chart Interaction Sync (Lock pan/zoom during drag or long-press)
+    // Unified Chart Interaction Sync (Lock pan/zoom during drag or custom crosshair)
     useEffect(() => {
         if (!chartRef.current) return;
-        const isLocked = !!activeHandle || !!customCrosshair || !!dragState;
+        const isLocked = !!customCrosshair || !!dragState;
         chartRef.current.applyOptions({
             handleScroll: !isLocked,
-            handleScale: !isLocked
+            handleScale: !isLocked,
+            kineticScroll: { touch: !isLocked, mouse: !isLocked }
         });
-    }, [activeHandle, customCrosshair, dragState]);
+    }, [customCrosshair, dragState]);
 
     const handleDragStart = (e, id, index = 0) => {
         e.stopPropagation();
@@ -1425,18 +1426,6 @@ export default function ChartPage() {
         };
     }, []); // Empty dependency array! Robust against re-renders!
 
-    // Apply scroll/scale lock when custom crosshair or activeHandle is active
-    useEffect(() => {
-        if (!chartRef.current) return;
-        // Lock chart if Crosshair is active OR Dragging something
-        const shouldLock = !!customCrosshair || !!activeHandle;
-        chartRef.current.applyOptions({
-            handleScroll: !shouldLock,
-            handleScale: !shouldLock,
-            // Disable kinetic scroll to prevent conflict
-            kineticScroll: { touch: !shouldLock, mouse: !shouldLock }
-        });
-    }, [customCrosshair, activeHandle]);
     const deleteSelected = () => { setDrawings(p => p.filter(d => d.id !== selectedId)); setSelectedId(null); };
     const clearAll = () => { setDrawings([]); setSelectedId(null); };
     // Virtual Cursor Interaction Logic
