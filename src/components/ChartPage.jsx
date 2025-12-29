@@ -75,20 +75,38 @@ export default function ChartPage() {
         const used = collectUsedLabels(drawings);
         let changed = false;
         const updated = drawings.map(d => {
-            if (d.label) {
-                used.add(d.label);
-                return d;
+            if (!d) return d;
+
+            // Normalize Fib visibility defaults (hide >1 by default)
+            let next = d;
+            if (d.type === 'fib') {
+                const defaultVis = {
+                    0: true, 0.236: true, 0.382: true, 0.5: true, 0.618: true, 0.786: true, 1: true,
+                    1.382: false, 1.618: false, 2.618: false, 3.618: false
+                };
+                const mergedVis = { ...defaultVis, ...(d.fibVisible || {}) };
+                // Only mark changed if any value differs
+                const hasDiff = Object.keys(defaultVis).some(k => (d.fibVisible || {})[k] !== mergedVis[k]);
+                if (hasDiff || !d.fibVisible) {
+                    changed = true;
+                    next = { ...next, fibVisible: mergedVis };
+                }
             }
-            const prefix = getPrefix(d.type);
-            const m = d.id?.match(new RegExp(`^${prefix}\\d+$`, 'i'));
+
+            if (next.label) {
+                used.add(next.label);
+                return next;
+            }
+            const prefix = getPrefix(next.type);
+            const m = next.id?.match(new RegExp(`^${prefix}\\d+$`, 'i'));
             if (m) {
                 used.add(m[0]);
                 changed = true;
-                return { ...d, label: m[0] };
+                return { ...next, label: m[0] };
             }
-            const { label } = allocLabel(d.type, used);
+            const { label } = allocLabel(next.type, used);
             changed = true;
-            return { ...d, label };
+            return { ...next, label };
         });
         if (changed) setDrawings(updated);
         labelsInitializedRef.current = true;
@@ -134,14 +152,54 @@ export default function ChartPage() {
         return false;
     };
 
+    const requestFullscreen = async () => {
+        const el = document.documentElement;
+        if (!el || !el.requestFullscreen) return false;
+        try {
+            await el.requestFullscreen();
+            return true;
+        } catch (e) {
+            console.warn('fullscreen request failed', e);
+            return false;
+        }
+    };
+
+    const exitFullscreen = async () => {
+        try {
+            if (document.fullscreenElement && document.exitFullscreen) {
+                await document.exitFullscreen();
+            }
+        } catch (e) {
+            // ignore
+        }
+    };
+
     const toggleOrientation = async () => {
         const targetLandscape = !isLandscape;
         const mode = targetLandscape ? 'landscape-primary' : 'portrait-primary';
-        const locked = await lockOrientation(mode);
+
+        // Try direct lock first
+        let locked = await lockOrientation(mode);
+
+        // If failed (common on web), try fullscreen + lock
+        if (!locked) {
+            const fs = await requestFullscreen();
+            if (fs) {
+                locked = await lockOrientation(mode);
+                if (!locked) {
+                    await exitFullscreen();
+                }
+            }
+        }
+
+        // If everything failed, unlock if possible and just reflect actual state
         if (!locked && window.screen?.orientation?.unlock) {
             try { window.screen.orientation.unlock(); } catch (err) { }
         }
-        setIsLandscape(targetLandscape);
+
+        // Update UI state based on actual orientation if available; fallback to target
+        const nowLandscape = window.screen?.orientation?.type?.includes('landscape') ?? targetLandscape;
+        setIsLandscape(nowLandscape);
     };
 
     // Config Menu State
