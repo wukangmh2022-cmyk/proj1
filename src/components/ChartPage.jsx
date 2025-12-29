@@ -221,17 +221,26 @@ export default function ChartPage() {
     const [subMenuPos, setSubMenuPos] = useState(null); // { x, y, isBottom }
     const activeTouchIdsRef = useRef(new Set());
     const suppressDrawingInteractionRef = useRef(false);
+    const panZoomEnabledRef = useRef(true);
+
+    const setPanZoom = useCallback((enabled, reason) => {
+        if (!chartRef.current) return;
+        if (panZoomEnabledRef.current === enabled) return;
+        panZoomEnabledRef.current = enabled;
+        console.log('[interact] chart pan/zoom', enabled ? 'ENABLED' : 'DISABLED', 'reason:', reason);
+        chartRef.current.applyOptions({
+            handleScroll: enabled,
+            handleScale: enabled,
+            kineticScroll: { touch: enabled, mouse: enabled }
+        });
+    }, []);
 
     // Unified Chart Interaction Sync (Lock pan/zoom during drag or custom crosshair)
     useEffect(() => {
         if (!chartRef.current) return;
         const isLocked = !!customCrosshair || !!dragState;
-        chartRef.current.applyOptions({
-            handleScroll: !isLocked,
-            handleScale: !isLocked,
-            kineticScroll: { touch: !isLocked, mouse: !isLocked }
-        });
-    }, [customCrosshair, dragState]);
+        setPanZoom(!isLocked, isLocked ? 'lock: crosshair/drag' : 'unlock: idle');
+    }, [customCrosshair, dragState, setPanZoom]);
 
     // Track multitouch to avoid accidental selection when pinching/panning
     useEffect(() => {
@@ -292,7 +301,7 @@ export default function ChartPage() {
             const startLogic = mouseLogic !== null ? mouseLogic : (pointLogics[0] ?? 0);
             const startPrice = mousePrice ?? (drawing.type === 'hline' ? drawing.price : pts[0]?.price ?? 0);
 
-            chartRef.current.applyOptions({ handleScale: false, handleScroll: false });
+            setPanZoom(false, 'drawing drag start (whole)');
 
             setDragState({
                 id,
@@ -320,7 +329,7 @@ export default function ChartPage() {
             const logicOffset = (pointLogic !== null && mouseLogic !== null) ? pointLogic - mouseLogic : 0;
             const priceOffset = anchorPoint.price - (mousePrice ?? anchorPoint.price);
 
-            chartRef.current.applyOptions({ handleScale: false, handleScroll: false });
+            setPanZoom(false, 'drawing drag start (anchor)');
 
             setDragState({
                 id,
@@ -450,10 +459,7 @@ export default function ChartPage() {
             });
         };
         const up = () => {
-            // Restore chart pan/zoom
-            if (chartRef.current) {
-                chartRef.current.applyOptions({ handleScale: true, handleScroll: true });
-            }
+            setPanZoom(true, 'drawing drag end');
             logInteract('drag end', dragState?.id);
             setDragState(null);
             if (rafRef.current) {
@@ -1625,40 +1631,18 @@ export default function ChartPage() {
         return Math.hypot(px - (x1 + t * C), py - (y1 + t * D));
     };
 
-    const HIT_TOL = 20; // generous tolerance for tap hit-testing
-
     const hitTestDrawing = useCallback((x, y) => {
         for (const d of screenDrawings) {
             if (!d) continue;
             if (d.type === 'hline') {
-                if (Math.abs(y - d.screenY) <= HIT_TOL) return d.id;
-            } else if (d.type === 'trendline' && d.screenPoints?.length >= 2) {
-                const [a, b] = d.screenPoints;
-                if (ptLineDist(x, y, a.x, a.y, b.x, b.y) <= HIT_TOL) return d.id;
-            } else if (d.type === 'channel' && d.screenPoints?.length >= 3) {
-                const [p0, p1, p2] = d.screenPoints;
-                const p3 = { x: p2.x - (p1.x - p0.x), y: p2.y - (p1.y - p0.y) };
-                const segs = [
-                    [p0, p1], [p2, p3], // main parallels
-                    [p0, p3], [p1, p2]  // connectors
-                ];
-                if (segs.some(([s, e]) => ptLineDist(x, y, s.x, s.y, e.x, e.y) <= HIT_TOL)) return d.id;
-            } else if (d.type === 'fib' && d.screenPoints?.length >= 3) {
-                const [p0, p1, p2] = d.screenPoints;
-                const shiftX = p2.x - p1.x;
-                const shiftY = p2.y - p1.y;
-                for (const r of FIB_RATIOS) {
-                    const visible = d.fibVisible ? d.fibVisible[r] !== false : (r <= 1);
-                    if (!visible) continue;
-                    const fx1 = p0.x + shiftX * r;
-                    const fy1 = p0.y + shiftY * r;
-                    const fx2 = p1.x + shiftX * r;
-                    const fy2 = p1.y + shiftY * r;
-                    if (ptLineDist(x, y, fx1, fy1, fx2, fy2) <= HIT_TOL) return d.id;
+                if (Math.abs(y - d.screenY) <= 12) return d.id;
+            } else if ((d.type === 'trendline' || d.type === 'fib' || d.type === 'channel') && d.screenPoints && d.screenPoints.length >= 2) {
+                const pts = d.screenPoints;
+                for (let i = 0; i < pts.length - 1; i++) {
+                    const a = pts[i], b = pts[i + 1];
+                    if (ptLineDist(x, y, a.x, a.y, b.x, b.y) <= 12) return d.id;
                 }
-                // Diagonal hit to catch sparse line clicks
-                if (ptLineDist(x, y, p0.x, p0.y, p2.x, p2.y) <= HIT_TOL) return d.id;
-            } else if (d.type === 'rect' && d.screenPoints?.length >= 2) {
+            } else if (d.type === 'rect' && d.screenPoints && d.screenPoints.length >= 2) {
                 const [p1, p2] = d.screenPoints;
                 const minX = Math.min(p1.x, p2.x), maxX = Math.max(p1.x, p2.x);
                 const minY = Math.min(p1.y, p2.y), maxY = Math.max(p1.y, p2.y);
@@ -1716,11 +1700,11 @@ export default function ChartPage() {
 
             return (<g key={d.id}>
                 {/* Hit Areas - 4 sides */}
-                <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents={selectedId === d.id ? "all" : "none"} {...handlers} />
-                <line x1={p3.x} y1={p3.y} x2={p4.x} y2={p4.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents={selectedId === d.id ? "all" : "none"} {...handlers} />
+                <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
+                <line x1={p3.x} y1={p3.y} x2={p4.x} y2={p4.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
                 {/* Connectors (optional hit area) */}
-                <line x1={p0.x} y1={p0.y} x2={p3.x} y2={p3.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents={selectedId === d.id ? "all" : "none"} {...handlers} />
-                <line x1={p1.x} y1={p1.y} x2={p4.x} y2={p4.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents={selectedId === d.id ? "all" : "none"} {...handlers} />
+                <line x1={p0.x} y1={p0.y} x2={p3.x} y2={p3.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
+                <line x1={p1.x} y1={p1.y} x2={p4.x} y2={p4.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
 
                 {/* Main line */}
                 <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke={color} strokeWidth={d.width || 2} pointerEvents="none" />
@@ -1767,7 +1751,7 @@ export default function ChartPage() {
                                     stroke="transparent"
                                     strokeWidth="20"
                                     cursor="pointer"
-                                    pointerEvents={selectedId === d.id ? "all" : "none"}
+                                    pointerEvents="all"
                                     onPointerDown={(e) => {
                                         if (selectedId !== d.id) return; // only drag when already selected
                                         e.stopPropagation();
@@ -1864,20 +1848,13 @@ export default function ChartPage() {
                     const dy = Math.abs(e.clientY - cand.y);
                     if (dx > 8 || dy > 8) tapCandidateRef.current = null;
                 }}
-                onPointerUpCapture={(e) => {
+                onPointerUpCapture={() => {
                     if (dragState) { tapCandidateRef.current = null; return; }
-                    const rect = containerRef.current?.getBoundingClientRect();
-                    let hitId = tapCandidateRef.current?.id || null;
-                    if (rect) {
-                        const x = e.clientX - rect.left;
-                        const y = e.clientY - rect.top;
-                        if (!hitId) hitId = hitTestDrawing(x, y);
-                    }
-                    if (hitId) setSelectedId(hitId);
+                    if (tapCandidateRef.current) setSelectedId(tapCandidateRef.current.id);
                     tapCandidateRef.current = null;
                 }}
                 onClick={(e) => {
-                    // Select if hit; otherwise clear
+                    // Clear selection only when clicking empty space (no hit)
                     const rect = containerRef.current?.getBoundingClientRect();
                     if (!rect) {
                         setSelectedId(null); setMenu(null); setActiveHandle(null); return;
@@ -1885,9 +1862,7 @@ export default function ChartPage() {
                     const x = e.clientX - rect.left;
                     const y = e.clientY - rect.top;
                     const hitId = hitTestDrawing(x, y);
-                    if (hitId) {
-                        setSelectedId(hitId);
-                    } else {
+                    if (!hitId) {
                         setSelectedId(null);
                         setMenu(null);
                         setActiveHandle(null);
@@ -2197,7 +2172,7 @@ export default function ChartPage() {
                                         stroke="transparent"
                                         strokeWidth="20"
                                         cursor="pointer"
-                                        pointerEvents={selectedId === d.id ? "all" : "none"}
+                                        pointerEvents="all"
                                         onPointerDown={(e) => {
                                             if (selectedId !== d.id) return; // only drag when selected
                                             e.stopPropagation();
@@ -2224,7 +2199,7 @@ export default function ChartPage() {
                                         stroke="transparent"
                                         strokeWidth="15"
                                         cursor="pointer"
-                                        pointerEvents={selectedId === d.id ? "all" : "none"}
+                                        pointerEvents="all"
                                         onPointerDown={(e) => {
                                             if (selectedId !== d.id) return; // only drag when selected
                                             e.stopPropagation();
@@ -2257,7 +2232,7 @@ export default function ChartPage() {
                     fill={`${color}20`}
                     stroke={color}
                     strokeWidth={sel ? (d.width || 1) + 1 : (d.width || 1)}
-                    pointerEvents={selectedId === d.id ? "all" : "none"}
+                    pointerEvents="all"
                     cursor="grab"
                     onPointerDown={(e) => {
                         if (selectedId !== d.id) return; // only drag when selected
