@@ -287,6 +287,12 @@ export default function ChartPage() {
 
         if (suppressDrawingInteractionRef.current) return; // ignore when pinching with two fingers
 
+        // Touch防误触：未选中时先选中，不直接进入拖拽
+        if (e.pointerType === 'touch' && selectedId !== id) {
+            setSelectedId(id);
+            return;
+        }
+
         if (!chartRef.current || !seriesRef.current || !containerRef.current) return;
 
         const isWhole = index === -1;
