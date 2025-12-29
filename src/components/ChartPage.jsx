@@ -98,12 +98,51 @@ export default function ChartPage() {
     const [isLoading, setIsLoading] = useState(true);
     const [selectedId, setSelectedId] = useState(null);
     const { setStage: setGlobalStage } = useContext(LoadingContext);
+    const [isLandscape, setIsLandscape] = useState(() => {
+        if (typeof window === 'undefined' || !window.screen || !window.screen.orientation) return false;
+        return window.screen.orientation.type?.includes('landscape');
+    });
     useEffect(() => {
         if (!setGlobalStage) return;
         const text = loadingStage || (isLoading ? '加载中...' : '');
         setGlobalStage(text);
         return () => setGlobalStage('');
     }, [loadingStage, isLoading, setGlobalStage]);
+
+    // Listen to system orientation changes to keep UI toggle in sync
+    useEffect(() => {
+        const handler = () => {
+            if (typeof window === 'undefined' || !window.screen || !window.screen.orientation) return;
+            setIsLandscape(window.screen.orientation.type?.includes('landscape'));
+        };
+        if (window.screen?.orientation?.addEventListener) {
+            window.screen.orientation.addEventListener('change', handler);
+            return () => window.screen.orientation.removeEventListener('change', handler);
+        }
+    }, []);
+
+    const lockOrientation = async (mode) => {
+        if (typeof window === 'undefined' || !window.screen?.orientation) return false;
+        try {
+            if (window.screen.orientation.lock) {
+                await window.screen.orientation.lock(mode);
+                return true;
+            }
+        } catch (err) {
+            console.warn('orientation lock failed', err);
+        }
+        return false;
+    };
+
+    const toggleOrientation = async () => {
+        const targetLandscape = !isLandscape;
+        const mode = targetLandscape ? 'landscape-primary' : 'portrait-primary';
+        const locked = await lockOrientation(mode);
+        if (!locked && window.screen?.orientation?.unlock) {
+            try { window.screen.orientation.unlock(); } catch (err) { }
+        }
+        setIsLandscape(targetLandscape);
+    };
 
     // Config Menu State
     const [menu, setMenu] = useState(null); // { x, y, type, id, data }
@@ -1690,6 +1729,25 @@ export default function ChartPage() {
                 <div style={{ position: 'relative', width: '100%', padding: '10px 0 5px 0', minHeight: '40px' }}>
                     <button className="back-btn" onClick={() => navigate('/')} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', fontSize: '24px', background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', padding: 0, zIndex: 10 }}>←</button>
                     <h2 onClick={() => setShowSymbolMenu(true)} style={{ margin: 0, fontSize: '16px', color: '#fff', fontWeight: 'bold', textAlign: 'center', width: '100%', cursor: 'pointer', userSelect: 'none' }}>{symbol}</h2>
+                    <button
+                        onClick={toggleOrientation}
+                        title="旋转屏幕"
+                        style={{
+                            position: 'absolute',
+                            right: '8px',
+                            top: '50%',
+                            transform: 'translateY(-50%)',
+                            fontSize: '18px',
+                            background: 'transparent',
+                            border: 'none',
+                            color: '#fff',
+                            cursor: 'pointer',
+                            padding: 4,
+                            zIndex: 10
+                        }}
+                    >
+                        {isLandscape ? '↺' : '↻'}
+                    </button>
                 </div>
                 <div className="interval-selector"
                     ref={intervalRef}
