@@ -520,6 +520,22 @@ export default function ChartPage() {
         return (x !== null && y !== null) ? { x, y } : null;
     }, []);
 
+    const timeToScreen = useCallback((time, price) => {
+        if (!chartRef.current || !seriesRef.current) return null;
+        const ts = chartRef.current.timeScale();
+        let x = ts.timeToCoordinate(time);
+        if (x === null) {
+            // Fallback to logical path if time isn't on current scale
+            const l = ts.coordinateToLogical ? ts.coordinateToLogical(0) : null;
+            const logic = getLogicFromTime ? getLogicFromTime(time) : null;
+            if (logic !== null) {
+                x = ts.logicalToCoordinate ? ts.logicalToCoordinate(logic) : null;
+            }
+        }
+        const y = seriesRef.current.priceToCoordinate(price);
+        return (x !== null && y !== null) ? { x, y } : null;
+    }, []);
+
     // Recalculate indicators on state change
     useEffect(() => {
         if (allDataRef.current.length > 0) updateIndicators(allDataRef.current);
@@ -583,7 +599,7 @@ export default function ChartPage() {
             if (d.points && d.points.some(ppp => !ppp.time)) return null;
 
             if (d.points) {
-                const sp = d.points.map(p => logicToScreen(getLogic(p.time), p.price)).filter(Boolean);
+                const sp = d.points.map(p => timeToScreen(p.time, p.price)).filter(Boolean);
 
                 // DEBUG: Check for off-screen points to left
                 // DEBUG: Check for off-screen points to left
@@ -593,7 +609,7 @@ export default function ChartPage() {
                     console.groupCollapsed(`[Drawings Debug] ${new Date().toLocaleTimeString()} ID=${d.id}`);
                     d.points.forEach((p, i) => {
                         const l = getLogic(p.time);
-                        const proj = logicToScreen(l, p.price);
+                        const proj = timeToScreen(p.time, p.price);
                         const x = proj ? proj.x : 'NULL';
                         const y = proj ? proj.y : 'NULL';
                         const pDate = new Date(p.time * 1000).toLocaleString();
