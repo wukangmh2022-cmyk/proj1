@@ -1842,7 +1842,8 @@ export default function ChartPage() {
                     if (!cand) return;
                     const dx = Math.abs(e.clientX - cand.x);
                     const dy = Math.abs(e.clientY - cand.y);
-                    if (dx > 6 || dy > 6) {
+                    // Allow small drift; bigger move means it's a pan gesture
+                    if (dx > 15 || dy > 15) {
                         selectCandidateRef.current = null;
                     }
                 }}
