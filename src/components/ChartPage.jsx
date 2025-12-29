@@ -1871,7 +1871,7 @@ export default function ChartPage() {
                 <svg style={{
                     position: 'absolute', top: 0, left: 0,
                     width: '100%', height: '100%',
-                    pointerEvents: 'none', zIndex: 10
+                    pointerEvents: 'auto', zIndex: 10
                 }}>
                     {/* ClipPath to exclude axis areas */}
                     <defs>
