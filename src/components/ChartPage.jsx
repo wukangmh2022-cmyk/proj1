@@ -116,6 +116,7 @@ export default function ChartPage() {
     const [selectedId, setSelectedId] = useState(null);
     const [isLandscape, setIsLandscape] = useState(false);
     const tapCandidateRef = useRef(null); // { id, x, y }
+    const tapCandidateRef = useRef(null); // { id, x, y }
     // Orientation toggle removed per latest request (rely on system auto-rotate)
 
     // Config Menu State
@@ -1747,10 +1748,7 @@ export default function ChartPage() {
                                     cursor="pointer"
                                     pointerEvents="all"
                                     onPointerDown={(e) => {
-                                        if (selectedId !== d.id) {
-                                            setSelectedId(d.id);
-                                            return;
-                                        }
+                                        if (selectedId !== d.id) return; // only drag when already selected
                                         e.stopPropagation();
                                         logInteract('fib pointerDown', d.id, e.pointerType);
                                         handleDragStart(e, d.id, -1);
@@ -1835,25 +1833,19 @@ export default function ChartPage() {
                     const x = e.clientX - rect.left;
                     const y = e.clientY - rect.top;
                     const hitId = hitTestDrawing(x, y);
-                    if (hitId) {
-                        tapCandidateRef.current = { id: hitId, x: e.clientX, y: e.clientY };
-                    } else {
-                        tapCandidateRef.current = null;
-                    }
+                    if (hitId) tapCandidateRef.current = { id: hitId, x: e.clientX, y: e.clientY };
+                    else tapCandidateRef.current = null;
                 }}
                 onPointerMoveCapture={(e) => {
                     const cand = tapCandidateRef.current;
                     if (!cand) return;
                     const dx = Math.abs(e.clientX - cand.x);
                     const dy = Math.abs(e.clientY - cand.y);
-                    // if movement is significant, treat as pan and cancel selection
                     if (dx > 8 || dy > 8) tapCandidateRef.current = null;
                 }}
                 onPointerUpCapture={() => {
                     if (dragState) { tapCandidateRef.current = null; return; }
-                    if (tapCandidateRef.current) {
-                        setSelectedId(tapCandidateRef.current.id);
-                    }
+                    if (tapCandidateRef.current) setSelectedId(tapCandidateRef.current.id);
                     tapCandidateRef.current = null;
                 }}
                 onClick={(e) => {
@@ -2177,9 +2169,9 @@ export default function ChartPage() {
                                         cursor="pointer"
                                         pointerEvents="all"
                                         onPointerDown={(e) => {
-                                                if (selectedId !== d.id) { setSelectedId(d.id); return; }
-                                                e.stopPropagation();
-                                                handleDragStart(e, d.id, -1);
+                                            if (selectedId !== d.id) return; // only drag when selected
+                                            e.stopPropagation();
+                                            handleDragStart(e, d.id, -1);
                                         }}
                                         {...handlers}
                                 />
@@ -2204,7 +2196,7 @@ export default function ChartPage() {
                                         cursor="pointer"
                                         pointerEvents="all"
                                         onPointerDown={(e) => {
-                                            if (selectedId !== d.id) { setSelectedId(d.id); return; }
+                                            if (selectedId !== d.id) return; // only drag when selected
                                             e.stopPropagation();
                                             logInteract('trendline pointerDown', d.id, e.pointerType);
                                             handleDragStart(e, d.id, -1);
@@ -2238,7 +2230,7 @@ export default function ChartPage() {
                     pointerEvents="all"
                     cursor="grab"
                     onPointerDown={(e) => {
-                        if (selectedId !== d.id) { setSelectedId(d.id); return; }
+                        if (selectedId !== d.id) return; // only drag when selected
                         e.stopPropagation();
                         logInteract('rect pointerDown', d.id, e.pointerType);
                         handleDragStart(e, d.id, -1);
