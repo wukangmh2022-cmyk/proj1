@@ -476,44 +476,26 @@ export default function ChartPage() {
     };
 
     // Data <-> Screen
+    const lastLogicalRangeRef = useRef(null);
+
     const logicToScreen = useCallback((logic, price) => {
         if (!chartRef.current || !seriesRef.current || logic === null || isNaN(logic)) return null;
 
         const timeScale = chartRef.current.timeScale();
+        const range = timeScale.getVisibleLogicalRange() || lastLogicalRangeRef.current;
         let x = timeScale.logicalToCoordinate(logic);
 
-        // Robust Extrapolation to fix "Zeroing/Folding" bug
-        // The library sometimes clamps off-screen points to 0 or returns null.
-        // We calculate the expected linear position and force it if the library's result is suspicious.
-        const range = timeScale.getVisibleLogicalRange();
-
+        // Robust extrapolation and clamping fix
         if (range) {
             const { from, to } = range;
-            // Use container width if library width is 0 (possible during resize/init)
             const width = timeScale.width() || containerRef.current?.clientWidth || 0;
             const rangeSize = to - from;
-
             if (rangeSize > 0 && width > 0) {
                 const pxPerLogic = width / rangeSize;
                 const linearX = (logic - from) * pxPerLogic;
-
-                // Case 1: Point is to the LEFT of visible range
-                if (logic < from) {
-                    // Logic says left, but x is null or >= 0 (clamped/wrong) -> Force linear negative
-                    if (x === null || x >= 0) {
-                        x = linearX;
-                    }
-                }
-                // Case 2: Point is to the RIGHT of visible range
-                else if (logic > to) {
-                    // Logic says right, but x is null or <= width (clamped/wrong/0) -> Force linear positive
-                    // Specifically catches the "x=0" bug for right-side points
-                    if (x === null || x <= width || x === 0) {
-                        x = linearX;
-                    }
-                }
-                // Case 3: On-screen fallback
-                else if (x === null) {
+                const outOfView = logic < from || logic > to;
+                const badX = x === null || !isFinite(x) || x <= 0 || x >= width;
+                if (outOfView || badX) {
                     x = linearX;
                 }
             }
@@ -1090,6 +1072,7 @@ export default function ChartPage() {
                 allDataRef.current = formatted;
                 seriesRef.current.setData(formatted);
                 dataIntervalRef.current = interval; // mark data interval
+                lastLogicalRangeRef.current = chartRef.current.timeScale().getVisibleLogicalRange() || lastLogicalRangeRef.current;
                 updateIndicators(formatted);
                 // Force redraw drawings with new data time-scale, using rAF to ensure TimeScale is ready
                 requestAnimationFrame(() => updateScreenDrawings());
@@ -1155,6 +1138,7 @@ export default function ChartPage() {
             // Persistence: Save Range
             const logicalRange = chartRef.current.timeScale().getVisibleLogicalRange();
             if (logicalRange) {
+                lastLogicalRangeRef.current = logicalRange;
                 if (saveRangeTimerRef.current) clearTimeout(saveRangeTimerRef.current);
                 saveRangeTimerRef.current = setTimeout(() => {
                     localStorage.setItem(`chart_range_${symbol}_${interval}`, JSON.stringify(logicalRange));
@@ -1227,11 +1211,17 @@ export default function ChartPage() {
         return (l - 1) + (time - t1) / (t2 - t1);
     };
 
-    // Project by first mapping time -> logical index using current data, then apply robust logicToScreen
     const timeToScreen = useCallback((time, price) => {
-        const logic = getLogicFromTime(time);
-        if (logic === null) return null;
-        return logicToScreen(logic, price);
+        if (!chartRef.current || !seriesRef.current) return null;
+        const ts = chartRef.current.timeScale();
+        let x = ts.timeToCoordinate(time);
+        if (x === null) {
+            // If timeScale can't place it (e.g., outside range), fall back to logical mapping with extrapolation
+            const logic = getLogicFromTime(time);
+            if (logic !== null) return logicToScreen(logic, price);
+        }
+        const y = seriesRef.current.priceToCoordinate(price);
+        return (x !== null && y !== null) ? { x, y } : null;
     }, [logicToScreen, interval]);
 
     const getTimeFromLogic = (logic) => {
