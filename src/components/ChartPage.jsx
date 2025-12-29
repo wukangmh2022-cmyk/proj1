@@ -2165,7 +2165,7 @@ export default function ChartPage() {
                                         stroke="transparent"
                                         strokeWidth="15"
                                         cursor="pointer"
-                                        pointerEvents="all"
+                                        pointerEvents={selectedId === d.id ? "all" : "none"}
                                         onPointerDown={(e) => {
                                             if (selectedId !== d.id) return; // allow chart pan when not selected
                                             e.stopPropagation();
@@ -2198,7 +2198,7 @@ export default function ChartPage() {
                     fill={`${color}20`}
                     stroke={color}
                     strokeWidth={sel ? (d.width || 1) + 1 : (d.width || 1)}
-                    pointerEvents="all"
+                    pointerEvents={selectedId === d.id ? "all" : "none"}
                     cursor="grab"
                     onPointerDown={(e) => {
                         if (selectedId !== d.id) return; // allow chart pan if not selected
