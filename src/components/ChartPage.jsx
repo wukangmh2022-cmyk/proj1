@@ -215,6 +215,50 @@ export default function ChartPage() {
     };
 
     const rafRef = useRef(null);
+    const passthroughRef = useRef(null);
+
+    const forwardPointerToChart = (type, srcEvent) => {
+        const canvas = containerRef.current?.querySelector('canvas');
+        if (!canvas) return;
+        const evt = new PointerEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            pointerId: srcEvent.pointerId,
+            pointerType: srcEvent.pointerType,
+            clientX: srcEvent.clientX,
+            clientY: srcEvent.clientY,
+            screenX: srcEvent.screenX,
+            screenY: srcEvent.screenY,
+            buttons: srcEvent.buttons,
+            ctrlKey: srcEvent.ctrlKey,
+            shiftKey: srcEvent.shiftKey,
+            altKey: srcEvent.altKey,
+            metaKey: srcEvent.metaKey
+        });
+        canvas.dispatchEvent(evt);
+    };
+
+    const startPassthrough = (e) => {
+        // Allow chart pan/zoom/crosshair even if a drawing is under the pointer (when not selected)
+        const target = e.currentTarget;
+        forwardPointerToChart('pointerdown', e);
+
+        const move = (ev) => forwardPointerToChart('pointermove', ev);
+        const up = (ev) => {
+            forwardPointerToChart('pointerup', ev);
+            if (passthroughRef.current?.target) {
+                passthroughRef.current.target.style.pointerEvents = '';
+            }
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', up);
+            passthroughRef.current = null;
+        };
+
+        passthroughRef.current = { target, move, up };
+        target.style.pointerEvents = 'none';
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up);
+    };
 
     useEffect(() => {
         const move = (e) => {
@@ -1416,6 +1460,10 @@ export default function ChartPage() {
                 setSelectedId(d.id);
             },
             onPointerDown: (e) => {
+                if (!sel) {
+                    startPassthrough(e);
+                    return;
+                }
                 e.stopPropagation();
                 handleDragStart(e, d.id, -1);
             }
@@ -1503,7 +1551,10 @@ export default function ChartPage() {
                             strokeWidth="20"
                             cursor="pointer"
                             pointerEvents="all"
-                            onPointerDown={(e) => handleDragStart(e, d.id, -1)}
+                            onPointerDown={(e) => {
+                                if (!sel) { startPassthrough(e); return; }
+                                handleDragStart(e, d.id, -1);
+                            }}
                             {...handlers}
                         />
                         {/* Visual */}
@@ -1867,7 +1918,10 @@ export default function ChartPage() {
                                         strokeWidth="20"
                                         cursor="pointer"
                                         pointerEvents="all"
-                                        onPointerDown={(e) => handleDragStart(e, d.id, -1)}
+                                        onPointerDown={(e) => {
+                                            if (!sel) { startPassthrough(e); return; }
+                                            handleDragStart(e, d.id, -1);
+                                        }}
                                         {...handlers}
                                     />
                                     {/* Visible */}
@@ -1890,7 +1944,10 @@ export default function ChartPage() {
                                             strokeWidth="15"
                                             cursor="pointer"
                                             pointerEvents="all"
-                                            onPointerDown={(e) => handleDragStart(e, d.id, -1)}
+                                            onPointerDown={(e) => {
+                                                if (!sel) { startPassthrough(e); return; }
+                                                handleDragStart(e, d.id, -1);
+                                            }}
                                             {...handlers}
                                         />
                                         {/* Visible */}
@@ -1919,7 +1976,10 @@ export default function ChartPage() {
                                             strokeWidth={sel ? (d.width || 1) + 1 : (d.width || 1)}
                                             pointerEvents="all"
                                             cursor="pointer"
-                                            onPointerDown={(e) => handleDragStart(e, d.id, -1)}
+                                            onPointerDown={(e) => {
+                                                if (!sel) { startPassthrough(e); return; }
+                                                handleDragStart(e, d.id, -1);
+                                            }}
                                             {...handlers}
                                         />
                                         {sel && <><circle cx={p1.x} cy={p1.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 0)} /><circle cx={p2.x} cy={p2.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 1)} /></>}
