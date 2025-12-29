@@ -40,7 +40,8 @@ public class FloatingWindowService extends Service {
     private int itemsPerPage = 1;
     
     // WebSocket
-    private okhttp3.WebSocket webSocket;
+    private okhttp3.WebSocket spotWebSocket;
+    private okhttp3.WebSocket futuresWebSocket;
     private okhttp3.OkHttpClient client = new okhttp3.OkHttpClient();
     private com.google.gson.Gson gson = new com.google.gson.Gson();
 
@@ -168,7 +169,7 @@ public class FloatingWindowService extends Service {
             java.util.ArrayList<String> received = intent.getStringArrayListExtra(EXTRA_SYMBOL_LIST);
             if (received != null && !received.isEmpty()) {
                 symbolList = received;
-                connectWebSocket();
+                connectWebSockets();
             }
             return START_STICKY;
         }
@@ -207,7 +208,7 @@ public class FloatingWindowService extends Service {
                     if (idx >= 0) currentIndex = idx;
                 }
                 if (windowVisible) updateUI();
-                connectWebSocket();
+                connectWebSockets();
             }
             return START_STICKY;
         }
@@ -253,46 +254,67 @@ public class FloatingWindowService extends Service {
         return START_STICKY;
     }
     
-    private void connectWebSocket() {
-        if (webSocket != null) {
-            webSocket.cancel(); // Use cancel to immediately stop
-            webSocket = null;
-        }
-        
+    private void connectWebSockets() {
+        // Close previous sockets
+        if (spotWebSocket != null) { spotWebSocket.cancel(); spotWebSocket = null; }
+        if (futuresWebSocket != null) { futuresWebSocket.cancel(); futuresWebSocket = null; }
+
         if (symbolList.isEmpty()) return;
 
-        StringBuilder streams = new StringBuilder();
+        java.util.List<String> spot = new java.util.ArrayList<>();
+        java.util.List<String> futures = new java.util.ArrayList<>();
         for (String s : symbolList) {
-            streams.append(s.toLowerCase()).append("@miniTicker/");
+            if (s == null) continue;
+            if (s.toUpperCase().endsWith(".P")) futures.add(s);
+            else spot.add(s);
         }
-        // Remove trailing slash
-        if (streams.length() > 0) streams.setLength(streams.length() - 1);
-        
-        String url = "wss://stream.binance.com:9443/stream?streams=" + streams.toString();
-        
-        okhttp3.Request request = new okhttp3.Request.Builder().url(url).build();
-        webSocket = client.newWebSocket(request, new okhttp3.WebSocketListener() {
-            @Override
-            public void onOpen(okhttp3.WebSocket webSocket, okhttp3.Response response) {
-                // Connected
-            }
 
-            @Override
-            public void onMessage(okhttp3.WebSocket webSocket, String text) {
-                handleMessage(text);
+        if (!spot.isEmpty()) {
+            StringBuilder streams = new StringBuilder();
+            for (String s : spot) {
+                streams.append(s.toLowerCase()).append("@miniTicker/");
             }
+            if (streams.length() > 0) streams.setLength(streams.length() - 1);
+            String url = "wss://stream.binance.com:9443/stream?streams=" + streams.toString();
 
-            @Override
-            public void onFailure(okhttp3.WebSocket webSocket, Throwable t, okhttp3.Response response) {
-                // Retry logic could be added here
-                try {
-                    Thread.sleep(3000);
-                    connectWebSocket();
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
+            okhttp3.Request request = new okhttp3.Request.Builder().url(url).build();
+            spotWebSocket = client.newWebSocket(request, new okhttp3.WebSocketListener() {
+                @Override
+                public void onMessage(okhttp3.WebSocket webSocket, String text) {
+                    handleMessage(text, false);
                 }
+
+                @Override
+                public void onFailure(okhttp3.WebSocket webSocket, Throwable t, okhttp3.Response response) {
+                    try { Thread.sleep(3000); } catch (InterruptedException ignored) {}
+                    connectWebSockets();
+                }
+            });
+        }
+
+        if (!futures.isEmpty()) {
+            StringBuilder streams = new StringBuilder();
+            for (String s : futures) {
+                String base = s.toUpperCase().endsWith(".P") ? s.substring(0, s.length() - 2) : s;
+                streams.append(base.toLowerCase()).append("@miniTicker/");
             }
-        });
+            if (streams.length() > 0) streams.setLength(streams.length() - 1);
+            String url = "wss://fstream.binance.com/stream?streams=" + streams.toString();
+
+            okhttp3.Request request = new okhttp3.Request.Builder().url(url).build();
+            futuresWebSocket = client.newWebSocket(request, new okhttp3.WebSocketListener() {
+                @Override
+                public void onMessage(okhttp3.WebSocket webSocket, String text) {
+                    handleMessage(text, true);
+                }
+
+                @Override
+                public void onFailure(okhttp3.WebSocket webSocket, Throwable t, okhttp3.Response response) {
+                    try { Thread.sleep(3000); } catch (InterruptedException ignored) {}
+                    connectWebSockets();
+                }
+            });
+        }
     }
     
     // Static listener for ticker updates (used by Plugin)
@@ -306,12 +328,13 @@ public class FloatingWindowService extends Service {
         tickerListener = listener;
     }
     
-    private void handleMessage(String text) {
+    private void handleMessage(String text, boolean isFutures) {
         try {
             com.google.gson.JsonObject json = com.google.gson.JsonParser.parseString(text).getAsJsonObject();
             if (json.has("data")) {
                 com.google.gson.JsonObject data = json.getAsJsonObject("data");
-                String symbol = data.get("s").getAsString();
+                String symbolRaw = data.get("s").getAsString();
+                String symbol = isFutures ? symbolRaw + ".P" : symbolRaw;
                 String close = data.get("c").getAsString();
                 
                 // Calculate change percent
@@ -1025,9 +1048,8 @@ public class FloatingWindowService extends Service {
     @Override
     public void onDestroy() {
         super.onDestroy();
-        if (webSocket != null) {
-            webSocket.cancel();
-        }
+        if (spotWebSocket != null) spotWebSocket.cancel();
+        if (futuresWebSocket != null) futuresWebSocket.cancel();
         if (klineWebSocket != null) {
             klineWebSocket.cancel();
         }

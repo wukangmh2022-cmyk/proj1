@@ -1734,11 +1734,11 @@ export default function ChartPage() {
 
             return (<g key={d.id}>
                 {/* Hit Areas - 4 sides */}
-                <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
-                <line x1={p3.x} y1={p3.y} x2={p4.x} y2={p4.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
+                <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents={selectedId === d.id ? "all" : "none"} {...handlers} />
+                <line x1={p3.x} y1={p3.y} x2={p4.x} y2={p4.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents={selectedId === d.id ? "all" : "none"} {...handlers} />
                 {/* Connectors (optional hit area) */}
-                <line x1={p0.x} y1={p0.y} x2={p3.x} y2={p3.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
-                <line x1={p1.x} y1={p1.y} x2={p4.x} y2={p4.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
+                <line x1={p0.x} y1={p0.y} x2={p3.x} y2={p3.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents={selectedId === d.id ? "all" : "none"} {...handlers} />
+                <line x1={p1.x} y1={p1.y} x2={p4.x} y2={p4.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents={selectedId === d.id ? "all" : "none"} {...handlers} />
 
                 {/* Main line */}
                 <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke={color} strokeWidth={d.width || 2} pointerEvents="none" />
@@ -1751,7 +1751,7 @@ export default function ChartPage() {
                 <line x1={p1.x} y1={p1.y} x2={p4.x} y2={p4.y} stroke={color} strokeWidth="1" strokeDasharray="2,2" opacity="0.5" pointerEvents="none" />
 
                 {sel && d.screenPoints.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r="6" fill={activeHandle?.id === d.id && activeHandle?.index === i ? "#fff" : color} stroke={activeHandle?.id === d.id && activeHandle?.index === i ? color : "#fff"} strokeWidth="2" cursor="crosshair" pointerEvents="all" {...anchorHandlers(i)} />)}
-                <text x={p0.x} y={p0.y - 10} fill={color} fontSize="10" pointerEvents="none">{d.label || d.id}</text>
+                <text x={p0.x} y={p0.y - 10} fill={color} fontSize="10" pointerEvents="auto" onClick={(e) => { e.stopPropagation(); setSelectedId(d.id); }}>{d.label || d.id}</text>
             </g>);
         }
 
@@ -1785,7 +1785,7 @@ export default function ChartPage() {
                                     stroke="transparent"
                                     strokeWidth="20"
                                     cursor="pointer"
-                                    pointerEvents="all"
+                                    pointerEvents={selectedId === d.id ? "all" : "none"}
                                     onPointerDown={(e) => {
                                         if (selectedId !== d.id) return; // allow chart pan when not selected
                                         e.stopPropagation();
@@ -1796,7 +1796,7 @@ export default function ChartPage() {
                                 />
                         {/* Visual */}
                         <line x1={fx1} y1={fy1} x2={fx2} y2={fy2} stroke={levelColor} strokeWidth={d.width || 2} opacity={sel ? 1 : 0.8} pointerEvents="none" />
-                        <text x={fx2 + 5} y={fy2} fill={levelColor} fontSize="9" pointerEvents="none">{r}</text>
+                        <text x={fx2 + 5} y={fy2} fill={levelColor} fontSize="9" pointerEvents="auto" onClick={(e) => { e.stopPropagation(); setSelectedId(d.id); }}>{r}</text>
                     </g>);
                 })}
                 {/* Trendline (Diagonal) */}
@@ -2202,15 +2202,15 @@ export default function ChartPage() {
                             if (d.type === 'hline') return (
                                 <g key={d.id}>
                                     {/* Hit Area */}
-                                    <line
-                                        x1={0}
-                                        y1={d.screenY}
-                                        x2="100%"
-                                        y2={d.screenY}
+                                <line
+                                    x1={0}
+                                    y1={d.screenY}
+                                    x2="100%"
+                                    y2={d.screenY}
                                     stroke="transparent"
                                     strokeWidth="20"
                                     cursor="pointer"
-                                    pointerEvents="all"
+                                    pointerEvents={selectedId === d.id ? "all" : "none"}
                                     onPointerDown={(e) => {
                                             if (selectedId !== d.id) return; // allow chart pan when not selected
                                             e.stopPropagation();
@@ -2220,7 +2220,7 @@ export default function ChartPage() {
                                 />
                                     {/* Visible */}
                                     <line x1={0} y1={d.screenY} x2="100%" y2={d.screenY} stroke={color} strokeWidth={sel ? (d.width || 1) + 1 : (d.width || 1)} pointerEvents="none" />
-                                    <text x={5} y={d.screenY - 5} fill={color} fontSize="10" pointerEvents="none">{d.label || d.id}</text>
+                                    <text x={5} y={d.screenY - 5} fill={color} fontSize="10" pointerEvents="auto" onClick={(e) => { e.stopPropagation(); setSelectedId(d.id); }}>{d.label || d.id}</text>
                                     {sel && <circle cx={(containerRef.current?.clientWidth || 300) / 2} cy={d.screenY} r="7" fill={activeHandle?.id === d.id && activeHandle?.index === 0 ? "#fff" : color} stroke={activeHandle?.id === d.id && activeHandle?.index === 0 ? color : "#fff"} strokeWidth="2" cursor="ns-resize" pointerEvents="all" {...anchorHandlers(0)} />}
                                 </g>
                             );
@@ -2237,7 +2237,7 @@ export default function ChartPage() {
                                             stroke="transparent"
                                             strokeWidth="15"
                                             cursor="pointer"
-                                            pointerEvents="all"
+                                            pointerEvents={selectedId === d.id ? "all" : "none"}
                                             onPointerDown={(e) => {
                                                 if (selectedId !== d.id) return; // allow chart pan when not selected
                                                 e.stopPropagation();
@@ -2251,7 +2251,7 @@ export default function ChartPage() {
                                         {sel && d.screenPoints.map((p, i) => (
                                             <circle key={i} cx={p.x} cy={p.y} r="6" fill={activeHandle?.id === d.id && activeHandle?.index === i ? "#fff" : color} stroke={activeHandle?.id === d.id && activeHandle?.index === i ? color : "#fff"} strokeWidth="2" cursor="crosshair" pointerEvents="all" {...anchorHandlers(i)} />
                                         ))}
-                                        <text x={(p1.x + p2.x) / 2} y={(p1.y + p2.y) / 2 - 5} fill={color} fontSize="10" textAnchor="middle" pointerEvents="none">{d.label || d.id}</text>
+                                        <text x={(p1.x + p2.x) / 2} y={(p1.y + p2.y) / 2 - 5} fill={color} fontSize="10" textAnchor="middle" pointerEvents="auto" onClick={(e) => { e.stopPropagation(); setSelectedId(d.id); }}>{d.label || d.id}</text>
                                     </g>
                                 );
                             } else if (d.type === 'rect' && d.screenPoints && d.screenPoints.length >= 2) {
@@ -2270,7 +2270,7 @@ export default function ChartPage() {
                     fill={`${color}20`}
                     stroke={color}
                     strokeWidth={sel ? (d.width || 1) + 1 : (d.width || 1)}
-                    pointerEvents="all"
+                    pointerEvents={selectedId === d.id ? "all" : "none"}
                     cursor="grab"
                     onPointerDown={(e) => {
                         if (selectedId !== d.id) return; // allow chart pan if not selected
@@ -2281,7 +2281,7 @@ export default function ChartPage() {
                     {...handlers}
                 />
                                         {sel && <><circle cx={p1.x} cy={p1.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 0)} /><circle cx={p2.x} cy={p2.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 1)} /></>}
-                                        <text x={x + 5} y={y - 5} fill={color} fontSize="10" pointerEvents="none">{d.label || d.id}</text>
+                                        <text x={x + 5} y={y - 5} fill={color} fontSize="10" pointerEvents="auto" onClick={(e) => { e.stopPropagation(); setSelectedId(d.id); }}>{d.label || d.id}</text>
                                     </g>
                                 );
                             }
