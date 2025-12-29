@@ -115,7 +115,6 @@ export default function ChartPage() {
     const [isLoading, setIsLoading] = useState(true);
     const [selectedId, setSelectedId] = useState(null);
     const [isLandscape, setIsLandscape] = useState(false);
-    const tapSelectedRef = useRef(false);
     // Orientation toggle removed per latest request (rely on system auto-rotate)
 
     // Config Menu State
@@ -1833,29 +1832,24 @@ export default function ChartPage() {
                     const hitId = hitTestDrawing(x, y);
                     if (hitId) {
                         setSelectedId(hitId);
-                        tapSelectedRef.current = true;
                     } else {
-                        tapSelectedRef.current = false;
+                        // no hit, allow chart pan
                     }
                 }}
-                onPointerUpCapture={() => {
-                    // reset tap flag after gesture end
-                    tapSelectedRef.current = false;
-                }}
-                onPointerCancelCapture={() => {
-                    tapSelectedRef.current = false;
-                }}
-                onPointerLeaveCapture={() => {
-                    tapSelectedRef.current = false;
-                }}
-                onClick={() => {
-                    if (tapSelectedRef.current) {
-                        tapSelectedRef.current = false;
-                        return;
+                onClick={(e) => {
+                    // Clear selection only when clicking empty space (no hit)
+                    const rect = containerRef.current?.getBoundingClientRect();
+                    if (!rect) {
+                        setSelectedId(null); setMenu(null); setActiveHandle(null); return;
                     }
-                    setSelectedId(null);
-                    setMenu(null);
-                    setActiveHandle(null);
+                    const x = e.clientX - rect.left;
+                    const y = e.clientY - rect.top;
+                    const hitId = hitTestDrawing(x, y);
+                    if (!hitId) {
+                        setSelectedId(null);
+                        setMenu(null);
+                        setActiveHandle(null);
+                    }
                 }}>
 
                 {/* Legend */}
