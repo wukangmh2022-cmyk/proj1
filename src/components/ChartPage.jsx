@@ -115,6 +115,7 @@ export default function ChartPage() {
     const [isLoading, setIsLoading] = useState(true);
     const [selectedId, setSelectedId] = useState(null);
     const [isLandscape, setIsLandscape] = useState(false);
+    const selectCandidateRef = useRef(null); // {id, x, y}
     // Orientation toggle removed per latest request (rely on system auto-rotate)
 
     // Config Menu State
@@ -1826,12 +1827,31 @@ export default function ChartPage() {
                 onPointerDownCapture={(e) => {
                     const rect = containerRef.current?.getBoundingClientRect();
                     if (!rect) return;
+                    if (e.pointerType === 'touch' && e.touches && e.touches.length > 1) return;
                     const x = e.clientX - rect.left;
                     const y = e.clientY - rect.top;
                     const hitId = hitTestDrawing(x, y);
                     if (hitId) {
-                        setSelectedId(hitId);
+                        selectCandidateRef.current = { id: hitId, x: e.clientX, y: e.clientY };
+                    } else {
+                        selectCandidateRef.current = null;
                     }
+                }}
+                onPointerMoveCapture={(e) => {
+                    const cand = selectCandidateRef.current;
+                    if (!cand) return;
+                    const dx = Math.abs(e.clientX - cand.x);
+                    const dy = Math.abs(e.clientY - cand.y);
+                    if (dx > 6 || dy > 6) {
+                        selectCandidateRef.current = null;
+                    }
+                }}
+                onPointerUpCapture={(e) => {
+                    const cand = selectCandidateRef.current;
+                    if (cand) {
+                        setSelectedId(cand.id);
+                    }
+                    selectCandidateRef.current = null;
                 }}
                 onClick={() => { setSelectedId(null); setMenu(null); setActiveHandle(null); }}>
 
