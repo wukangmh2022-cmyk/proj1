@@ -1839,14 +1839,7 @@ export default function ChartPage() {
                     }
                 }}
                 onPointerMoveCapture={(e) => {
-                    const cand = selectCandidateRef.current;
-                    if (!cand) return;
-                    const dx = Math.abs(e.clientX - cand.x);
-                    const dy = Math.abs(e.clientY - cand.y);
-                    // Allow only very small drift; treat larger move as chart pan and cancel selection
-                    if (dx > 6 || dy > 6) {
-                        selectCandidateRef.current = null;
-                    }
+                    // Do not cancel candidate on small moves; allow tap selection even with minor drift
                 }}
                 onPointerUpCapture={(e) => {
                     const cand = selectCandidateRef.current;
