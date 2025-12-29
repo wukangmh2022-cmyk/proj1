@@ -2036,22 +2036,24 @@ export default function ChartPage() {
                                 const h = Math.abs(p2.y - p1.y);
                                 return (
                                     <g key={d.id}>
-                                        <rect
-                                            x={x}
-                                            y={y}
-                                            width={w}
-                                            height={h}
-                                            fill={`${color}20`}
-                                            stroke={color}
-                                            strokeWidth={sel ? (d.width || 1) + 1 : (d.width || 1)}
-                                            pointerEvents="all"
-                                            cursor="pointer"
-                                            onPointerDown={(e) => {
-                                                if (!sel) { startPassthrough(e); return; }
-                                                handleDragStart(e, d.id, -1);
-                                            }}
-                                            {...handlers}
-                                        />
+                                <rect
+                                    x={x}
+                                    y={y}
+                                    width={w}
+                                    height={h}
+                                    fill={`${color}20`}
+                                    stroke={color}
+                                    strokeWidth={sel ? (d.width || 1) + 1 : (d.width || 1)}
+                                    pointerEvents="all"
+                                    cursor="grab"
+                                    onPointerDown={(e) => {
+                                        e.stopPropagation();
+                                        // Allow dragging even if not pre-selected
+                                        setSelectedId(d.id);
+                                        handleDragStart(e, d.id, -1);
+                                    }}
+                                    {...handlers}
+                                />
                                         {sel && <><circle cx={p1.x} cy={p1.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 0)} /><circle cx={p2.x} cy={p2.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 1)} /></>}
                                         <text x={x + 5} y={y - 5} fill={color} fontSize="10" pointerEvents="none">{d.label || d.id}</text>
                                     </g>
