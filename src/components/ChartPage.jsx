@@ -9,14 +9,6 @@ import '../App.css';
 
 const DRAW_MODES = { NONE: 'none', TRENDLINE: 'trendline', CHANNEL: 'channel', RECT: 'rect', HLINE: 'hline', FIB: 'fib' };
 const FIB_RATIOS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
-
-let idCounter = 0;
-const genId = (type) => {
-    const suffix = (typeof crypto !== 'undefined' && crypto.randomUUID)
-        ? crypto.randomUUID()
-        : `${Date.now()}_${++idCounter}`;
-    return `${type}_${suffix}`;
-};
 const LABEL_PREFIX = { hline: 'h', trendline: 't', rect: 'r', channel: 'c', fib: 'f' };
 
 // Helper to parse interval to seconds
@@ -38,15 +30,27 @@ export default function ChartPage() {
     const containerRef = useRef(null);
     const chartRef = useRef(null);
     const seriesRef = useRef(null);
-    const labelCountersRef = useRef({ hline: 0, trendline: 0, rect: 0, channel: 0, fib: 0 });
     const labelsInitializedRef = useRef(false);
 
     const getPrefix = (type) => LABEL_PREFIX[type] || 'd';
-    const nextLabel = (type) => {
-        const p = getPrefix(type);
-        const next = (labelCountersRef.current[type] || 0) + 1;
-        labelCountersRef.current[type] = next;
-        return `${p}${next}`;
+
+    const collectUsedLabels = (draws) => {
+        const used = new Set();
+        draws.forEach(d => {
+            if (d.id) used.add(d.id);
+            if (d.label) used.add(d.label);
+        });
+        return used;
+    };
+
+    const allocLabel = (type, usedSet) => {
+        const used = usedSet || collectUsedLabels(drawings);
+        const prefix = getPrefix(type);
+        let n = 1;
+        while (used.has(`${prefix}${n}`)) n++;
+        const label = `${prefix}${n}`;
+        used.add(label);
+        return { label, used };
     };
 
     const [interval, setIntervalState] = useState(() => {
@@ -67,28 +71,25 @@ export default function ChartPage() {
     // Initialize label counters from existing drawings (once)
     useEffect(() => {
         if (labelsInitializedRef.current) return;
-        const counters = { hline: 0, trendline: 0, rect: 0, channel: 0, fib: 0 };
-        drawings.forEach(d => {
-            const p = getPrefix(d.type);
-            const label = d.label || d.id;
-            const m = label && label.match(new RegExp(`^${p}(\\d+)$`, 'i'));
-            if (m) {
-                counters[d.type] = Math.max(counters[d.type], parseInt(m[1], 10));
-            }
-        });
-        labelCountersRef.current = counters;
-
-        // Backfill missing labels for existing drawings
+        const used = collectUsedLabels(drawings);
         let changed = false;
         const updated = drawings.map(d => {
-            if (d.label) return d;
-            const p = getPrefix(d.type);
-            const label = d.id?.match(new RegExp(`^${p}(\\d+)$`, 'i')) ? d.id : nextLabel(d.type);
+            if (d.label) {
+                used.add(d.label);
+                return d;
+            }
+            const prefix = getPrefix(d.type);
+            const m = d.id?.match(new RegExp(`^${prefix}\\d+$`, 'i'));
+            if (m) {
+                used.add(m[0]);
+                changed = true;
+                return { ...d, label: m[0] };
+            }
+            const { label } = allocLabel(d.type, used);
             changed = true;
             return { ...d, label };
         });
         if (changed) setDrawings(updated);
-
         labelsInitializedRef.current = true;
     }, [drawings]);
     const [screenDrawings, setScreenDrawings] = useState([]);
@@ -1480,10 +1481,12 @@ export default function ChartPage() {
 
             const type = drawModeRef.current;
             if (type === 'hline') {
-                drawing = { id: genId('hline'), label: nextLabel('hline'), type: 'hline', price: newPending[0].price, width: 1 };
+                const { label } = allocLabel('hline');
+                drawing = { id: label, label, type: 'hline', price: newPending[0].price, width: 1 };
             } else {
                 // Unified: All time-based drawings use 'points'
-                drawing = { id: genId(type), label: nextLabel(type), type, points: newPending.map(p => ({ ...p, time: getTime(p.logic) })), width: 1 };
+                const { label } = allocLabel(type);
+                drawing = { id: label, label, type, points: newPending.map(p => ({ ...p, time: getTime(p.logic) })), width: 1 };
             }
             setDrawings(prev => [...prev, drawing]);
             setPendingPoints([]);
@@ -2024,24 +2027,24 @@ export default function ChartPage() {
                                 const h = Math.abs(p2.y - p1.y);
                                 return (
                                     <g key={d.id}>
-                                <rect
-                                    x={x}
-                                    y={y}
-                                    width={w}
-                                    height={h}
-                                    fill={`${color}20`}
-                                    stroke={color}
-                                    strokeWidth={sel ? (d.width || 1) + 1 : (d.width || 1)}
-                                    pointerEvents="all"
-                                    cursor="grab"
-                                    onPointerDown={(e) => {
-                                        e.stopPropagation();
-                                        // Allow dragging even if not pre-selected
-                                        setSelectedId(d.id);
-                                        handleDragStart(e, d.id, -1);
-                                    }}
-                                    {...handlers}
-                                />
+                <rect
+                    x={x}
+                    y={y}
+                    width={w}
+                    height={h}
+                    fill={`${color}20`}
+                    stroke={color}
+                    strokeWidth={sel ? (d.width || 1) + 1 : (d.width || 1)}
+                    pointerEvents="all"
+                    cursor="grab"
+                    onPointerDown={(e) => {
+                        e.stopPropagation();
+                        // Allow dragging even if not pre-selected
+                        setSelectedId(d.id);
+                        handleDragStart(e, d.id, -1);
+                    }}
+                    {...handlers}
+                />
                                         {sel && <><circle cx={p1.x} cy={p1.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 0)} /><circle cx={p2.x} cy={p2.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 1)} /></>}
                                         <text x={x + 5} y={y - 5} fill={color} fontSize="10" pointerEvents="none">{d.label || d.id}</text>
                                     </g>
