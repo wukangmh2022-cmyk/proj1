@@ -115,7 +115,8 @@ export default function ChartPage() {
     const [isLoading, setIsLoading] = useState(true);
     const [selectedId, setSelectedId] = useState(null);
     const [isLandscape, setIsLandscape] = useState(false);
-    const selectCandidateRef = useRef(null); // {id, x, y}
+    const selectCandidateRef = useRef(null); // {id, x, y, t}
+    const tapSelectedRef = useRef(false);
     // Orientation toggle removed per latest request (rely on system auto-rotate)
 
     // Config Menu State
@@ -1832,7 +1833,7 @@ export default function ChartPage() {
                     const y = e.clientY - rect.top;
                     const hitId = hitTestDrawing(x, y);
                     if (hitId) {
-                        selectCandidateRef.current = { id: hitId, x: e.clientX, y: e.clientY };
+                        selectCandidateRef.current = { id: hitId, x: e.clientX, y: e.clientY, t: Date.now() };
                     } else {
                         selectCandidateRef.current = null;
                     }
@@ -1842,19 +1843,39 @@ export default function ChartPage() {
                     if (!cand) return;
                     const dx = Math.abs(e.clientX - cand.x);
                     const dy = Math.abs(e.clientY - cand.y);
-                    // Allow small drift; bigger move means it's a pan gesture
-                    if (dx > 15 || dy > 15) {
+                    // Allow only very small drift; treat larger move as chart pan and cancel selection
+                    if (dx > 6 || dy > 6) {
                         selectCandidateRef.current = null;
                     }
                 }}
                 onPointerUpCapture={(e) => {
                     const cand = selectCandidateRef.current;
+                    tapSelectedRef.current = false;
                     if (cand) {
-                        setSelectedId(cand.id);
+                        const dt = Date.now() - (cand.t || Date.now());
+                        // Treat as tap only if quick and without movement
+                        if (dt < 350) {
+                            setSelectedId(cand.id);
+                            tapSelectedRef.current = true;
+                        }
                     }
                     selectCandidateRef.current = null;
                 }}
-                onClick={() => { setSelectedId(null); setMenu(null); setActiveHandle(null); }}>
+                onPointerCancelCapture={() => {
+                    selectCandidateRef.current = null;
+                }}
+                onPointerLeaveCapture={() => {
+                    selectCandidateRef.current = null;
+                }}
+                onClick={(e) => {
+                    if (tapSelectedRef.current) {
+                        tapSelectedRef.current = false;
+                        return;
+                    }
+                    setSelectedId(null);
+                    setMenu(null);
+                    setActiveHandle(null);
+                }}>
 
                 {/* Legend */}
                 <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 30, display: 'flex', gap: '10px', fontSize: '12px', fontFamily: 'monospace', flexWrap: 'wrap' }}>
