@@ -617,11 +617,13 @@ export default function ChartPage() {
 
         // Filter hidden drawings
         const result = drawings.filter(d => d.visible !== false).map(d => {
+            const prevEntry = prevMap[d.id];
             if (d.type === 'hline') {
                 const p = (d.points && d.points[0]) ? d.points[0].price : d.price;
                 if (p === undefined) return null;
                 const y = seriesRef.current?.priceToCoordinate(p);
-                return y !== null ? { ...d, screenY: y } : null;
+                if (y !== null) return { ...d, screenY: y };
+                return prevEntry || null;
             }
 
             if (d.points && d.points.some(ppp => !ppp.time)) return null;
@@ -668,6 +670,8 @@ export default function ChartPage() {
                 if (prev && prev.screenPoints && prev.screenPoints.length === d.points.length) {
                     return { ...d, screenPoints: prev.screenPoints };
                 }
+                // Keep previous entry if available to avoid flicker/disappear
+                if (prevEntry) return prevEntry;
                 return null;
             }
             return null;
