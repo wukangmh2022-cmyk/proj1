@@ -1617,10 +1617,10 @@ export default function ChartPage() {
                                     stroke="transparent"
                                     strokeWidth="20"
                                     cursor="pointer"
-                                    pointerEvents="all"
+                                    pointerEvents="stroke"
                                     onPointerDown={(e) => {
                                         e.stopPropagation();
-                                        logInteract('hline pointerDown', d.id, e.pointerType);
+                                        logInteract('fib pointerDown', d.id, e.pointerType);
                                         setSelectedId(d.id);
                                         handleDragStart(e, d.id, -1);
                                     }}
@@ -1995,7 +1995,7 @@ export default function ChartPage() {
                                         stroke="transparent"
                                         strokeWidth="20"
                                         cursor="pointer"
-                                    pointerEvents="all"
+                                    pointerEvents="stroke"
                                     onPointerDown={(e) => {
                                         e.stopPropagation();
                                         setSelectedId(d.id);
@@ -2022,7 +2022,7 @@ export default function ChartPage() {
                                             stroke="transparent"
                                             strokeWidth="15"
                                             cursor="pointer"
-                                            pointerEvents="all"
+                                            pointerEvents="stroke"
                                             onPointerDown={(e) => {
                                                 e.stopPropagation();
                                                 logInteract('trendline pointerDown', d.id, e.pointerType);
