@@ -114,49 +114,8 @@ export default function ChartPage() {
     const [loadingStage, setLoadingStage] = useState('');
     const [isLoading, setIsLoading] = useState(true);
     const [selectedId, setSelectedId] = useState(null);
-    const [isLandscape, setIsLandscape] = useState(() => {
-        if (typeof window === 'undefined' || !window.screen || !window.screen.orientation) return false;
-        return window.screen.orientation.type?.includes('landscape');
-    });
-    // Listen to system orientation changes to keep UI toggle in sync
-    useEffect(() => {
-        const handler = () => {
-            if (typeof window === 'undefined' || !window.screen || !window.screen.orientation) return;
-            setIsLandscape(window.screen.orientation.type?.includes('landscape'));
-        };
-        if (window.screen?.orientation?.addEventListener) {
-            window.screen.orientation.addEventListener('change', handler);
-            return () => window.screen.orientation.removeEventListener('change', handler);
-        }
-    }, []);
-
-    const lockOrientation = async (mode) => {
-        if (typeof window === 'undefined' || !window.screen?.orientation) return false;
-        try {
-            if (window.screen.orientation.lock) {
-                await window.screen.orientation.lock(mode);
-                return true;
-            }
-        } catch (err) {
-            console.warn('orientation lock failed', err);
-        }
-        return false;
-    };
-
-    const toggleOrientation = async () => {
-        const targetLandscape = !isLandscape;
-        const mode = targetLandscape ? 'landscape-primary' : 'portrait-primary';
-
-        const locked = await lockOrientation(mode);
-        if (!locked) {
-            // 不支持锁定时，让系统自动旋转，提示用户开启自动旋转
-            console.warn('orientation lock unsupported; rely on system auto-rotate');
-            return;
-        }
-
-        const nowLandscape = window.screen?.orientation?.type?.includes('landscape') ?? targetLandscape;
-        setIsLandscape(nowLandscape);
-    };
+    const [isLandscape, setIsLandscape] = useState(false);
+    // Orientation toggle removed per latest request (rely on system auto-rotate)
 
     // Config Menu State
     const [menu, setMenu] = useState(null); // { x, y, type, id, data }
@@ -1773,49 +1732,6 @@ export default function ChartPage() {
                 <div style={{ position: 'relative', width: '100%', padding: '10px 0 5px 0', minHeight: '40px' }}>
                     <button className="back-btn" onClick={() => navigate('/')} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', fontSize: '24px', background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', padding: 0, zIndex: 10 }}>←</button>
                     <h2 onClick={() => setShowSymbolMenu(true)} style={{ margin: 0, fontSize: '16px', color: '#fff', fontWeight: 'bold', textAlign: 'center', width: '100%', cursor: 'pointer', userSelect: 'none' }}>{symbol}</h2>
-                    <button
-                        onClick={toggleOrientation}
-                        title="旋转屏幕"
-                        tabIndex={-1}
-                        style={{
-                            position: 'absolute',
-                            right: '8px',
-                            top: '50%',
-                            transform: 'translateY(-50%)',
-                            fontSize: '18px',
-                            background: 'transparent',
-                            border: 'none',
-                            outline: 'none',
-                            color: '#fff',
-                            cursor: 'pointer',
-                            padding: 4,
-                            zIndex: 10
-                        }}
-                    >
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                            {/* frame */}
-                            <rect x="3.5" y="3.5" width="17" height="17" rx="2.5" ry="2.5" />
-                            {isLandscape ? (
-                                <>
-                                    {/* inward arrows when landscape */}
-                                    <path d="M6 6 L6 10" />
-                                    <path d="M6 6 L10 6" />
-                                    <path d="M18 18 L14 18" />
-                                    <path d="M18 18 L18 14" />
-                                </>
-                            ) : (
-                                <>
-                                    {/* center-to-corner arrows when portrait */}
-                                    <path d="M12 12 L18 6" />
-                                    <path d="M18 6 L18 9" />
-                                    <path d="M18 6 L15 6" />
-                                    <path d="M12 12 L6 18" />
-                                    <path d="M6 18 L6 15" />
-                                    <path d="M6 18 L9 18" />
-                                </>
-                            )}
-                        </svg>
-                    </button>
                 </div>
                 <div className="interval-selector"
                     ref={intervalRef}
