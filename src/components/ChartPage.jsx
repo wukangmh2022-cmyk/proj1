@@ -1746,9 +1746,9 @@ export default function ChartPage() {
                             zIndex: 10
                         }}
                     >
-                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
                             {/* frame */}
-                            <rect x="4" y="4" width="16" height="16" rx="2" ry="2" />
+                            <rect x="3.5" y="3.5" width="17" height="17" rx="2.5" ry="2.5" />
                             {/* arrow from center to top-right */}
                             <path d="M12 12 L18 6" />
                             <path d="M18 6 L18 9" />
