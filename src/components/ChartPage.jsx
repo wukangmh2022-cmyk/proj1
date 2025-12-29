@@ -159,23 +159,19 @@ export default function ChartPage() {
         });
     }, [activeHandle, customCrosshair, dragState]);
 
-    const handleDragStart = (e, id, index) => {
+    const handleDragStart = (e, id, index = 0) => {
         e.stopPropagation();
         e.preventDefault();
 
         if (!chartRef.current || !seriesRef.current || !containerRef.current) return;
 
+        const isWhole = index === -1;
         const rect = containerRef.current.getBoundingClientRect();
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
 
         const mouseLogic = chartRef.current.timeScale().coordinateToLogical(mouseX);
         const mousePrice = seriesRef.current.coordinateToPrice(mouseY);
-
-        if (mouseLogic === null || mousePrice === null) {
-            setDragState({ id, index, logicOffset: 0, priceOffset: 0 });
-            return;
-        }
 
         // If we are starting a drag from background (Indirect Drag)
         // logicOffset should be calculated based on the CURRENT POINT POSITION vs MOUSE
@@ -184,19 +180,37 @@ export default function ChartPage() {
         const drawing = drawings.find(d => d.id === id);
         if (!drawing) return;
 
-        const point = drawing.points[index];
-        const pointLogic = getLogic(point.time);
+        let anchorPoint = null;
+        if (drawing.type === 'hline') {
+            // Create a virtual anchor using current mouse time and line price
+            const anchorTime = mouseLogic !== null ? getTime(mouseLogic) : (allDataRef.current?.[0]?.time || 0);
+            anchorPoint = { time: anchorTime, price: drawing.price };
+        } else if (drawing.points && drawing.points.length) {
+            anchorPoint = isWhole ? drawing.points[0] : drawing.points[index];
+        }
 
-        const logicOffset = (pointLogic !== null) ? pointLogic - mouseLogic : 0;
-        const priceOffset = point.price - mousePrice;
+        if (!anchorPoint) return;
+
+        const pointLogic = anchorPoint.time !== undefined ? getLogic(anchorPoint.time) : null;
+
+        const logicOffset = (pointLogic !== null && mouseLogic !== null) ? pointLogic - mouseLogic : 0;
+        const priceOffset = anchorPoint.price - (mousePrice ?? anchorPoint.price);
 
         // Disable chart pan/zoom during drag (Already handled by effect if activeHandle is set, but set here for robustness during drag)
         chartRef.current.applyOptions({ handleScale: false, handleScroll: false });
 
-        setDragState({ id, index, logicOffset, priceOffset });
+        setDragState({
+            id,
+            index: isWhole ? -1 : index,
+            logicOffset,
+            priceOffset,
+            anchorTime: anchorPoint.time ?? null,
+            anchorPrice: anchorPoint.price ?? null,
+            isWhole
+        });
 
         // Sync Active Handle and Selection
-        setActiveHandle({ id, index });
+        setActiveHandle({ id, index: isWhole ? -1 : index });
         setSelectedId(id);
     };
 
@@ -233,6 +247,15 @@ export default function ChartPage() {
 
                 setDrawings(prev => prev.map(d => {
                     if (d.id !== dragState.id) return d;
+                    // Whole-shape drag: shift all points by delta
+                    if (dragState.index === -1 && d.type !== 'hline') {
+                        const anchorTime = dragState.anchorTime ?? d.points?.[0]?.time ?? time ?? 0;
+                        const anchorPrice = dragState.anchorPrice ?? d.points?.[0]?.price ?? targetPrice;
+                        const deltaT = (time ?? anchorTime) - anchorTime;
+                        const deltaP = targetPrice - anchorPrice;
+                        const pts = d.points || [];
+                        return { ...d, points: pts.map(p => ({ ...p, time: p.time + deltaT, price: p.price + deltaP })) };
+                    }
                     // For HLine, only price matters
                     if (d.type === 'hline') return { ...d, price: targetPrice };
 
@@ -1394,6 +1417,7 @@ export default function ChartPage() {
             },
             onPointerDown: (e) => {
                 e.stopPropagation();
+                handleDragStart(e, d.id, -1);
             }
         };
 
@@ -1469,8 +1493,19 @@ export default function ChartPage() {
                     const maxY = Math.max(fy1, fy2);
 
                     return (<g key={i}>
-                        {/* Hit Area (Rectangle covering the line for easier selection) */}
-                        <rect x={minX} y={minY - 10} width={maxX - minX} height={maxY - minY + 20} fill="transparent" stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
+                        {/* Hit Area aligned to line */}
+                        <line
+                            x1={fx1}
+                            y1={fy1}
+                            x2={fx2}
+                            y2={fy2}
+                            stroke="transparent"
+                            strokeWidth="20"
+                            cursor="pointer"
+                            pointerEvents="all"
+                            onPointerDown={(e) => handleDragStart(e, d.id, -1)}
+                            {...handlers}
+                        />
                         {/* Visual */}
                         <line x1={fx1} y1={fy1} x2={fx2} y2={fy2} stroke={levelColor} strokeWidth={d.width || 2} opacity={sel ? 1 : 0.8} pointerEvents="none" />
                         <text x={fx2 + 5} y={fy2} fill={levelColor} fontSize="9" pointerEvents="none">{r}</text>
@@ -1823,7 +1858,18 @@ export default function ChartPage() {
                             if (d.type === 'hline') return (
                                 <g key={d.id}>
                                     {/* Hit Area */}
-                                    <line x1={0} y1={d.screenY} x2="100%" y2={d.screenY} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
+                                    <line
+                                        x1={0}
+                                        y1={d.screenY}
+                                        x2="100%"
+                                        y2={d.screenY}
+                                        stroke="transparent"
+                                        strokeWidth="20"
+                                        cursor="pointer"
+                                        pointerEvents="all"
+                                        onPointerDown={(e) => handleDragStart(e, d.id, -1)}
+                                        {...handlers}
+                                    />
                                     {/* Visible */}
                                     <line x1={0} y1={d.screenY} x2="100%" y2={d.screenY} stroke={color} strokeWidth={sel ? (d.width || 1) + 1 : (d.width || 1)} pointerEvents="none" />
                                     <text x={5} y={d.screenY - 5} fill={color} fontSize="10" pointerEvents="none">{d.id}</text>
@@ -1835,7 +1881,18 @@ export default function ChartPage() {
                                 return (
                                     <g key={d.id}>
                                         {/* Hit Area */}
-                                        <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke="transparent" strokeWidth="15" cursor="pointer" pointerEvents="all" {...handlers} />
+                                        <line
+                                            x1={p1.x}
+                                            y1={p1.y}
+                                            x2={p2.x}
+                                            y2={p2.y}
+                                            stroke="transparent"
+                                            strokeWidth="15"
+                                            cursor="pointer"
+                                            pointerEvents="all"
+                                            onPointerDown={(e) => handleDragStart(e, d.id, -1)}
+                                            {...handlers}
+                                        />
                                         {/* Visible */}
                                         <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke={color} strokeWidth={d.width || 1} pointerEvents="none" />
                                         {sel && d.screenPoints.map((p, i) => (
@@ -1852,7 +1909,19 @@ export default function ChartPage() {
                                 const h = Math.abs(p2.y - p1.y);
                                 return (
                                     <g key={d.id}>
-                                        <rect x={x} y={y} width={w} height={h} fill={`${color}20`} stroke={color} strokeWidth={sel ? (d.width || 1) + 1 : (d.width || 1)} pointerEvents="all" cursor="pointer" {...handlers} />
+                                        <rect
+                                            x={x}
+                                            y={y}
+                                            width={w}
+                                            height={h}
+                                            fill={`${color}20`}
+                                            stroke={color}
+                                            strokeWidth={sel ? (d.width || 1) + 1 : (d.width || 1)}
+                                            pointerEvents="all"
+                                            cursor="pointer"
+                                            onPointerDown={(e) => handleDragStart(e, d.id, -1)}
+                                            {...handlers}
+                                        />
                                         {sel && <><circle cx={p1.x} cy={p1.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 0)} /><circle cx={p2.x} cy={p2.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 1)} /></>}
                                         <text x={x + 5} y={y - 5} fill={color} fontSize="10" pointerEvents="none">{d.id}</text>
                                     </g>
