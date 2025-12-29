@@ -116,6 +116,7 @@ export default function ChartPage() {
     const [selectedId, setSelectedId] = useState(null);
     const [isLandscape, setIsLandscape] = useState(false);
     const tapCandidateRef = useRef(null); // { id, x, y }
+    const lastHitRef = useRef(null); // remember last pointerup hit to avoid click-clears
     // Orientation toggle removed per latest request (rely on system auto-rotate)
 
     // Config Menu State
@@ -1849,6 +1850,7 @@ export default function ChartPage() {
                     if (!rect) return;
                     if (e.pointerType === 'touch' && e.touches && e.touches.length > 1) return;
                     if (dragState) return; // do not change selection during chart drag
+                    lastHitRef.current = null;
                     const x = e.clientX - rect.left;
                     const y = e.clientY - rect.top;
                     const hitId = hitTestDrawing(x, y);
@@ -1862,9 +1864,17 @@ export default function ChartPage() {
                     const dy = Math.abs(e.clientY - cand.y);
                     if (dx > 8 || dy > 8) tapCandidateRef.current = null;
                 }}
-                onPointerUpCapture={() => {
+                onPointerUpCapture={(e) => {
                     if (dragState) { tapCandidateRef.current = null; return; }
-                    if (tapCandidateRef.current) setSelectedId(tapCandidateRef.current.id);
+                    const rect = containerRef.current?.getBoundingClientRect();
+                    let hitId = tapCandidateRef.current?.id || null;
+                    if (!hitId && rect) {
+                        const x = e.clientX - rect.left;
+                        const y = e.clientY - rect.top;
+                        hitId = hitTestDrawing(x, y);
+                    }
+                    if (hitId) setSelectedId(hitId);
+                    lastHitRef.current = hitId;
                     tapCandidateRef.current = null;
                 }}
                 onClick={(e) => {
@@ -1876,11 +1886,12 @@ export default function ChartPage() {
                     const x = e.clientX - rect.left;
                     const y = e.clientY - rect.top;
                     const hitId = hitTestDrawing(x, y);
-                    if (!hitId) {
+                    if (!hitId && !lastHitRef.current) {
                         setSelectedId(null);
                         setMenu(null);
                         setActiveHandle(null);
                     }
+                    lastHitRef.current = null;
                 }}>
 
                 {/* Legend */}
