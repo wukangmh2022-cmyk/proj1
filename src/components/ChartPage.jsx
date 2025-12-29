@@ -1749,14 +1749,25 @@ export default function ChartPage() {
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
                             {/* frame */}
                             <rect x="3.5" y="3.5" width="17" height="17" rx="2.5" ry="2.5" />
-                            {/* arrow from center to top-right */}
-                            <path d="M12 12 L18 6" />
-                            <path d="M18 6 L18 9" />
-                            <path d="M18 6 L15 6" />
-                            {/* arrow from center to bottom-left */}
-                            <path d="M12 12 L6 18" />
-                            <path d="M6 18 L6 15" />
-                            <path d="M6 18 L9 18" />
+                            {isLandscape ? (
+                                <>
+                                    {/* inward arrows when landscape */}
+                                    <path d="M6 6 L6 10" />
+                                    <path d="M6 6 L10 6" />
+                                    <path d="M18 18 L14 18" />
+                                    <path d="M18 18 L18 14" />
+                                </>
+                            ) : (
+                                <>
+                                    {/* center-to-corner arrows when portrait */}
+                                    <path d="M12 12 L18 6" />
+                                    <path d="M18 6 L18 9" />
+                                    <path d="M18 6 L15 6" />
+                                    <path d="M12 12 L6 18" />
+                                    <path d="M6 18 L6 15" />
+                                    <path d="M6 18 L9 18" />
+                                </>
+                            )}
                         </svg>
                     </button>
                 </div>
