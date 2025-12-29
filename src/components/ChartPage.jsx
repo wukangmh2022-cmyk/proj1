@@ -1519,11 +1519,8 @@ export default function ChartPage() {
                 setSelectedId(d.id);
             },
             onPointerDown: (e) => {
-                if (!sel) {
-                    startPassthrough(e);
-                    return;
-                }
                 e.stopPropagation();
+                setSelectedId(d.id);
                 handleDragStart(e, d.id, -1);
             }
         };
@@ -1599,23 +1596,24 @@ export default function ChartPage() {
                     const minY = Math.min(fy1, fy2);
                     const maxY = Math.max(fy1, fy2);
 
-                    return (<g key={i}>
-                        {/* Hit Area aligned to line */}
-                        <line
-                            x1={fx1}
-                            y1={fy1}
-                            x2={fx2}
-                            y2={fy2}
-                            stroke="transparent"
-                            strokeWidth="20"
-                            cursor="pointer"
-                            pointerEvents="all"
-                            onPointerDown={(e) => {
-                                if (!sel) { startPassthrough(e); return; }
-                                handleDragStart(e, d.id, -1);
-                            }}
-                            {...handlers}
-                        />
+                            return (<g key={i}>
+                                {/* Hit Area aligned to line */}
+                                <line
+                                    x1={fx1}
+                                    y1={fy1}
+                                    x2={fx2}
+                                    y2={fy2}
+                                    stroke="transparent"
+                                    strokeWidth="20"
+                                    cursor="pointer"
+                                    pointerEvents="all"
+                                    onPointerDown={(e) => {
+                                        e.stopPropagation();
+                                        setSelectedId(d.id);
+                                        handleDragStart(e, d.id, -1);
+                                    }}
+                                    {...handlers}
+                                />
                         {/* Visual */}
                         <line x1={fx1} y1={fy1} x2={fx2} y2={fy2} stroke={levelColor} strokeWidth={d.width || 2} opacity={sel ? 1 : 0.8} pointerEvents="none" />
                         <text x={fx2 + 5} y={fy2} fill={levelColor} fontSize="9" pointerEvents="none">{r}</text>
@@ -2004,7 +2002,8 @@ export default function ChartPage() {
                                             cursor="pointer"
                                             pointerEvents="all"
                                             onPointerDown={(e) => {
-                                                if (!sel) { startPassthrough(e); return; }
+                                                e.stopPropagation();
+                                                setSelectedId(d.id);
                                                 handleDragStart(e, d.id, -1);
                                             }}
                                             {...handlers}
