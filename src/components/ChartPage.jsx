@@ -1672,11 +1672,11 @@ export default function ChartPage() {
 
             return (<g key={d.id}>
                 {/* Hit Areas - 4 sides */}
-                <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents={selectedId === d.id ? "all" : "none"} {...handlers} />
-                <line x1={p3.x} y1={p3.y} x2={p4.x} y2={p4.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents={selectedId === d.id ? "all" : "none"} {...handlers} />
+                <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
+                <line x1={p3.x} y1={p3.y} x2={p4.x} y2={p4.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
                 {/* Connectors (optional hit area) */}
-                <line x1={p0.x} y1={p0.y} x2={p3.x} y2={p3.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents={selectedId === d.id ? "all" : "none"} {...handlers} />
-                <line x1={p1.x} y1={p1.y} x2={p4.x} y2={p4.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents={selectedId === d.id ? "all" : "none"} {...handlers} />
+                <line x1={p0.x} y1={p0.y} x2={p3.x} y2={p3.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
+                <line x1={p1.x} y1={p1.y} x2={p4.x} y2={p4.y} stroke="transparent" strokeWidth="20" cursor="pointer" pointerEvents="all" {...handlers} />
 
                 {/* Main line */}
                 <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke={color} strokeWidth={d.width || 2} pointerEvents="none" />
@@ -1723,7 +1723,7 @@ export default function ChartPage() {
                                     stroke="transparent"
                                     strokeWidth="20"
                                     cursor="pointer"
-                                    pointerEvents={selectedId === d.id ? "all" : "none"}
+                                    pointerEvents="all"
                                     onPointerDown={(e) => {
                                         if (selectedId !== d.id) return; // allow chart pan when not selected
                                         e.stopPropagation();
@@ -2101,18 +2101,18 @@ export default function ChartPage() {
                                     {/* Hit Area */}
                                 <line
                                     x1={0}
-                                    y1={d.screenY}
-                                    x2="100%"
-                                    y2={d.screenY}
-                                    stroke="transparent"
-                                    strokeWidth="20"
-                                    cursor="pointer"
-                                    pointerEvents={selectedId === d.id ? "all" : "none"}
-                                    onPointerDown={(e) => {
-                                            if (selectedId !== d.id) return; // allow chart pan when not selected
-                                            e.stopPropagation();
-                                            handleDragStart(e, d.id, -1);
-                                    }}
+                                        y1={d.screenY}
+                                        x2="100%"
+                                        y2={d.screenY}
+                                        stroke="transparent"
+                                        strokeWidth="20"
+                                        cursor="pointer"
+                                        pointerEvents="all"
+                                        onPointerDown={(e) => {
+                                                if (selectedId !== d.id) return; // allow chart pan when not selected
+                                                e.stopPropagation();
+                                                handleDragStart(e, d.id, -1);
+                                        }}
                                     {...handlers}
                                 />
                                     {/* Visible */}
@@ -2128,18 +2128,18 @@ export default function ChartPage() {
                                         {/* Hit Area */}
                                         <line
                                             x1={p1.x}
-                                            y1={p1.y}
-                                            x2={p2.x}
-                                            y2={p2.y}
-                                            stroke="transparent"
-                                            strokeWidth="15"
-                                            cursor="pointer"
-                                            pointerEvents={selectedId === d.id ? "all" : "none"}
-                                            onPointerDown={(e) => {
-                                                if (selectedId !== d.id) return; // allow chart pan when not selected
-                                                e.stopPropagation();
-                                                logInteract('trendline pointerDown', d.id, e.pointerType);
-                                                handleDragStart(e, d.id, -1);
+                                        y1={p1.y}
+                                        x2={p2.x}
+                                        y2={p2.y}
+                                        stroke="transparent"
+                                        strokeWidth="15"
+                                        cursor="pointer"
+                                        pointerEvents="all"
+                                        onPointerDown={(e) => {
+                                            if (selectedId !== d.id) return; // allow chart pan when not selected
+                                            e.stopPropagation();
+                                            logInteract('trendline pointerDown', d.id, e.pointerType);
+                                            handleDragStart(e, d.id, -1);
                                             }}
                                             {...handlers}
                                         />
@@ -2167,7 +2167,7 @@ export default function ChartPage() {
                     fill={`${color}20`}
                     stroke={color}
                     strokeWidth={sel ? (d.width || 1) + 1 : (d.width || 1)}
-                    pointerEvents={selectedId === d.id ? "all" : "none"}
+                    pointerEvents="all"
                     cursor="grab"
                     onPointerDown={(e) => {
                         if (selectedId !== d.id) return; // allow chart pan if not selected
