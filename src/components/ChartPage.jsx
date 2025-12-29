@@ -115,6 +115,7 @@ export default function ChartPage() {
     const [isLoading, setIsLoading] = useState(true);
     const [selectedId, setSelectedId] = useState(null);
     const [isLandscape, setIsLandscape] = useState(false);
+    const tapCandidateRef = useRef(null); // {id, x, y, t}
     // Orientation toggle removed per latest request (rely on system auto-rotate)
 
     // Config Menu State
@@ -1832,10 +1833,26 @@ export default function ChartPage() {
                     const y = e.clientY - rect.top;
                     const hitId = hitTestDrawing(x, y);
                     if (hitId) {
-                        setSelectedId(hitId);
+                        tapCandidateRef.current = { id: hitId, x: e.clientX, y: e.clientY, t: Date.now() };
                     } else {
-                        // no hit, allow chart pan
+                        tapCandidateRef.current = null;
                     }
+                }}
+                onPointerMoveCapture={(e) => {
+                    const cand = tapCandidateRef.current;
+                    if (!cand) return;
+                    const dx = Math.abs(e.clientX - cand.x);
+                    const dy = Math.abs(e.clientY - cand.y);
+                    if (dx > 8 || dy > 8) {
+                        tapCandidateRef.current = null;
+                    }
+                }}
+                onPointerUpCapture={() => {
+                    const cand = tapCandidateRef.current;
+                    if (cand && !dragState) {
+                        setSelectedId(cand.id);
+                    }
+                    tapCandidateRef.current = null;
                 }}
                 onClick={(e) => {
                     // Clear selection only when clicking empty space (no hit)
