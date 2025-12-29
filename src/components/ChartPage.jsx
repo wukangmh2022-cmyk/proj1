@@ -244,8 +244,8 @@ export default function ChartPage() {
         const canvas = containerRef.current?.querySelector('canvas');
         if (!canvas) return;
         const evt = new PointerEvent(type, {
-            bubbles: true,
-            cancelable: true,
+            bubbles: false,
+            cancelable: false,
             pointerId: srcEvent.pointerId,
             pointerType: srcEvent.pointerType,
             clientX: srcEvent.clientX,
@@ -269,16 +269,12 @@ export default function ChartPage() {
         const move = (ev) => forwardPointerToChart('pointermove', ev);
         const up = (ev) => {
             forwardPointerToChart('pointerup', ev);
-            if (passthroughRef.current?.target) {
-                passthroughRef.current.target.style.pointerEvents = '';
-            }
             window.removeEventListener('pointermove', move);
             window.removeEventListener('pointerup', up);
             passthroughRef.current = null;
         };
 
         passthroughRef.current = { target, move, up };
-        target.style.pointerEvents = 'none';
         window.addEventListener('pointermove', move);
         window.addEventListener('pointerup', up);
     };
