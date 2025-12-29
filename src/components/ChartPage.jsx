@@ -1827,6 +1827,7 @@ export default function ChartPage() {
                     const rect = containerRef.current?.getBoundingClientRect();
                     if (!rect) return;
                     if (e.pointerType === 'touch' && e.touches && e.touches.length > 1) return;
+                    if (dragState) return; // do not change selection during chart drag
                     const x = e.clientX - rect.left;
                     const y = e.clientY - rect.top;
                     const hitId = hitTestDrawing(x, y);
