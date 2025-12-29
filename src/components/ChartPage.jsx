@@ -921,13 +921,14 @@ export default function ChartPage() {
         setScreenDrawings([]); // Clear visuals immediately
         setIsLoading(true);
 
+        const isPerpetual = symbol.endsWith('.P');
+        const baseSymbol = isPerpetual ? symbol.slice(0, -2) : symbol;
+        const apiBase = isPerpetual ? 'https://fapi.binance.com/fapi/v1' : 'https://api.binance.com/api/v3';
+        const wsBase = isPerpetual ? 'wss://fstream.binance.com/ws' : 'wss://stream.binance.com:9443/ws';
+
         // Initial Load
         const load = async () => {
             try {
-                // Detect if symbol is perpetual (.P suffix)
-                const isPerpetual = symbol.endsWith('.P');
-                const baseSymbol = isPerpetual ? symbol.slice(0, -2) : symbol;
-                const apiBase = isPerpetual ? 'https://fapi.binance.com/fapi/v1' : 'https://api.binance.com/api/v3';
                 const res = await fetch(`${apiBase}/klines?symbol=${baseSymbol}&interval=${interval}&limit=500`);
                 const data = await res.json();
                 const formatted = data.map(d => ({ time: d[0] / 1000, open: +d[1], high: +d[2], low: +d[3], close: +d[4], volume: +d[5] }));
@@ -974,7 +975,7 @@ export default function ChartPage() {
         load();
 
         // WebSocket
-        const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${symbol.toLowerCase()}@kline_${interval}`);
+        const ws = new WebSocket(`${wsBase}/${baseSymbol.toLowerCase()}@kline_${interval}`);
         ws.onmessage = (e) => {
             // Guard: don't update if initial load hasn't finished (prevent mixing intervals)
             if (allDataRef.current.length === 0) return;
@@ -1009,9 +1010,6 @@ export default function ChartPage() {
                 const oldestTime = allDataRef.current[0].time * 1000;
                 isFetchingHistoryRef.current = true;
                 try {
-                    const isPerpetual = symbol.endsWith('.P');
-                    const baseSymbol = isPerpetual ? symbol.slice(0, -2) : symbol;
-                    const apiBase = isPerpetual ? 'https://fapi.binance.com/fapi/v1' : 'https://api.binance.com/api/v3';
                     const res = await fetch(`${apiBase}/klines?symbol=${baseSymbol}&interval=${interval}&limit=500&endTime=${oldestTime - 1}`);
                     const raw = await res.json();
                     if (Array.isArray(raw) && raw.length > 0) {
