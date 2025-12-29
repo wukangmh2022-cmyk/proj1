@@ -189,6 +189,9 @@ export default function ChartPage() {
         return data[idx].time + (data[idx + 1].time - data[idx].time) * ratio;
     }, [estimatedStep]);
 
+    // Track which interval the loaded data corresponds to (for drawing projection)
+    const dataIntervalRef = useRef(interval);
+
     // Drag Logic
     const [dragState, setDragState] = useState(null); // { id, index }
     const [activeHandle, setActiveHandle] = useState(null); // { id, index } - For Indirect Drag
@@ -529,6 +532,8 @@ export default function ChartPage() {
 
     const updateScreenDrawings = useCallback(() => {
         if (!allDataRef.current.length) return;
+        // Prevent mixing old data interval with new interval
+        if (dataIntervalRef.current !== interval) return;
         const data = allDataRef.current;
         const estimatedStep = parseInterval(interval);
 
@@ -1084,6 +1089,7 @@ export default function ChartPage() {
 
                 allDataRef.current = formatted;
                 seriesRef.current.setData(formatted);
+                dataIntervalRef.current = interval; // mark data interval
                 updateIndicators(formatted);
                 // Force redraw drawings with new data time-scale, using rAF to ensure TimeScale is ready
                 requestAnimationFrame(() => updateScreenDrawings());
@@ -1155,8 +1161,8 @@ export default function ChartPage() {
                 }, 500);
             }
 
-            // Recompute drawing screen positions when view changes
-            requestAnimationFrame(() => updateScreenDrawings());
+                // Recompute drawing screen positions when view changes
+                requestAnimationFrame(() => updateScreenDrawings());
 
             if (newRange && newRange.from < 20 && !isFetchingHistoryRef.current && allDataRef.current.length > 0) {
                 const oldestTime = allDataRef.current[0].time * 1000;
