@@ -199,4 +199,20 @@ public class FloatingWidgetPlugin extends Plugin {
         }
         call.resolve();
     }
+
+    @PluginMethod
+    public void previewSound(PluginCall call) {
+        int soundId = call.getInt("soundId", 1);
+        Context context = getContext().getApplicationContext();
+        Intent intent = new Intent(context, FloatingWindowService.class);
+        intent.setAction(FloatingWindowService.ACTION_PREVIEW_SOUND);
+        intent.putExtra(FloatingWindowService.EXTRA_SOUND_ID, soundId);
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent);
+        } else {
+            context.startService(intent);
+        }
+        call.resolve();
+    }
 }

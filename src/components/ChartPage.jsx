@@ -332,27 +332,39 @@ export default function ChartPage() {
         const timeScale = chartRef.current.timeScale();
         let x = timeScale.logicalToCoordinate(logic);
 
-        // FIX: Handle "Zeroing" bug where library returns 0 or clamps for off-screen points
-        // If x is 0 or very close to 0, but logic suggests it should be far left/right,
-        // we manually extrapolate.
-        const visibleRange = timeScale.getVisibleLogicalRange();
-        if (visibleRange) {
-            const { from, to } = visibleRange;
-            const width = timeScale.width();
-            // If point is significantly to the left of visible range, X should be negative
-            if (logic < from && (x === null || x >= 0)) {
-                const rangeSize = to - from;
-                const pxPerLogic = rangeSize > 0 ? (width / rangeSize) : 0;
-                if (pxPerLogic > 0) {
-                    x = (logic - from) * pxPerLogic; // Will be negative
+        // Robust Extrapolation to fix "Zeroing/Folding" bug
+        // The library sometimes clamps off-screen points to 0 or returns null.
+        // We calculate the expected linear position and force it if the library's result is suspicious.
+        const range = timeScale.getVisibleLogicalRange();
+
+        if (range) {
+            const { from, to } = range;
+            // Use container width if library width is 0 (possible during resize/init)
+            const width = timeScale.width() || containerRef.current?.clientWidth || 0;
+            const rangeSize = to - from;
+
+            if (rangeSize > 0 && width > 0) {
+                const pxPerLogic = width / rangeSize;
+                const linearX = (logic - from) * pxPerLogic;
+
+                // Case 1: Point is to the LEFT of visible range
+                if (logic < from) {
+                    // Logic says left, but x is null or >= 0 (clamped/wrong) -> Force linear negative
+                    if (x === null || x >= 0) {
+                        x = linearX;
+                    }
                 }
-            }
-            // Handle right side if needed (usually less critical for "zeroing" aligned to left)
-            if (logic > to && (x === null || x <= width)) {
-                const rangeSize = to - from;
-                const pxPerLogic = rangeSize > 0 ? (width / rangeSize) : 0;
-                if (pxPerLogic > 0) {
-                    x = width + (logic - to) * pxPerLogic;
+                // Case 2: Point is to the RIGHT of visible range
+                else if (logic > to) {
+                    // Logic says right, but x is null or <= width (clamped/wrong/0) -> Force linear positive
+                    // Specifically catches the "x=0" bug for right-side points
+                    if (x === null || x <= width || x === 0) {
+                        x = linearX;
+                    }
+                }
+                // Case 3: On-screen fallback
+                else if (x === null) {
+                    x = linearX;
                 }
             }
         }
@@ -425,6 +437,32 @@ export default function ChartPage() {
 
             if (d.points) {
                 const sp = d.points.map(p => logicToScreen(getLogic(p.time), p.price)).filter(Boolean);
+
+                // DEBUG: Check for off-screen points to left
+                // DEBUG: Check for off-screen points to left
+                if (chartRef.current && window.userDebugMode !== false && debugLogTriggerRef.current) {
+                    debugLogTriggerRef.current = false; // Reset trigger
+
+                    console.groupCollapsed(`[Drawings Debug] ${new Date().toLocaleTimeString()} ID=${d.id}`);
+                    d.points.forEach((p, i) => {
+                        const l = getLogic(p.time);
+                        const proj = logicToScreen(l, p.price);
+                        const x = proj ? proj.x : 'NULL';
+                        const y = proj ? proj.y : 'NULL';
+                        const pDate = new Date(p.time * 1000).toLocaleString();
+
+                        console.log(`Point ${i}:`, {
+                            time: p.time,
+                            readableTime: pDate,
+                            price: p.price,
+                            logicIndex: l !== null ? l.toFixed(2) : 'null',
+                            screenX: typeof x === 'number' ? x.toFixed(2) : x,
+                            screenY: typeof y === 'number' ? y.toFixed(2) : y
+                        });
+                    });
+                    console.groupEnd();
+                }
+
                 // Debug Geometry Enchanced
                 if (d.type === 'channel' || d.id === selectedId) {
                     console.log(`[ScreenPoints] ID=${d.id} Interval=${interval} Type=${d.type}`);
@@ -1086,6 +1124,13 @@ export default function ChartPage() {
 
     // State checking refs (to avoid re-binding effect and killing timer on re-render)
     const stateRefs = useRef({ drawMode, activeHandle, dragState });
+
+    // Debug Logging Trigger
+    const debugLogTriggerRef = useRef(false);
+    useEffect(() => {
+        debugLogTriggerRef.current = true;
+    }, [interval]);
+
     useEffect(() => { stateRefs.current = { drawMode, activeHandle, dragState }; }, [drawMode, activeHandle, dragState]);
     useEffect(() => { customCrosshairRef.current = customCrosshair; }, [customCrosshair]);
 

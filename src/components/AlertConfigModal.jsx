@@ -1,6 +1,277 @@
 import { useState, useEffect } from 'react';
 import { getAlerts, saveAlert, removeAlert, getAlertHistory } from '../utils/alert_storage';
+import FloatingWidget from '../plugins/FloatingWidget';
+import { Capacitor } from '@capacitor/core';
 import './AlertConfigModal.css';
+
+const CustomSelect = ({ value, onChange, options, placeholder = '请选择', style = {} }) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const selectedOpt = options.find(o => String(o.value) === String(value));
+
+    return (
+        <div style={{ position: 'relative', width: '100%', ...style }}>
+            <div
+                onClick={() => setIsOpen(!isOpen)}
+                style={{
+                    padding: '12px 14px',
+                    background: 'rgba(0, 0, 0, 0.3)',
+                    border: `1px solid ${isOpen ? '#fcd535' : 'rgba(255, 255, 255, 0.1)'}`,
+                    borderRadius: '12px',
+                    color: '#fff',
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    minHeight: '45px'
+                }}
+            >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {selectedOpt ? selectedOpt.label : <span style={{ color: '#888' }}>{placeholder}</span>}
+                </div>
+                <span style={{ fontSize: '10px', color: '#888', transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}>▼</span>
+            </div>
+
+            {isOpen && (
+                <>
+                    <div style={{ position: 'fixed', inset: 0, zIndex: 3000 }} onClick={() => setIsOpen(false)} />
+                    <div style={{
+                        position: 'absolute',
+                        top: '100%', left: 0, right: 0,
+                        marginTop: '4px',
+                        background: '#1e222d',
+                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        borderRadius: '12px',
+                        maxHeight: '240px',
+                        overflowY: 'auto',
+                        zIndex: 3001,
+                        boxShadow: '0 8px 32px rgba(0,0,0,0.5)'
+                    }}>
+                        {options.map(opt => (
+                            <div
+                                key={opt.value}
+                                onClick={() => { onChange(opt.value); setIsOpen(false); }}
+                                style={{
+                                    padding: '12px 16px',
+                                    color: String(opt.value) === String(value) ? '#fcd535' : '#ccc',
+                                    background: String(opt.value) === String(value) ? 'rgba(252, 213, 53, 0.1)' : 'transparent',
+                                    cursor: 'pointer',
+                                    borderBottom: '1px solid rgba(255,255,255,0.03)',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                    fontSize: '14px'
+                                }}
+                            >
+                                {opt.label}
+                                {String(opt.value) === String(value) && <span>✓</span>}
+                            </div>
+                        ))}
+                    </div>
+                </>
+            )}
+        </div>
+    );
+};
+
+// Web Sound Fallback - Refined Synthesis (4-5s Duration)
+const playWebSound = (id) => {
+    try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContext) return;
+
+        const ctx = new AudioContext();
+        const now = ctx.currentTime;
+
+        // Master Gain
+        const masterGain = ctx.createGain();
+        masterGain.connect(ctx.destination);
+        masterGain.gain.setValueAtTime(0.3, now);
+
+        const createOsc = (type, freq, detune = 0) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = type;
+            osc.frequency.value = freq;
+            osc.detune.value = detune;
+            osc.connect(gain);
+            gain.connect(masterGain);
+            return { osc, gain };
+        };
+
+        const applyEnvelope = (gainNode, attack, decay, sustainVol, holdTime, release) => {
+            gainNode.gain.setValueAtTime(0, now);
+            gainNode.gain.linearRampToValueAtTime(1, now + attack);
+            gainNode.gain.exponentialRampToValueAtTime(sustainVol, now + attack + decay);
+            gainNode.gain.setValueAtTime(sustainVol, now + attack + decay + holdTime);
+            gainNode.gain.linearRampToValueAtTime(0, now + attack + decay + holdTime + release);
+        };
+
+        // Standard 4-5s duration logic
+        const TOTAL_DURATION = 4.5;
+
+        switch (id) {
+            case 1: { // Success (Dreamy Chime) - Long Tail
+                const freqs = [523.25, 659.25, 783.99, 1046.50]; // C Major
+                freqs.forEach((f, i) => {
+                    const { osc, gain } = createOsc('triangle', f);
+                    const start = now + i * 0.15; // Slow strum
+                    osc.start(start);
+                    osc.stop(now + TOTAL_DURATION);
+
+                    // Long ringing tail
+                    gain.gain.setValueAtTime(0, start);
+                    gain.gain.linearRampToValueAtTime(0.2, start + 0.05);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + TOTAL_DURATION - 0.5);
+                });
+                break;
+            }
+            case 2: { // Danger (Siren) - 3 Cycles
+                const { osc, gain } = createOsc('sawtooth', 400);
+                const { osc: osc2, gain: gain2 } = createOsc('square', 405); // Detuned
+
+                osc.start(now); osc2.start(now);
+                osc.stop(now + TOTAL_DURATION); osc2.stop(now + TOTAL_DURATION);
+
+                // Slow modulation (1.5s per cycle, 3 cycles = 4.5s)
+                const cycle = 1.5;
+                osc.frequency.setValueAtTime(600, now);
+                osc.frequency.linearRampToValueAtTime(1200, now + cycle / 2);
+                osc.frequency.linearRampToValueAtTime(600, now + cycle);
+                osc.frequency.linearRampToValueAtTime(1200, now + cycle * 1.5);
+                osc.frequency.linearRampToValueAtTime(600, now + cycle * 2);
+                osc.frequency.linearRampToValueAtTime(1200, now + cycle * 2.5);
+                osc.frequency.linearRampToValueAtTime(600, now + cycle * 3);
+
+                osc2.frequency.setValueAtTime(605, now);
+                osc2.frequency.linearRampToValueAtTime(1205, now + cycle / 2);
+                // ... same pattern for osc2 simplified
+                osc2.frequency.linearRampToValueAtTime(605, now + cycle * 3);
+
+                applyEnvelope(gain, 0.5, 0, 0.8, 3.5, 0.5);
+                applyEnvelope(gain2, 0.5, 0, 0.5, 3.5, 0.5);
+                break;
+            }
+            case 3: { // Coin (Triple Coin + Shimmy)
+                // Play 3 times
+                [0, 1, 2].forEach(i => {
+                    const t = now + i * 0.8;
+                    const { osc, gain } = createOsc('sine', 987); // B5
+                    const { osc: osc2, gain: gain2 } = createOsc('square', 1318); // E6
+                    osc.start(t); osc2.start(t + 0.05);
+                    osc.stop(t + 0.6); osc2.stop(t + 0.6);
+
+                    gain.gain.setValueAtTime(0, t);
+                    gain.gain.linearRampToValueAtTime(0.2, t + 0.05);
+                    gain.gain.linearRampToValueAtTime(0, t + 0.4);
+
+                    gain2.gain.setValueAtTime(0, t + 0.05);
+                    gain2.gain.linearRampToValueAtTime(0.1, t + 0.08);
+                    gain2.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+                });
+                break;
+            }
+            case 4: { // Laser (Rapid Fire)
+                // 5 shots
+                for (let i = 0; i < 5; i++) {
+                    const t = now + i * 0.6;
+                    const { osc, gain } = createOsc('sawtooth', 0);
+                    osc.frequency.setValueAtTime(1500, t);
+                    osc.frequency.exponentialRampToValueAtTime(100, t + 0.4);
+                    osc.start(t); osc.stop(t + 0.5);
+
+                    gain.gain.setValueAtTime(0.2, t);
+                    gain.gain.linearRampToValueAtTime(0, t + 0.4);
+                }
+                break;
+            }
+            case 5: { // Rise (Slow Uplift)
+                const { osc, gain } = createOsc('triangle', 220);
+                osc.start(now); osc.stop(now + TOTAL_DURATION);
+                // Rise over 4s
+                osc.frequency.exponentialRampToValueAtTime(1760, now + 4.0);
+                applyEnvelope(gain, 1.0, 0, 0.8, 2.5, 1.0);
+                break;
+            }
+            case 6: { // Pop (Bubbles)
+                // Many pops
+                for (let i = 0; i < 8; i++) {
+                    const t = now + i * 0.5 + Math.random() * 0.1;
+                    const f = 600 + Math.random() * 200;
+                    const { osc, gain } = createOsc('sine', f);
+                    osc.frequency.exponentialRampToValueAtTime(100, t + 0.1);
+                    osc.start(t); osc.stop(t + 0.2);
+                    gain.gain.setValueAtTime(0.2, t);
+                    gain.gain.linearRampToValueAtTime(0, t + 0.15);
+                }
+                break;
+            }
+            case 7: { // Tech (Computer Calculation)
+                const { osc, gain } = createOsc('square', 880);
+                osc.start(now); osc.stop(now + TOTAL_DURATION);
+
+                // Randomish melody loop
+                const step = 0.15;
+                let steps = Math.floor(TOTAL_DURATION / step);
+                for (let i = 0; i < steps; i++) {
+                    const freq = 440 * Math.pow(2, Math.floor(Math.random() * 12) / 12);
+                    osc.frequency.setValueAtTime(freq, now + i * step);
+                }
+                applyEnvelope(gain, 0.1, 0, 0.3, 3.5, 0.5);
+                break;
+            }
+            case 8: { // Low Battery (Slow Pulse)
+                const { osc, gain } = createOsc('sawtooth', 100);
+                const { osc: osc2, gain: gain2 } = createOsc('sine', 100);
+                osc.start(now); osc2.start(now);
+                osc.stop(now + TOTAL_DURATION); osc2.stop(now + TOTAL_DURATION);
+
+                // LFO effect manually
+                for (let i = 0; i < 5; i++) {
+                    gain.gain.setValueAtTime(0.3, now + i);
+                    gain.gain.linearRampToValueAtTime(0.1, now + i + 0.5);
+                    gain.gain.linearRampToValueAtTime(0.3, now + i + 1.0);
+                }
+                gain2.gain.setValueAtTime(0.2, now);
+                gain2.gain.linearRampToValueAtTime(0, now + TOTAL_DURATION);
+                break;
+            }
+            case 9: { // Confirm (Scan + Beep)
+                const { osc, gain } = createOsc('sine', 440);
+                osc.start(now); osc.stop(now + 4.0);
+
+                // Scanner
+                osc.frequency.setValueAtTime(220, now);
+                osc.frequency.linearRampToValueAtTime(880, now + 1.5);
+                osc.frequency.setValueAtTime(880, now + 1.5); // Hold
+                osc.frequency.setValueAtTime(1760, now + 2.0); // Confirm Ping
+
+                gain.gain.setValueAtTime(0, now);
+                gain.gain.linearRampToValueAtTime(0.2, now + 0.5);
+                gain.gain.linearRampToValueAtTime(0.2, now + 1.5);
+                gain.gain.setValueAtTime(0, now + 1.55); // Silence gap
+                gain.gain.setValueAtTime(0.3, now + 2.0); // Ping
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 4.0);
+                break;
+            }
+            case 10: { // Attention (Annoying Beep x 4)
+                const { osc, gain } = createOsc('square', 660);
+                osc.start(now); osc.stop(now + TOTAL_DURATION);
+
+                // Beep Beep Beep Beep
+                for (let i = 0; i < 4; i++) {
+                    gain.gain.setValueAtTime(0.2, now + i);
+                    gain.gain.setValueAtTime(0.2, now + i + 0.5);
+                    gain.gain.setValueAtTime(0, now + i + 0.51);
+                }
+                break;
+            }
+            default: break;
+        }
+
+    } catch (e) {
+        console.error("Web audio failed", e);
+    }
+};
+
 
 export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
     const [targetType, setTargetType] = useState('price');
@@ -224,37 +495,53 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                                 ) : targetType === 'indicator' ? (
                                     <>
                                         <div className="indicator-row">
-                                            <select value={indicatorType} onChange={e => setIndicatorType(e.target.value)}>
-                                                <option value="sma">SMA 移动均线</option>
-                                                <option value="ema">EMA 指数均线</option>
-                                                <option value="rsi">RSI 相对强弱</option>
-                                                <option value="fib">斐波那契回撤</option>
-                                            </select>
+                                            <CustomSelect
+                                                value={indicatorType}
+                                                onChange={setIndicatorType}
+                                                options={[
+                                                    { value: 'sma', label: 'SMA 移动均线' },
+                                                    { value: 'ema', label: 'EMA 指数均线' },
+                                                    { value: 'rsi', label: 'RSI 相对强弱' },
+                                                    { value: 'fib', label: '斐波那契回撤' }
+                                                ]}
+                                            />
                                             {(indicatorType === 'sma' || indicatorType === 'ema') && (
-                                                <select value={indicatorPeriod} onChange={e => setIndicatorPeriod(e.target.value)}>
-                                                    <option value="7">7</option>
-                                                    <option value="25">25</option>
-                                                    <option value="99">99</option>
-                                                </select>
+                                                <CustomSelect
+                                                    value={indicatorPeriod}
+                                                    onChange={setIndicatorPeriod}
+                                                    options={[
+                                                        { value: 7, label: '7' },
+                                                        { value: 25, label: '25' },
+                                                        { value: 99, label: '99' }
+                                                    ]}
+                                                />
                                             )}
                                             {indicatorType === 'rsi' && (
-                                                <select value={indicatorPeriod} onChange={e => setIndicatorPeriod(e.target.value)}>
-                                                    <option value="7">7</option>
-                                                    <option value="14">14</option>
-                                                    <option value="21">21</option>
-                                                </select>
+                                                <CustomSelect
+                                                    value={indicatorPeriod}
+                                                    onChange={setIndicatorPeriod}
+                                                    options={[
+                                                        { value: 7, label: '7' },
+                                                        { value: 14, label: '14' },
+                                                        { value: 21, label: '21' }
+                                                    ]}
+                                                />
                                             )}
                                         </div>
 
                                         {indicatorType === 'rsi' && (
                                             <div className="sub-option" style={{ marginTop: '12px' }}>
                                                 <label>RSI 阈值</label>
-                                                <select value={targetValue} onChange={e => setTargetValue(e.target.value)}>
-                                                    <option value="70">超买 70</option>
-                                                    <option value="80">超买 80</option>
-                                                    <option value="30">超卖 30</option>
-                                                    <option value="20">超卖 20</option>
-                                                </select>
+                                                <CustomSelect
+                                                    value={targetValue}
+                                                    onChange={setTargetValue}
+                                                    options={[
+                                                        { value: '70', label: '超买 70' },
+                                                        { value: '80', label: '超买 80' },
+                                                        { value: '30', label: '超卖 30' },
+                                                        { value: '20', label: '超卖 20' }
+                                                    ]}
+                                                />
                                             </div>
                                         )}
 
@@ -304,14 +591,17 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                                                     </div>
                                                     <div className="sub-option">
                                                         <label>回撤线</label>
-                                                        <select value={fibRatio}
-                                                            onChange={e => setTargetValue(`${fibHigh}_${fibLow}_${e.target.value}`)}>
-                                                            <option value="0.236">23.6%</option>
-                                                            <option value="0.382">38.2%</option>
-                                                            <option value="0.5">50%</option>
-                                                            <option value="0.618">61.8%</option>
-                                                            <option value="0.786">78.6%</option>
-                                                        </select>
+                                                        <CustomSelect
+                                                            value={fibRatio}
+                                                            onChange={val => setTargetValue(`${fibHigh}_${fibLow}_${val}`)}
+                                                            options={[
+                                                                { value: '0.236', label: '23.6%' },
+                                                                { value: '0.382', label: '38.2%' },
+                                                                { value: '0.5', label: '50%' },
+                                                                { value: '0.618', label: '61.8%' },
+                                                                { value: '0.786', label: '78.6%' }
+                                                            ]}
+                                                        />
                                                     </div>
                                                 </>
                                             );
@@ -319,14 +609,18 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
 
                                         <div className="sub-option" style={{ marginTop: '12px' }}>
                                             <label>K线周期</label>
-                                            <select value={interval} onChange={e => setInterval(e.target.value)}>
-                                                <option value="1m">1分钟</option>
-                                                <option value="5m">5分钟</option>
-                                                <option value="15m">15分钟</option>
-                                                <option value="1h">1小时</option>
-                                                <option value="4h">4小时</option>
-                                                <option value="1d">1天</option>
-                                            </select>
+                                            <CustomSelect
+                                                value={interval}
+                                                onChange={setInterval}
+                                                options={[
+                                                    { value: '1m', label: '1分钟' },
+                                                    { value: '5m', label: '5分钟' },
+                                                    { value: '15m', label: '15分钟' },
+                                                    { value: '1h', label: '1小时' },
+                                                    { value: '4h', label: '4小时' },
+                                                    { value: '1d', label: '1天' }
+                                                ]}
+                                            />
                                         </div>
                                     </>
                                 ) : ( // targetType === 'drawing'
@@ -336,14 +630,18 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                                                 暂无图形，请先在图表上绘制
                                             </div>
                                         ) : (
-                                            <select value={targetValue} onChange={e => setTargetValue(e.target.value)} style={{ width: '100%' }}>
-                                                <option value="">-- 选择图形 --</option>
-                                                {availableDrawings.map(d => (
-                                                    <option key={d.id} value={d.id}>
-                                                        {d.type.toUpperCase()} ({d.id.substring(0, 8)})
-                                                    </option>
-                                                ))}
-                                            </select>
+                                            <CustomSelect
+                                                value={targetValue}
+                                                onChange={setTargetValue}
+                                                placeholder="-- 选择图形 --"
+                                                options={[
+                                                    { value: '', label: '-- 选择图形 --' },
+                                                    ...availableDrawings.map(d => ({
+                                                        value: d.id,
+                                                        label: `${d.type.toUpperCase()} (${d.id.substring(0, 8)})`
+                                                    }))
+                                                ]}
+                                            />
                                         )}
                                         <div style={{ marginTop: 8, fontSize: 12, color: '#888' }}>
                                             {targetValue ? '提示: 将监控价格穿越该图形的任意线条' : ''}
@@ -383,14 +681,18 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                                 {(confirmation === 'candle_close' || confirmation === 'candle_delay' || targetType === 'indicator') && (
                                     <div className="sub-option">
                                         <label>K线周期</label>
-                                        <select value={interval} onChange={e => setInterval(e.target.value)}>
-                                            <option value="1m">1分钟</option>
-                                            <option value="5m">5分钟</option>
-                                            <option value="15m">15分钟</option>
-                                            <option value="1h">1小时</option>
-                                            <option value="4h">4小时</option>
-                                            <option value="1d">1天</option>
-                                        </select>
+                                        <CustomSelect
+                                            value={interval}
+                                            onChange={setInterval}
+                                            options={[
+                                                { value: '1m', label: '1分钟' },
+                                                { value: '5m', label: '5分钟' },
+                                                { value: '15m', label: '15分钟' },
+                                                { value: '1h', label: '1小时' },
+                                                { value: '4h', label: '4小时' },
+                                                { value: '1d', label: '1天' }
+                                            ]}
+                                        />
                                     </div>
                                 )}
 
@@ -454,85 +756,179 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                             {/* Section: Actions */}
                             <div className="form-section">
                                 <div className="section-title">触发后动作</div>
-                                <div className="action-toggles">
-                                    <label className={actions.toast ? 'checked' : ''}>
-                                        <input type="checkbox" checked={actions.toast} onChange={e => setActions({ ...actions, toast: e.target.checked })} />
-                                        <span>弹窗</span>
-                                    </label>
-                                    <div className="checkbox-row">
-                                        <input type="checkbox" checked={actions.vibration === 'once'} onChange={() => setActions({ ...actions, vibration: actions.vibration === 'once' ? 'none' : 'once' })} />
-                                        <span>振动提醒</span>
-                                    </div>
 
-                                    <div className="sub-option" style={{ marginTop: '12px' }}>
-                                        <label>🔔 提示音效</label>
-                                        <select value={soundId} onChange={e => setSoundId(e.target.value)} style={{ width: '100%' }}>
-                                            <option value="0">静音</option>
-                                            <option value="1">Success (Major)</option>
-                                            <option value="2">Danger (Siren)</option>
-                                            <option value="3">Coin (Mario)</option>
-                                            <option value="4">Laser (Drop)</option>
-                                            <option value="5">Rise (Uplift)</option>
-                                            <option value="6">Notification (Pop)</option>
-                                            <option value="7">Tech (High)</option>
-                                            <option value="8">Low Battery</option>
-                                            <option value="9">Confirm (Beep)</option>
-                                            <option value="10">Attention</option>
-                                        </select>
-                                    </div>
+                                {/* Top Row: 3 Toggle Buttons */}
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '16px' }}>
+                                    <button
+                                        onClick={() => setActions({ ...actions, toast: !actions.toast })}
+                                        className={`toggle-btn ${actions.toast ? 'active' : ''}`}
+                                        style={{
+                                            padding: '12px',
+                                            background: actions.toast ? 'rgba(252, 213, 53, 0.15)' : 'rgba(255,255,255,0.05)',
+                                            border: `1px solid ${actions.toast ? '#fcd535' : 'rgba(255,255,255,0.1)'}`,
+                                            borderRadius: '12px',
+                                            color: actions.toast ? '#fcd535' : '#888',
+                                            cursor: 'pointer',
+                                            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px',
+                                            fontSize: '12px', fontWeight: '500'
+                                        }}
+                                    >
+                                        <span style={{ fontSize: '20px' }}>💬</span>
+                                        弹窗通知
+                                    </button>
 
-                                    {/* Advanced Sound Config */}
-                                    {parseInt(soundId) > 0 && (
-                                        <div className="sub-option" style={{ marginTop: '8px', paddingLeft: '8px', borderLeft: '2px solid #333' }}>
-                                            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '8px' }}>
-                                                <label style={{ fontSize: '0.9em', color: '#888' }}>模式:</label>
-                                                <div className="toggle-group">
+                                    <button
+                                        onClick={() => setActions({ ...actions, vibration: actions.vibration === 'none' ? 'once' : 'none' })}
+                                        className={`toggle-btn ${actions.vibration !== 'none' ? 'active' : ''}`}
+                                        style={{
+                                            padding: '12px',
+                                            background: actions.vibration !== 'none' ? 'rgba(252, 213, 53, 0.15)' : 'rgba(255,255,255,0.05)',
+                                            border: `1px solid ${actions.vibration !== 'none' ? '#fcd535' : 'rgba(255,255,255,0.1)'}`,
+                                            borderRadius: '12px',
+                                            color: actions.vibration !== 'none' ? '#fcd535' : '#888',
+                                            cursor: 'pointer',
+                                            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px',
+                                            fontSize: '12px', fontWeight: '500'
+                                        }}
+                                    >
+                                        <span style={{ fontSize: '20px' }}>📳</span>
+                                        振动反馈
+                                    </button>
+
+                                    <button
+                                        onClick={() => setSoundId(soundId === 0 ? 1 : 0)}
+                                        className={`toggle-btn ${soundId !== 0 ? 'active' : ''}`}
+                                        style={{
+                                            padding: '12px',
+                                            background: soundId !== 0 ? 'rgba(252, 213, 53, 0.15)' : 'rgba(255,255,255,0.05)',
+                                            border: `1px solid ${soundId !== 0 ? '#fcd535' : 'rgba(255,255,255,0.1)'}`,
+                                            borderRadius: '12px',
+                                            color: soundId !== 0 ? '#fcd535' : '#888',
+                                            cursor: 'pointer',
+                                            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px',
+                                            fontSize: '12px', fontWeight: '500'
+                                        }}
+                                    >
+                                        <span style={{ fontSize: '20px' }}>🔊</span>
+                                        声音提醒
+                                    </button>
+                                </div>
+
+                                {/* Vibration Config Panel */}
+                                {actions.vibration !== 'none' && (
+                                    <div style={{ marginBottom: '16px', padding: '12px', background: 'rgba(255,255,255,0.03)', borderRadius: '12px' }}>
+                                        <label style={{ fontSize: '12px', color: '#888', marginBottom: '8px', display: 'block' }}>振动模式</label>
+                                        <div style={{ display: 'flex', gap: '8px' }}>
+                                            <button
+                                                onClick={() => setActions({ ...actions, vibration: 'once' })}
+                                                style={{
+                                                    flex: 1, padding: '8px', borderRadius: '8px', fontSize: '13px',
+                                                    background: actions.vibration === 'once' ? '#fcd535' : 'rgba(255,255,255,0.1)',
+                                                    color: actions.vibration === 'once' ? '#000' : '#888',
+                                                    border: 'none', cursor: 'pointer'
+                                                }}
+                                            >短震动 (一次)</button>
+                                            <button
+                                                onClick={() => setActions({ ...actions, vibration: 'continuous' })}
+                                                style={{
+                                                    flex: 1, padding: '8px', borderRadius: '8px', fontSize: '13px',
+                                                    background: actions.vibration === 'continuous' ? '#fcd535' : 'rgba(255,255,255,0.1)',
+                                                    color: actions.vibration === 'continuous' ? '#000' : '#888',
+                                                    border: 'none', cursor: 'pointer'
+                                                }}
+                                            >长震动 (持续)</button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Sound Config Panel */}
+                                {parseInt(soundId) > 0 && (
+                                    <div style={{ padding: '12px', background: 'rgba(255,255,255,0.03)', borderRadius: '12px' }}>
+                                        <label style={{ fontSize: '12px', color: '#888', marginBottom: '8px', display: 'block' }}>音效选择</label>
+                                        <div style={{ display: 'flex', gap: '8px' }}>
+                                            <CustomSelect
+                                                value={soundId}
+                                                onChange={setSoundId}
+                                                options={[
+                                                    { value: 1, label: 'Success (Major)' },
+                                                    { value: 2, label: 'Danger (Siren)' },
+                                                    { value: 3, label: 'Coin (Mario)' },
+                                                    { value: 4, label: 'Laser (Drop)' },
+                                                    { value: 5, label: 'Rise (Uplift)' },
+                                                    { value: 6, label: 'Notification (Pop)' },
+                                                    { value: 7, label: 'Tech (High)' },
+                                                    { value: 8, label: 'Low Battery' },
+                                                    { value: 9, label: 'Confirm (Beep)' },
+                                                    { value: 10, label: 'Attention' }
+                                                ]}
+                                                style={{ flex: 1 }}
+                                            />
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation(); // Prevent modal interactions
+                                                    if (Capacitor.getPlatform() === 'web') {
+                                                        playWebSound(parseInt(soundId));
+                                                    } else {
+                                                        FloatingWidget.previewSound({ soundId: parseInt(soundId) }).catch(err => console.error(err));
+                                                    }
+                                                }}
+                                                style={{
+                                                    width: '45px',
+                                                    height: '45px',
+                                                    borderRadius: '12px',
+                                                    background: 'rgba(255,255,255,0.05)',
+                                                    border: '1px solid rgba(255,255,255,0.1)',
+                                                    color: '#fcd535',
+                                                    fontSize: '18px',
+                                                    cursor: 'pointer',
+                                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                    flexShrink: 0
+                                                }}
+                                            >
+                                                ▶
+                                            </button>
+                                        </div>
+
+                                        <div style={{ marginTop: '16px', display: 'flex', gap: '12px', alignItems: 'center' }}>
+                                            <div style={{ flex: 1 }}>
+                                                <label style={{ fontSize: '12px', color: '#888', marginBottom: '6px', display: 'block' }}>播放模式</label>
+                                                <div style={{ display: 'flex', background: 'rgba(0,0,0,0.2)', padding: '2px', borderRadius: '8px' }}>
                                                     <button
-                                                        className={soundRepeat === 'once' ? 'active' : ''}
                                                         onClick={() => setSoundRepeat('once')}
-                                                        style={{ padding: '4px 8px', fontSize: '0.85em' }}
+                                                        style={{
+                                                            flex: 1, padding: '6px', borderRadius: '6px', fontSize: '12px',
+                                                            background: soundRepeat === 'once' ? 'rgba(255,255,255,0.1)' : 'transparent',
+                                                            color: soundRepeat === 'once' ? '#fff' : '#666',
+                                                            border: 'none', cursor: 'pointer'
+                                                        }}
                                                     >单次</button>
                                                     <button
-                                                        className={soundRepeat === 'loop' ? 'active' : ''}
                                                         onClick={() => setSoundRepeat('loop')}
-                                                        style={{ padding: '4px 8px', fontSize: '0.85em' }}
+                                                        style={{
+                                                            flex: 1, padding: '6px', borderRadius: '6px', fontSize: '12px',
+                                                            background: soundRepeat === 'loop' ? 'rgba(255,255,255,0.1)' : 'transparent',
+                                                            color: soundRepeat === 'loop' ? '#fff' : '#666',
+                                                            border: 'none', cursor: 'pointer'
+                                                        }}
                                                     >循环</button>
                                                 </div>
                                             </div>
 
                                             {soundRepeat === 'loop' && (
-                                                <>
-                                                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                                        <label style={{ fontSize: '0.9em', color: '#888', minWidth: '40px' }}>总长:</label>
+                                                <div style={{ flex: 1.5 }}>
+                                                    <label style={{ fontSize: '12px', color: '#888', marginBottom: '6px', display: 'block' }}>时长 {soundDuration}s</label>
+                                                    <div className="slider-row" style={{ marginTop: 0 }}>
                                                         <input
                                                             type="range" min="5" max="60" step="5"
                                                             value={soundDuration} onChange={e => setSoundDuration(e.target.value)}
-                                                            style={{ flex: 1 }}
+                                                            style={{ width: '100%', height: '4px' }}
                                                         />
-                                                        <span style={{ fontSize: '0.85em', width: '3em', textAlign: 'right' }}>{soundDuration}s</span>
                                                     </div>
-                                                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px' }}>
-                                                        <label style={{ fontSize: '0.9em', color: '#888', minWidth: '40px' }}>间隔:</label>
-                                                        <input
-                                                            type="range" min="0" max="5" step="1"
-                                                            value={loopPause} onChange={e => setLoopPause(e.target.value)}
-                                                            style={{ flex: 1 }}
-                                                        />
-                                                        <span style={{ fontSize: '0.85em', width: '3em', textAlign: 'right' }}>{loopPause}s</span>
-                                                    </div>
-                                                </>
+                                                </div>
                                             )}
                                         </div>
-                                    )}
-                                </div>
-                                <div className="vibration-row">
-                                    <label>震动:</label>
-                                    <select value={actions.vibration} onChange={e => setActions({ ...actions, vibration: e.target.value })}>
-                                        <option value="none">无</option>
-                                        <option value="once">短</option>
-                                        <option value="continuous">长</option>
-                                    </select>
-                                </div>
+                                    </div>
+                                )}
                             </div>
 
                             {/* Submit Button */}
