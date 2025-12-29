@@ -1528,7 +1528,10 @@ export default function ChartPage() {
                 const { label } = allocLabel(type);
                 const base = { id: label, label, type, points: newPending.map(p => ({ ...p, time: getTime(p.logic) })), width: 1 };
                 if (type === 'fib') {
-                    base.fibVisible = { 0: true, 0.236: true, 0.382: true, 0.5: true, 0.618: true, 0.786: true, 1: true, 1.382: true };
+                    base.fibVisible = {
+                        0: true, 0.236: true, 0.382: true, 0.5: true, 0.618: true, 0.786: true, 1: true,
+                        1.382: false, 1.618: false, 2.618: false, 3.618: false
+                    };
                 }
                 drawing = base;
             }
@@ -1631,7 +1634,7 @@ export default function ChartPage() {
 
             return (<g key={d.id}>
                 {FIB_RATIOS.map((r, i) => {
-                    const isVisible = d.fibVisible ? d.fibVisible[r] !== false : true;
+                    const isVisible = d.fibVisible ? d.fibVisible[r] !== false : (r <= 1);
                     if (!isVisible) return null;
                     const fx1 = p0.x + shiftX * r;
                     const fy1 = p0.y + shiftY * r;
@@ -1852,7 +1855,7 @@ export default function ChartPage() {
                                                         {FIB_RATIOS.map(r => {
                                                             const d = drawings.find(dd => dd.id === targetId);
                                                             const c = (d.fibColors && d.fibColors[r]) ? d.fibColors[r] : d.color; // Fallback to main color
-                                                            const visible = d.fibVisible ? d.fibVisible[r] !== false : true;
+                                                            const visible = d.fibVisible ? d.fibVisible[r] !== false : (r <= 1);
                                                             return (
                                                                 <div key={r} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, background: '#2a2e39', padding: 6, borderRadius: 6 }}>
                                                                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -1871,7 +1874,10 @@ export default function ChartPage() {
                                                                     </div>
                                                                     {visible && (
                                                                         <div style={{ position: 'relative', width: 20, height: 20 }}>
-                                                                            <input type="color" value={c}
+                                                                            <input
+                                                                                type="color"
+                                                                                value={c}
+                                                                                onClick={(e) => e.stopPropagation()}
                                                                                 onChange={(e) => {
                                                                                     const newC = e.target.value;
                                                                                     setDrawings(prev => prev.map(dd => {
