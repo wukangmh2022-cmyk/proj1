@@ -142,6 +142,7 @@ export default function ChartPage() {
     const [cursor, setCursor] = useState(null);
     const [legendValues, setLegendValues] = useState({});
     const [customCrosshair, setCustomCrosshair] = useState(null); // { x, y } for long-press crosshair
+    const screenDrawingsRef = useRef([]);
 
     const drawModeRef = useRef(DRAW_MODES.NONE);
 
@@ -516,6 +517,7 @@ export default function ChartPage() {
         if (!allDataRef.current.length) return;
         // Prevent mixing old data interval with new interval
         if (dataIntervalRef.current !== interval) return;
+        const prevMap = Object.fromEntries((screenDrawingsRef.current || []).map(d => [d.id, d]));
         const data = allDataRef.current;
         const estimatedStep = parseInterval(interval);
 
@@ -608,11 +610,17 @@ export default function ChartPage() {
                         console.log(`  P${i}: Time=${p.time} Price=${p.price} Logic=${l.toFixed(2)} ScreenX=${s?.x.toFixed(1)} ScreenY=${s?.y.toFixed(1)}`);
                     });
                 }
-                return sp.length === d.points.length ? { ...d, screenPoints: sp } : null;
+                if (sp.length === d.points.length) return { ...d, screenPoints: sp };
+                const prev = prevMap[d.id];
+                if (prev && prev.screenPoints && prev.screenPoints.length === d.points.length) {
+                    return { ...d, screenPoints: prev.screenPoints };
+                }
+                return null;
             }
             return null;
         }).filter(Boolean);
         setScreenDrawings(result);
+        screenDrawingsRef.current = result;
     }, [drawings, logicToScreen, interval]); // Added interval dependency
 
     useEffect(() => {
@@ -1260,7 +1268,8 @@ export default function ChartPage() {
     useEffect(() => {
         if (drawings.length) localStorage.setItem(`chart_drawings_${symbol}`, JSON.stringify(drawings));
         else localStorage.removeItem(`chart_drawings_${symbol}`);
-    }, [drawings, symbol]);
+        screenDrawingsRef.current = screenDrawings;
+    }, [drawings, symbol, screenDrawings]);
     // Load effect removed (Handled by lazy init + key remount)
 
     // Long-press crosshair detection
