@@ -1055,11 +1055,29 @@ public class FloatingWindowService extends Service {
             getSystemService(NotificationManager.class).createNotificationChannel(channel);
         }
 
-        Notification notification = new NotificationCompat.Builder(this, channelId)
+        Intent launchIntent = getPackageManager().getLaunchIntentForPackage(getPackageName());
+        PendingIntent pi = null;
+        if (launchIntent != null) {
+            launchIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            pi = PendingIntent.getActivity(
+                    this,
+                    0,
+                    launchIntent,
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT : PendingIntent.FLAG_UPDATE_CURRENT
+            );
+        }
+
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, channelId)
                 .setContentTitle("Binance Monitor")
                 .setContentText("后台监控价格中...")
                 .setSmallIcon(android.R.drawable.sym_def_app_icon)
-                .build();
+                .setOngoing(true);
+
+        if (pi != null) {
+            builder.setContentIntent(pi);
+        }
+
+        Notification notification = builder.build();
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(1, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
@@ -1068,4 +1086,3 @@ public class FloatingWindowService extends Service {
         }
     }
 }
-
