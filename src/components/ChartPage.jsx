@@ -115,27 +115,6 @@ export default function ChartPage() {
     const [isLoading, setIsLoading] = useState(true);
     const [selectedId, setSelectedId] = useState(null);
     const [isLandscape, setIsLandscape] = useState(false);
-    const hitTestDrawing = useCallback((x, y) => {
-        // simple hit test using screenDrawings
-        for (const d of screenDrawings) {
-            if (!d) continue;
-            if (d.type === 'hline') {
-                if (Math.abs(y - d.screenY) <= 12) return d.id;
-            } else if ((d.type === 'trendline' || d.type === 'fib' || d.type === 'channel') && d.screenPoints && d.screenPoints.length >= 2) {
-                const pts = d.screenPoints;
-                for (let i = 0; i < pts.length - 1; i++) {
-                    const a = pts[i], b = pts[i + 1];
-                    if (ptLineDist(x, y, a.x, a.y, b.x, b.y) <= 12) return d.id;
-                }
-            } else if (d.type === 'rect' && d.screenPoints && d.screenPoints.length >= 2) {
-                const [p1, p2] = d.screenPoints;
-                const minX = Math.min(p1.x, p2.x), maxX = Math.max(p1.x, p2.x);
-                const minY = Math.min(p1.y, p2.y), maxY = Math.max(p1.y, p2.y);
-                if (x >= minX && x <= maxX && y >= minY && y <= maxY) return d.id;
-            }
-        }
-        return null;
-    }, [screenDrawings, ptLineDist]);
     // Orientation toggle removed per latest request (rely on system auto-rotate)
 
     // Config Menu State
@@ -1644,6 +1623,27 @@ export default function ChartPage() {
         const t = len ? Math.max(0, Math.min(1, dot / len)) : 0;
         return Math.hypot(px - (x1 + t * C), py - (y1 + t * D));
     };
+
+    const hitTestDrawing = useCallback((x, y) => {
+        for (const d of screenDrawings) {
+            if (!d) continue;
+            if (d.type === 'hline') {
+                if (Math.abs(y - d.screenY) <= 12) return d.id;
+            } else if ((d.type === 'trendline' || d.type === 'fib' || d.type === 'channel') && d.screenPoints && d.screenPoints.length >= 2) {
+                const pts = d.screenPoints;
+                for (let i = 0; i < pts.length - 1; i++) {
+                    const a = pts[i], b = pts[i + 1];
+                    if (ptLineDist(x, y, a.x, a.y, b.x, b.y) <= 12) return d.id;
+                }
+            } else if (d.type === 'rect' && d.screenPoints && d.screenPoints.length >= 2) {
+                const [p1, p2] = d.screenPoints;
+                const minX = Math.min(p1.x, p2.x), maxX = Math.max(p1.x, p2.x);
+                const minY = Math.min(p1.y, p2.y), maxY = Math.max(p1.y, p2.y);
+                if (x >= minX && x <= maxX && y >= minY && y <= maxY) return d.id;
+            }
+        }
+        return null;
+    }, [screenDrawings, ptLineDist]);
 
     const render3Pt = (d, isFib) => {
         if (!d.screenPoints || d.screenPoints.length < 3) return null;
