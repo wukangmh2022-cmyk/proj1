@@ -1,11 +1,10 @@
-import { useEffect, useRef, useState, useCallback, useContext } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { createChart, CandlestickSeries, LineSeries, HistogramSeries } from 'lightweight-charts';
 import { getSymbols } from '../utils/storage';
 import { useBinanceTickers } from '../hooks/useBinanceTickers';
-import { LoadingContext } from '../context/LoadingContext';
 import '../App.css';
 
 const DRAW_MODES = { NONE: 'none', TRENDLINE: 'trendline', CHANNEL: 'channel', RECT: 'rect', HLINE: 'hline', FIB: 'fib' };
@@ -115,18 +114,10 @@ export default function ChartPage() {
     const [loadingStage, setLoadingStage] = useState('');
     const [isLoading, setIsLoading] = useState(true);
     const [selectedId, setSelectedId] = useState(null);
-    const { setStage: setGlobalStage } = useContext(LoadingContext);
     const [isLandscape, setIsLandscape] = useState(() => {
         if (typeof window === 'undefined' || !window.screen || !window.screen.orientation) return false;
         return window.screen.orientation.type?.includes('landscape');
     });
-    useEffect(() => {
-        if (!setGlobalStage) return;
-        const text = loadingStage || (isLoading ? '加载中...' : '');
-        setGlobalStage(text);
-        return () => setGlobalStage('');
-    }, [loadingStage, isLoading, setGlobalStage]);
-
     // Listen to system orientation changes to keep UI toggle in sync
     useEffect(() => {
         const handler = () => {

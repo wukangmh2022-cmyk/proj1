@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useContext } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { HashRouter, Routes, Route, useNavigate, useParams } from 'react-router-dom';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { useBinanceTickers } from './hooks/useBinanceTickers';
@@ -13,7 +13,6 @@ import AlertConfigModal from './components/AlertConfigModal';
 import './App.css';
 
 import { App as CapacitorApp } from '@capacitor/app';
-import { LoadingContext } from './context/LoadingContext';
 
 function HomePage() {
   const navigate = useNavigate();
@@ -26,7 +25,6 @@ function HomePage() {
   const [floatingActive, setFloatingActive] = useState(false);
   const [config, setConfig] = useState(getFloatingConfig());
   const floatingActiveRef = useRef(false);
-  const { setStage: setGlobalStage } = useContext(LoadingContext);
 
   const [isEditMode, setIsEditMode] = useState(false);
   const longPressTimerRef = useRef(null);
@@ -126,16 +124,6 @@ function HomePage() {
   const tickers = useBinanceTickers(symbols);
   usePriceAlerts(tickers);
 
-  // Show overlay while home waits for first batch (e.g., returning from chart with empty cache)
-  useEffect(() => {
-    if (!setGlobalStage) return;
-    if (symbols.length > 0 && Object.keys(tickers).length === 0) {
-      setGlobalStage('首页加载中...');
-    } else {
-      setGlobalStage('');
-    }
-    return () => setGlobalStage && setGlobalStage('');
-  }, [symbols.length, tickers, setGlobalStage]);
 
   const handleAddSymbol = (symbolToAdd) => {
     const sym = symbolToAdd || newSymbol;
@@ -498,45 +486,13 @@ const ChartPageWrapper = () => {
 };
 
 function App() {
-  const [globalLoadingStage, setGlobalLoadingStage] = useState('');
-
   return (
-    <LoadingContext.Provider value={{ stage: globalLoadingStage, setStage: setGlobalLoadingStage }}>
-      <div style={{ position: 'relative', minHeight: '100vh' }}>
-        {globalLoadingStage && (
-          <div style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 9999,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            pointerEvents: 'none',
-            background: 'rgba(0,0,0,0.25)'
-          }}>
-            <div style={{
-              padding: '10px 14px',
-              borderRadius: '10px',
-              background: 'rgba(22, 26, 37, 0.9)',
-              border: '1px solid #2a2e39',
-              color: '#e5e7eb',
-              fontSize: '13px',
-              boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
-              minWidth: '140px',
-              textAlign: 'center'
-            }}>
-              {globalLoadingStage}
-            </div>
-          </div>
-        )}
-        <HashRouter>
-          <Routes>
-            <Route path="/" element={<HomePage />} />
-            <Route path="/chart/:symbol" element={<ChartPageWrapper />} />
-          </Routes>
-        </HashRouter>
-      </div>
-    </LoadingContext.Provider>
+    <HashRouter>
+      <Routes>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/chart/:symbol" element={<ChartPageWrapper />} />
+      </Routes>
+    </HashRouter>
   );
 }
 
