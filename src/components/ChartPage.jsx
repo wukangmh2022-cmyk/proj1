@@ -287,8 +287,8 @@ export default function ChartPage() {
 
         if (suppressDrawingInteractionRef.current) return; // ignore when pinching with two fingers
 
-        // Touch防误触：未选中时先选中，不直接进入拖拽
-        if (e.pointerType === 'touch' && selectedId !== id) {
+        // 未选中时先选中，不直接进入拖拽（避免从图形起点直接触发拖拽，需先选中再拖）
+        if (selectedId !== id) {
             setSelectedId(id);
             return;
         }
