@@ -11,7 +11,12 @@ const DRAW_MODES = { NONE: 'none', TRENDLINE: 'trendline', CHANNEL: 'channel', R
 const FIB_RATIOS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
 
 let idCounter = 0;
-const genId = (type) => `${type[0]}${++idCounter}`;
+const genId = (type) => {
+    const suffix = (typeof crypto !== 'undefined' && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `${Date.now()}_${++idCounter}`;
+    return `${type}_${suffix}`;
+};
 
 // Helper to parse interval to seconds
 const parseInterval = (int) => {
@@ -195,7 +200,7 @@ export default function ChartPage() {
                 startLogic,
                 startPrice,
                 pointLogics,
-                origPoints: pts,
+                origPoints: pts.map(p => ({ ...p })), // shallow clone
                 hlinePrice: drawing.price
             });
         } else {
@@ -309,8 +314,8 @@ export default function ChartPage() {
                     if (d.id !== dragState.id) return d;
 
                     if (dragState.isWhole) {
-                        const baseLogicShift = (rawLogic ?? dragState.startLogic) - dragState.startLogic;
-                        const basePriceShift = (rawPrice ?? dragState.startPrice) - dragState.startPrice;
+                        const baseLogicShift = (rawLogic ?? dragState.startLogic ?? 0) - (dragState.startLogic ?? 0);
+                        const basePriceShift = (rawPrice ?? dragState.startPrice ?? 0) - (dragState.startPrice ?? 0);
 
                         if (d.type === 'hline') {
                             const basePrice = dragState.hlinePrice ?? d.price ?? 0;
