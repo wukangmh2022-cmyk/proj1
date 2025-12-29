@@ -245,6 +245,8 @@ export default function ChartPage() {
     const [dragState, setDragState] = useState(null); // { id, index }
     const [activeHandle, setActiveHandle] = useState(null); // { id, index } - For Indirect Drag
     const [subMenuPos, setSubMenuPos] = useState(null); // { x, y, isBottom }
+    const activeTouchIdsRef = useRef(new Set());
+    const suppressDrawingInteractionRef = useRef(false);
 
     // Unified Chart Interaction Sync (Lock pan/zoom during drag or custom crosshair)
     useEffect(() => {
@@ -257,9 +259,33 @@ export default function ChartPage() {
         });
     }, [customCrosshair, dragState]);
 
+    // Track multitouch to avoid accidental selection when pinching/panning
+    useEffect(() => {
+        const onPD = (ev) => {
+            if (ev.pointerType !== 'touch') return;
+            activeTouchIdsRef.current.add(ev.pointerId);
+            if (activeTouchIdsRef.current.size >= 2) suppressDrawingInteractionRef.current = true;
+        };
+        const onPU = (ev) => {
+            if (ev.pointerType !== 'touch') return;
+            activeTouchIdsRef.current.delete(ev.pointerId);
+            if (activeTouchIdsRef.current.size < 2) suppressDrawingInteractionRef.current = false;
+        };
+        window.addEventListener('pointerdown', onPD, { passive: true });
+        window.addEventListener('pointerup', onPU, { passive: true });
+        window.addEventListener('pointercancel', onPU, { passive: true });
+        return () => {
+            window.removeEventListener('pointerdown', onPD);
+            window.removeEventListener('pointerup', onPU);
+            window.removeEventListener('pointercancel', onPU);
+        };
+    }, []);
+
     const handleDragStart = (e, id, index = 0) => {
         e.stopPropagation();
         e.preventDefault();
+
+        if (suppressDrawingInteractionRef.current) return; // ignore when pinching with two fingers
 
         if (!chartRef.current || !seriesRef.current || !containerRef.current) return;
 
