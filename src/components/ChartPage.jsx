@@ -226,6 +226,8 @@ export default function ChartPage() {
         const drawing = drawings.find(d => d.id === id);
         if (!drawing) return;
 
+        logInteract('drag start', { id, index, isWhole, mouseLogic, mousePrice });
+
         if (isWhole) {
             const pts = drawing.points || [];
             const pointLogics = pts.map(p => getLogic(p.time));
@@ -281,6 +283,8 @@ export default function ChartPage() {
     const rafRef = useRef(null);
     const passthroughRef = useRef(null);
 
+    const logInteract = (...args) => console.log('[interact]', ...args);
+
     const forwardPointerToChart = (type, srcEvent) => {
         const canvas = containerRef.current?.querySelector('canvas');
         if (!canvas) return;
@@ -305,6 +309,7 @@ export default function ChartPage() {
     const startPassthrough = (e) => {
         // Allow chart pan/zoom/crosshair even if a drawing is under the pointer (when not selected)
         const target = e.currentTarget;
+        logInteract('passthrough start', { x: e.clientX, y: e.clientY });
         forwardPointerToChart('pointerdown', e);
 
         const move = (ev) => forwardPointerToChart('pointermove', ev);
@@ -368,6 +373,7 @@ export default function ChartPage() {
                             const newTime = getTime(newLogic) ?? p.time;
                             return { ...p, time: newTime, price: p.price + basePriceShift };
                         });
+                        logInteract('drag move whole', { id: d.id, baseLogicShift, basePriceShift, pts: newPoints.length });
                         return { ...d, points: newPoints };
                     }
 
@@ -380,6 +386,7 @@ export default function ChartPage() {
                         // Update specific point
                         newPoints[dragState.index] = { ...newPoints[dragState.index], time, price: targetPrice };
                     }
+                    logInteract('drag move anchor', { id: d.id, idx: dragState.index, time, price: targetPrice });
                     return { ...d, points: newPoints };
                 }));
             });
@@ -389,6 +396,7 @@ export default function ChartPage() {
             if (chartRef.current) {
                 chartRef.current.applyOptions({ handleScale: true, handleScroll: true });
             }
+            logInteract('drag end', dragState?.id);
             setDragState(null);
             if (rafRef.current) {
                 cancelAnimationFrame(rafRef.current);
