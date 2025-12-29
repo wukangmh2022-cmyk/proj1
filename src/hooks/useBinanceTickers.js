@@ -281,5 +281,41 @@ export const useBinanceTickers = (symbols = []) => {
         };
     }, [JSON.stringify(symbols), isNative]);
 
+    // Web fallback: periodically fetch missing symbols that have no price yet (covers newly added .P)
+    useEffect(() => {
+        if (isNative) return;
+        if (symbols.length === 0) return;
+        let timer = null;
+
+        const fetchMissing = async () => {
+            const missing = symbols.filter(s => !bufferRef.current[s] && !Object.prototype.hasOwnProperty.call(tickers, s));
+            if (missing.length === 0) return;
+            const updates = {};
+            await Promise.all(missing.map(async (s) => {
+                const isPerp = isPerpetual(s);
+                const base = getBaseSymbol(s);
+                const url = isPerp
+                    ? `https://fapi.binance.com/fapi/v1/ticker/price?symbol=${base}`
+                    : `https://api.binance.com/api/v3/ticker/price?symbol=${s}`;
+                try {
+                    const res = await fetch(url);
+                    const json = await res.json();
+                    const price = parseFloat(json.price);
+                    if (!Number.isNaN(price)) {
+                        updates[s] = { price, change: 0, changePercent: 0 };
+                    }
+                } catch (_) { }
+            }));
+            if (Object.keys(updates).length > 0) {
+                setTickers(prev => ({ ...prev, ...updates }));
+            }
+        };
+
+        timer = setInterval(fetchMissing, 4000);
+        fetchMissing();
+
+        return () => { if (timer) clearInterval(timer); };
+    }, [symbols, tickers, isNative]);
+
     return tickers;
 };
