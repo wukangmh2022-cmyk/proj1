@@ -1247,6 +1247,25 @@ export default function ChartPage() {
         };
     }, [symbol, interval]);
 
+    // Resize chart on orientation/viewport changes
+    useEffect(() => {
+        const resizeChart = () => {
+            if (!containerRef.current || !chartRef.current) return;
+            const w = containerRef.current.clientWidth;
+            const h = containerRef.current.clientHeight;
+            if (w > 0 && h > 0) {
+                try { chartRef.current.resize(w, h); } catch (e) { }
+            }
+        };
+        window.addEventListener('resize', resizeChart);
+        window.addEventListener('orientationchange', resizeChart);
+        resizeChart();
+        return () => {
+            window.removeEventListener('resize', resizeChart);
+            window.removeEventListener('orientationchange', resizeChart);
+        };
+    }, []);
+
 
 
     // Helpers for Time <-> Logic interpolation
