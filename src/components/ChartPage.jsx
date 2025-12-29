@@ -180,34 +180,52 @@ export default function ChartPage() {
         const drawing = drawings.find(d => d.id === id);
         if (!drawing) return;
 
-        let anchorPoint = null;
-        if (drawing.type === 'hline') {
-            // Create a virtual anchor using current mouse time and line price
-            const anchorTime = mouseLogic !== null ? getTime(mouseLogic) : (allDataRef.current?.[0]?.time || 0);
-            anchorPoint = { time: anchorTime, price: drawing.price };
-        } else if (drawing.points && drawing.points.length) {
-            anchorPoint = isWhole ? drawing.points[0] : drawing.points[index];
+        if (isWhole) {
+            const pts = drawing.points || [];
+            const pointLogics = pts.map(p => getLogic(p.time));
+            const startLogic = mouseLogic !== null ? mouseLogic : (pointLogics[0] ?? 0);
+            const startPrice = mousePrice ?? (drawing.type === 'hline' ? drawing.price : pts[0]?.price ?? 0);
+
+            chartRef.current.applyOptions({ handleScale: false, handleScroll: false });
+
+            setDragState({
+                id,
+                index: -1,
+                isWhole: true,
+                startLogic,
+                startPrice,
+                pointLogics,
+                origPoints: pts,
+                hlinePrice: drawing.price
+            });
+        } else {
+            let anchorPoint = null;
+            if (drawing.type === 'hline') {
+                const anchorTime = mouseLogic !== null ? getTime(mouseLogic) : (allDataRef.current?.[0]?.time || 0);
+                anchorPoint = { time: anchorTime, price: drawing.price };
+            } else if (drawing.points && drawing.points.length) {
+                anchorPoint = drawing.points[index];
+            }
+
+            if (!anchorPoint) return;
+
+            const pointLogic = anchorPoint.time !== undefined ? getLogic(anchorPoint.time) : null;
+
+            const logicOffset = (pointLogic !== null && mouseLogic !== null) ? pointLogic - mouseLogic : 0;
+            const priceOffset = anchorPoint.price - (mousePrice ?? anchorPoint.price);
+
+            chartRef.current.applyOptions({ handleScale: false, handleScroll: false });
+
+            setDragState({
+                id,
+                index,
+                logicOffset,
+                priceOffset,
+                anchorTime: anchorPoint.time ?? null,
+                anchorPrice: anchorPoint.price ?? null,
+                isWhole: false
+            });
         }
-
-        if (!anchorPoint) return;
-
-        const pointLogic = anchorPoint.time !== undefined ? getLogic(anchorPoint.time) : null;
-
-        const logicOffset = (pointLogic !== null && mouseLogic !== null) ? pointLogic - mouseLogic : 0;
-        const priceOffset = anchorPoint.price - (mousePrice ?? anchorPoint.price);
-
-        // Disable chart pan/zoom during drag (Already handled by effect if activeHandle is set, but set here for robustness during drag)
-        chartRef.current.applyOptions({ handleScale: false, handleScroll: false });
-
-        setDragState({
-            id,
-            index: isWhole ? -1 : index,
-            logicOffset,
-            priceOffset,
-            anchorTime: anchorPoint.time ?? null,
-            anchorPrice: anchorPoint.price ?? null,
-            isWhole
-        });
 
         // Sync Active Handle and Selection
         setActiveHandle({ id, index: isWhole ? -1 : index });
@@ -282,26 +300,38 @@ export default function ChartPage() {
                 const rawLogic = chartRef.current.timeScale().coordinateToLogical(x);
                 const rawPrice = seriesRef.current.coordinateToPrice(y);
 
-                if (rawLogic === null || rawPrice === null) return;
+                const targetLogic = rawLogic !== null ? rawLogic + (dragState.logicOffset || 0) : null;
+                const targetPrice = rawPrice !== null ? rawPrice + (dragState.priceOffset || 0) : null;
 
-                const targetLogic = rawLogic + (dragState.logicOffset || 0);
-                const targetPrice = rawPrice + (dragState.priceOffset || 0);
-
-                const time = getTime(targetLogic);
+                const time = targetLogic !== null ? getTime(targetLogic) : null;
 
                 setDrawings(prev => prev.map(d => {
                     if (d.id !== dragState.id) return d;
-                    // Whole-shape drag: shift all points by delta
-                    if (dragState.index === -1 && d.type !== 'hline') {
-                        const anchorTime = dragState.anchorTime ?? d.points?.[0]?.time ?? time ?? 0;
-                        const anchorPrice = dragState.anchorPrice ?? d.points?.[0]?.price ?? targetPrice;
-                        const deltaT = (time ?? anchorTime) - anchorTime;
-                        const deltaP = targetPrice - anchorPrice;
-                        const pts = d.points || [];
-                        return { ...d, points: pts.map(p => ({ ...p, time: p.time + deltaT, price: p.price + deltaP })) };
+
+                    if (dragState.isWhole) {
+                        const baseLogicShift = (rawLogic ?? dragState.startLogic) - dragState.startLogic;
+                        const basePriceShift = (rawPrice ?? dragState.startPrice) - dragState.startPrice;
+
+                        if (d.type === 'hline') {
+                            const basePrice = dragState.hlinePrice ?? d.price ?? 0;
+                            return { ...d, price: basePrice + basePriceShift };
+                        }
+
+                        const origPoints = dragState.origPoints || d.points || [];
+                        const pointLogics = dragState.pointLogics || [];
+
+                        const newPoints = origPoints.map((p, i) => {
+                            const pl = pointLogics[i] ?? getLogic(p.time) ?? 0;
+                            const newLogic = pl + baseLogicShift;
+                            const newTime = getTime(newLogic) ?? p.time;
+                            return { ...p, time: newTime, price: p.price + basePriceShift };
+                        });
+                        return { ...d, points: newPoints };
                     }
+
                     // For HLine, only price matters
-                    if (d.type === 'hline') return { ...d, price: targetPrice };
+                    if (d.type === 'hline' && targetPrice !== null) return { ...d, price: targetPrice };
+                    if (targetLogic === null || targetPrice === null) return d;
 
                     const newPoints = [...d.points];
                     if (newPoints[dragState.index]) {
