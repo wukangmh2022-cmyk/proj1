@@ -1746,7 +1746,15 @@ export default function ChartPage() {
                             zIndex: 10
                         }}
                     >
-                        {isLandscape ? '↺' : '↻'}
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                            <rect x="4" y="4" width="16" height="16" rx="2" ry="2" />
+                            {/* top-right arrow pointing inward */}
+                            <path d="M16 5 l3 0 0 3" />
+                            <path d="M16 8 l3 -3" />
+                            {/* bottom-left arrow pointing inward */}
+                            <path d="M5 16 l0 3 3 0" />
+                            <path d="M5 16 l3 3" />
+                        </svg>
                     </button>
                 </div>
                 <div className="interval-selector"
