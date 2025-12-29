@@ -17,6 +17,7 @@ const genId = (type) => {
         : `${Date.now()}_${++idCounter}`;
     return `${type}_${suffix}`;
 };
+const LABEL_PREFIX = { hline: 'h', trendline: 't', rect: 'r', channel: 'c', fib: 'f' };
 
 // Helper to parse interval to seconds
 const parseInterval = (int) => {
@@ -37,6 +38,16 @@ export default function ChartPage() {
     const containerRef = useRef(null);
     const chartRef = useRef(null);
     const seriesRef = useRef(null);
+    const labelCountersRef = useRef({ hline: 0, trendline: 0, rect: 0, channel: 0, fib: 0 });
+    const labelsInitializedRef = useRef(false);
+
+    const getPrefix = (type) => LABEL_PREFIX[type] || 'd';
+    const nextLabel = (type) => {
+        const p = getPrefix(type);
+        const next = (labelCountersRef.current[type] || 0) + 1;
+        labelCountersRef.current[type] = next;
+        return `${p}${next}`;
+    };
 
     const [interval, setIntervalState] = useState(() => {
         const saved = localStorage.getItem(`chart_interval_${symbol}`);
@@ -52,6 +63,34 @@ export default function ChartPage() {
         const s = localStorage.getItem(`chart_drawings_${symbol}`);
         return s ? JSON.parse(s) : [];
     });
+
+    // Initialize label counters from existing drawings (once)
+    useEffect(() => {
+        if (labelsInitializedRef.current) return;
+        const counters = { hline: 0, trendline: 0, rect: 0, channel: 0, fib: 0 };
+        drawings.forEach(d => {
+            const p = getPrefix(d.type);
+            const label = d.label || d.id;
+            const m = label && label.match(new RegExp(`^${p}(\\d+)$`, 'i'));
+            if (m) {
+                counters[d.type] = Math.max(counters[d.type], parseInt(m[1], 10));
+            }
+        });
+        labelCountersRef.current = counters;
+
+        // Backfill missing labels for existing drawings
+        let changed = false;
+        const updated = drawings.map(d => {
+            if (d.label) return d;
+            const p = getPrefix(d.type);
+            const label = d.id?.match(new RegExp(`^${p}(\\d+)$`, 'i')) ? d.id : nextLabel(d.type);
+            changed = true;
+            return { ...d, label };
+        });
+        if (changed) setDrawings(updated);
+
+        labelsInitializedRef.current = true;
+    }, [drawings]);
     const [screenDrawings, setScreenDrawings] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [selectedId, setSelectedId] = useState(null);
@@ -1452,10 +1491,10 @@ export default function ChartPage() {
 
             const type = drawModeRef.current;
             if (type === 'hline') {
-                drawing = { id: genId('hline'), type: 'hline', price: newPending[0].price, width: 1 };
+                drawing = { id: genId('hline'), label: nextLabel('hline'), type: 'hline', price: newPending[0].price, width: 1 };
             } else {
                 // Unified: All time-based drawings use 'points'
-                drawing = { id: genId(type), type, points: newPending.map(p => ({ ...p, time: getTime(p.logic) })), width: 1 };
+                drawing = { id: genId(type), label: nextLabel(type), type, points: newPending.map(p => ({ ...p, time: getTime(p.logic) })), width: 1 };
             }
             setDrawings(prev => [...prev, drawing]);
             setPendingPoints([]);
@@ -1547,7 +1586,7 @@ export default function ChartPage() {
                 <line x1={p1.x} y1={p1.y} x2={p4.x} y2={p4.y} stroke={color} strokeWidth="1" strokeDasharray="2,2" opacity="0.5" pointerEvents="none" />
 
                 {sel && d.screenPoints.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r="6" fill={activeHandle?.id === d.id && activeHandle?.index === i ? "#fff" : color} stroke={activeHandle?.id === d.id && activeHandle?.index === i ? color : "#fff"} strokeWidth="2" cursor="crosshair" pointerEvents="all" {...anchorHandlers(i)} />)}
-                <text x={p0.x} y={p0.y - 10} fill={color} fontSize="10" pointerEvents="none">{d.id}</text>
+                <text x={p0.x} y={p0.y - 10} fill={color} fontSize="10" pointerEvents="none">{d.label || d.id}</text>
             </g>);
         }
 
@@ -1957,7 +1996,7 @@ export default function ChartPage() {
                                     />
                                     {/* Visible */}
                                     <line x1={0} y1={d.screenY} x2="100%" y2={d.screenY} stroke={color} strokeWidth={sel ? (d.width || 1) + 1 : (d.width || 1)} pointerEvents="none" />
-                                    <text x={5} y={d.screenY - 5} fill={color} fontSize="10" pointerEvents="none">{d.id}</text>
+                                    <text x={5} y={d.screenY - 5} fill={color} fontSize="10" pointerEvents="none">{d.label || d.id}</text>
                                     {sel && <circle cx={(containerRef.current?.clientWidth || 300) / 2} cy={d.screenY} r="7" fill={activeHandle?.id === d.id && activeHandle?.index === 0 ? "#fff" : color} stroke={activeHandle?.id === d.id && activeHandle?.index === 0 ? color : "#fff"} strokeWidth="2" cursor="ns-resize" pointerEvents="all" {...anchorHandlers(0)} />}
                                 </g>
                             );
@@ -1986,7 +2025,7 @@ export default function ChartPage() {
                                         {sel && d.screenPoints.map((p, i) => (
                                             <circle key={i} cx={p.x} cy={p.y} r="6" fill={activeHandle?.id === d.id && activeHandle?.index === i ? "#fff" : color} stroke={activeHandle?.id === d.id && activeHandle?.index === i ? color : "#fff"} strokeWidth="2" cursor="crosshair" pointerEvents="all" {...anchorHandlers(i)} />
                                         ))}
-                                        <text x={(p1.x + p2.x) / 2} y={(p1.y + p2.y) / 2 - 5} fill={color} fontSize="10" textAnchor="middle" pointerEvents="none">{d.id}</text>
+                                        <text x={(p1.x + p2.x) / 2} y={(p1.y + p2.y) / 2 - 5} fill={color} fontSize="10" textAnchor="middle" pointerEvents="none">{d.label || d.id}</text>
                                     </g>
                                 );
                             } else if (d.type === 'rect' && d.screenPoints && d.screenPoints.length >= 2) {
@@ -2014,7 +2053,7 @@ export default function ChartPage() {
                                             {...handlers}
                                         />
                                         {sel && <><circle cx={p1.x} cy={p1.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 0)} /><circle cx={p2.x} cy={p2.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 1)} /></>}
-                                        <text x={x + 5} y={y - 5} fill={color} fontSize="10" pointerEvents="none">{d.id}</text>
+                                        <text x={x + 5} y={y - 5} fill={color} fontSize="10" pointerEvents="none">{d.label || d.id}</text>
                                     </g>
                                 );
                             }
