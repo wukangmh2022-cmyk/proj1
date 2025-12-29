@@ -1977,13 +1977,14 @@ export default function ChartPage() {
                                         stroke="transparent"
                                         strokeWidth="20"
                                         cursor="pointer"
-                                        pointerEvents="all"
-                                        onPointerDown={(e) => {
-                                            if (!sel) { startPassthrough(e); return; }
-                                            handleDragStart(e, d.id, -1);
-                                        }}
-                                        {...handlers}
-                                    />
+                                    pointerEvents="all"
+                                    onPointerDown={(e) => {
+                                        e.stopPropagation();
+                                        setSelectedId(d.id);
+                                        handleDragStart(e, d.id, -1);
+                                    }}
+                                    {...handlers}
+                                />
                                     {/* Visible */}
                                     <line x1={0} y1={d.screenY} x2="100%" y2={d.screenY} stroke={color} strokeWidth={sel ? (d.width || 1) + 1 : (d.width || 1)} pointerEvents="none" />
                                     <text x={5} y={d.screenY - 5} fill={color} fontSize="10" pointerEvents="none">{d.label || d.id}</text>
