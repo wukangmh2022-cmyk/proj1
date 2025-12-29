@@ -1620,6 +1620,7 @@ export default function ChartPage() {
                                     pointerEvents="all"
                                     onPointerDown={(e) => {
                                         e.stopPropagation();
+                                        logInteract('hline pointerDown', d.id, e.pointerType);
                                         setSelectedId(d.id);
                                         handleDragStart(e, d.id, -1);
                                     }}
@@ -2015,6 +2016,7 @@ export default function ChartPage() {
                                             pointerEvents="all"
                                             onPointerDown={(e) => {
                                                 e.stopPropagation();
+                                                logInteract('trendline pointerDown', d.id, e.pointerType);
                                                 setSelectedId(d.id);
                                                 handleDragStart(e, d.id, -1);
                                             }}
@@ -2048,6 +2050,7 @@ export default function ChartPage() {
                     cursor="grab"
                     onPointerDown={(e) => {
                         e.stopPropagation();
+                        logInteract('rect pointerDown', d.id, e.pointerType);
                         // Allow dragging even if not pre-selected
                         setSelectedId(d.id);
                         handleDragStart(e, d.id, -1);
