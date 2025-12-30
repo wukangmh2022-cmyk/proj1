@@ -27,7 +27,6 @@ const parseInterval = (int) => {
 export default function ChartPage() {
     const { symbol } = useParams();
     const navigate = useNavigate();
-    console.log('[perf] ChartPage mount for', symbol, 'at', Date.now());
     const containerRef = useRef(null);
     const chartRef = useRef(null);
     const seriesRef = useRef(null);
@@ -118,6 +117,13 @@ export default function ChartPage() {
     const [isLandscape, setIsLandscape] = useState(false);
     const tapCandidateRef = useRef(null); // { id, x, y }
     // Orientation toggle removed per latest request (rely on system auto-rotate)
+
+    useEffect(() => {
+        console.log('[perf] ChartPage mount for', symbol, 'at', Date.now());
+        return () => {
+            console.log('[perf] ChartPage unmount for', symbol, 'at', Date.now());
+        };
+    }, [symbol]);
 
     // Config Menu State
     const [menu, setMenu] = useState(null); // { x, y, type, id, data }

@@ -21,9 +21,19 @@ export const useBinanceTickers = (symbols = []) => {
     const lastUpdateRef = useRef(Date.now());
     const listenerRef = useRef(null);
     const flushIntervalRef = useRef(null);
+    const perfLoggedRef = useRef(false);
 
     const isNative = Capacitor.isNativePlatform();
-    console.log('[perf] useBinanceTickers init at', Date.now(), 'isNative=', isNative, 'symbols=', symbols);
+    useEffect(() => {
+        if (perfLoggedRef.current) return;
+        perfLoggedRef.current = true;
+        console.log('[perf] useBinanceTickers mount at', Date.now(), 'isNative=', isNative, 'symbols=', symbols);
+        return () => {
+            console.log('[perf] useBinanceTickers unmount at', Date.now());
+        };
+        // Intentionally run once per hook instance to avoid noisy logs.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // Helper: Check if symbol is perpetual (.P suffix)
     const isPerpetual = (symbol) => symbol.endsWith('.P');
@@ -60,7 +70,6 @@ export const useBinanceTickers = (symbols = []) => {
         };
 
         // Initial Start
-        console.log('[perf] useBinanceTickers startLoop at', Date.now());
         startLoop();
 
         // Handle Background/Foreground

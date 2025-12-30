@@ -15,7 +15,6 @@ import './App.css';
 import { App as CapacitorApp } from '@capacitor/app';
 
 function HomePage() {
-  console.log('[perf] HomePage mount at', Date.now());
   const navigate = useNavigate();
   const [symbols, setSymbols] = useState(getSymbols());
   const [showSettings, setShowSettings] = useState(false);
@@ -67,6 +66,13 @@ function HomePage() {
       listener.then(remove => remove.remove());
     };
   }, [showSettings, alertModalSymbol, isEditMode]);
+
+  useEffect(() => {
+    console.log('[perf] HomePage mount at', Date.now());
+    return () => {
+      console.log('[perf] HomePage unmount at', Date.now());
+    };
+  }, []);
 
   // Start native data service and sync alerts on mount (for Android)
   useEffect(() => {
