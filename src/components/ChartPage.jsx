@@ -229,14 +229,21 @@ export default function ChartPage() {
     const openIndicatorMenu = (rect, focus) => {
         const menuWidth = 160;
         const padding = 8;
+        const itemCount = focus === 'sub' ? 4 : MAIN_INDICATOR_TYPES.length;
+        const estimatedHeight = 12 + itemCount * 34 + 16;
+        const topSpace = rect.top;
+        const bottomSpace = window.innerHeight - rect.bottom;
+        const shouldOpenUp = topSpace >= estimatedHeight || topSpace >= bottomSpace;
+
         const desiredLeft = rect.left + (rect.width / 2) - (menuWidth / 2);
         const maxLeft = Math.max(padding, window.innerWidth - menuWidth - padding);
         const left = Math.min(Math.max(desiredLeft, padding), maxLeft);
+
         setIndicatorMenuFocus(focus);
         setSubMenuPos({
             left,
-            y: rect.top - 10, // Position above the button
-            isBottom: true,
+            y: shouldOpenUp ? rect.top - 10 : rect.bottom + 10,
+            isBottom: shouldOpenUp,
             width: menuWidth
         });
         setShowSubMenu(true);
@@ -2955,7 +2962,8 @@ export default function ChartPage() {
                     transform: 'none',
                     background: '#1e222d', border: '1px solid #2a2e39', borderRadius: '10px',
                     padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px',
-                    boxShadow: '0 4px 12px rgba(0,0,0,0.5)', zIndex: 9999, minWidth: subMenuPos.width || 140
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.5)', zIndex: 9999,
+                    minWidth: subMenuPos.width || 140, maxHeight: '60vh', overflowY: 'auto'
                 }} onClick={(e) => e.stopPropagation()}>
                     {indicatorMenuFocus === 'sub' ? (
                         <>
