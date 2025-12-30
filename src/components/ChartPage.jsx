@@ -2873,19 +2873,21 @@ export default function ChartPage() {
                     <button className={mainIndicatorType !== 'MA' ? 'active' : ''}
                         onClick={(e) => {
                             e.stopPropagation();
-                            setIndicatorMenuFocus('main');
-                            if (showSubMenu) {
+                            const nextFocus = 'main';
+                            const isSameFocus = indicatorMenuFocus === nextFocus;
+                            if (showSubMenu && isSameFocus) {
                                 setShowSubMenu(false);
-                            } else {
-                                const rect = e.currentTarget.getBoundingClientRect();
-                                // User request: Always open UPWARDS
-                                setSubMenuPos({
-                                    x: rect.left + (rect.width / 2),
-                                    y: rect.top - 10, // Position above the button
-                                    isBottom: true // Force 'bottom' calculation logic in render
-                                });
-                                setShowSubMenu(true);
+                                return;
                             }
+                            setIndicatorMenuFocus(nextFocus);
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            // User request: Always open UPWARDS
+                            setSubMenuPos({
+                                x: rect.left + (rect.width / 2),
+                                y: rect.top - 10, // Position above the button
+                                isBottom: true // Force 'bottom' calculation logic in render
+                            });
+                            setShowSubMenu(true);
                         }}
                         style={{ fontSize: '13px', fontWeight: 'bold' }}>
                         {mainIndicatorLabel}
@@ -2895,19 +2897,21 @@ export default function ChartPage() {
                     <button className={subIndicator !== 'NONE' ? 'active' : ''}
                         onClick={(e) => {
                             e.stopPropagation();
-                            setIndicatorMenuFocus('sub');
-                            if (showSubMenu) {
+                            const nextFocus = 'sub';
+                            const isSameFocus = indicatorMenuFocus === nextFocus;
+                            if (showSubMenu && isSameFocus) {
                                 setShowSubMenu(false);
-                            } else {
-                                const rect = e.currentTarget.getBoundingClientRect();
-                                // User request: Always open UPWARDS
-                                setSubMenuPos({
-                                    x: rect.left + (rect.width / 2),
-                                    y: rect.top - 10, // Position above the button
-                                    isBottom: true // Force 'bottom' calculation logic in render
-                                });
-                                setShowSubMenu(true);
+                                return;
                             }
+                            setIndicatorMenuFocus(nextFocus);
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            // User request: Always open UPWARDS
+                            setSubMenuPos({
+                                x: rect.left + (rect.width / 2),
+                                y: rect.top - 10, // Position above the button
+                                isBottom: true // Force 'bottom' calculation logic in render
+                            });
+                            setShowSubMenu(true);
                         }}
                         style={{ fontSize: '13px', fontWeight: 'bold' }}>
                         {subIndicator !== 'NONE' ? subIndicator : (
@@ -2947,11 +2951,11 @@ export default function ChartPage() {
                     transform: 'translateX(-50%)',
                     background: '#1e222d', border: '1px solid #2a2e39', borderRadius: '10px',
                     padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px',
-                    boxShadow: '0 4px 12px rgba(0,0,0,0.5)', zIndex: 9999, minWidth: '220px'
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.5)', zIndex: 9999, minWidth: '140px'
                 }} onClick={(e) => e.stopPropagation()}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                        <div style={{ borderRight: '1px solid #2a2e39', paddingRight: 8 }}>
-                            <div style={{ fontSize: 11, color: indicatorMenuFocus === 'sub' ? '#fcd535' : '#888', marginBottom: 6 }}>附图指标</div>
+                    {indicatorMenuFocus === 'sub' ? (
+                        <>
+                            <div style={{ fontSize: 11, color: '#fcd535', marginBottom: 6 }}>附图指标</div>
                             {['NONE', 'RSI', 'MACD', 'KDJ'].map(type => (
                                 <button key={type}
                                     onClick={(e) => { e.stopPropagation(); setSubIndicator(type); setShowSubMenu(false); }}
@@ -2963,9 +2967,10 @@ export default function ChartPage() {
                                     {type === 'NONE' ? '无' : type}
                                 </button>
                             ))}
-                        </div>
-                        <div style={{ paddingLeft: 4 }}>
-                            <div style={{ fontSize: 11, color: indicatorMenuFocus === 'main' ? '#fcd535' : '#888', marginBottom: 6 }}>主图指标</div>
+                        </>
+                    ) : (
+                        <>
+                            <div style={{ fontSize: 11, color: '#fcd535', marginBottom: 6 }}>主图指标</div>
                             {MAIN_INDICATOR_TYPES.map(type => (
                                 <button key={type}
                                     onClick={(e) => { e.stopPropagation(); applyMainIndicatorType(type); setShowSubMenu(false); }}
@@ -2977,8 +2982,8 @@ export default function ChartPage() {
                                     {type === 'VEGAS' ? 'Vegas' : type}
                                 </button>
                             ))}
-                        </div>
-                    </div>
+                        </>
+                    )}
                 </div>
             )}
 
