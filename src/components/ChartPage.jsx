@@ -5,11 +5,13 @@ import { Capacitor } from '@capacitor/core';
 import { createChart, CandlestickSeries, LineSeries, HistogramSeries } from 'lightweight-charts';
 import { getSymbols } from '../utils/storage';
 import { useBinanceTickers } from '../hooks/useBinanceTickers';
+import { DrawingPrimitive } from '../utils/drawingPrimitive';
 import { perfLog } from '../utils/perfLogger';
 import '../App.css';
 
 const DRAW_MODES = { NONE: 'none', TRENDLINE: 'trendline', CHANNEL: 'channel', RECT: 'rect', HLINE: 'hline', FIB: 'fib' };
 const MAIN_INDICATOR_TYPES = ['NONE', 'MA', 'EMA', 'SMA', 'VEGAS'];
+const USE_DRAWING_PRIMITIVES = true;
 const FIB_RATIOS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.382, 1.618, 2.618, 3.618];
 const LABEL_PREFIX = { hline: 'h', trendline: 't', rect: 'r', channel: 'c', fib: 'f' };
 
@@ -271,6 +273,7 @@ export default function ChartPage() {
     const [legendValues, setLegendValues] = useState({});
     const [customCrosshair, setCustomCrosshair] = useState(null); // { x, y } for long-press crosshair
     const screenDrawingsRef = useRef([]);
+    const drawingPrimitiveRef = useRef(null);
 
     const drawModeRef = useRef(DRAW_MODES.NONE);
 
@@ -918,6 +921,12 @@ export default function ChartPage() {
         chartRef.current = chart;
         seriesRef.current = series;
 
+        if (USE_DRAWING_PRIMITIVES) {
+            const primitive = new DrawingPrimitive();
+            drawingPrimitiveRef.current = primitive;
+            series.attachPrimitive(primitive);
+        }
+
         // Crosshair move - update active point position & legend
         chart.subscribeCrosshairMove((p) => {
             if (!p.point) { setCursor(null); setLegendValues({}); return; }
@@ -962,7 +971,14 @@ export default function ChartPage() {
             }
         };
         window.addEventListener('resize', resize);
-        return () => { window.removeEventListener('resize', resize); chart.remove(); };
+        return () => {
+            if (USE_DRAWING_PRIMITIVES && drawingPrimitiveRef.current) {
+                try { series.detachPrimitive(drawingPrimitiveRef.current); } catch (_) { }
+                drawingPrimitiveRef.current = null;
+            }
+            window.removeEventListener('resize', resize);
+            chart.remove();
+        };
     }, []);
 
     // Disable native crosshair completely - we'll implement our own
@@ -1516,6 +1532,9 @@ export default function ChartPage() {
         if (drawings.length) localStorage.setItem(`chart_drawings_${symbol}`, JSON.stringify(drawings));
         else localStorage.removeItem(`chart_drawings_${symbol}`);
         screenDrawingsRef.current = screenDrawings;
+        if (USE_DRAWING_PRIMITIVES && drawingPrimitiveRef.current) {
+            drawingPrimitiveRef.current.setDrawings(screenDrawingsRef.current);
+        }
     }, [drawings, symbol, screenDrawings]);
     // Load effect removed (Handled by lazy init + key remount)
 
