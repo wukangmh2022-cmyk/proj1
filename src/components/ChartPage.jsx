@@ -9,6 +9,7 @@ import { perfLog } from '../utils/perfLogger';
 import '../App.css';
 
 const DRAW_MODES = { NONE: 'none', TRENDLINE: 'trendline', CHANNEL: 'channel', RECT: 'rect', HLINE: 'hline', FIB: 'fib' };
+const MAIN_INDICATOR_TYPES = ['MA', 'EMA', 'SMA', 'VEGAS'];
 const FIB_RATIOS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.382, 1.618, 2.618, 3.618];
 const LABEL_PREFIX = { hline: 'h', trendline: 't', rect: 'r', channel: 'c', fib: 'f' };
 
@@ -144,6 +145,7 @@ export default function ChartPage() {
         ma1: { name: 'MA', period: 7, color: '#fcd535', width: 1, visible: true },
         ma2: { name: 'MA', period: 25, color: '#ff9f43', width: 1, visible: true },
         ma3: { name: 'MA', period: 99, color: '#a855f7', width: 1, visible: true },
+        ma4: { name: 'MA', period: 200, color: '#00d68f', width: 1, visible: false },
         vol: { name: 'VOL', period: 20, color: '#26a69a', downColor: '#ef5350', visible: true },
     };
     const [indicators, setIndicators] = useState(() => {
@@ -152,12 +154,77 @@ export default function ChartPage() {
     });
     const indicatorsRef = useRef(indicators); // Sync ref for callbacks
 
+    const [mainIndicatorType, setMainIndicatorType] = useState(() => {
+        const saved = localStorage.getItem(`chart_mainIndicatorType_${symbol}`);
+        return MAIN_INDICATOR_TYPES.includes(saved) ? saved : 'MA';
+    });
+
     const [subIndicator, setSubIndicator] = useState(() => {
         const saved = localStorage.getItem(`chart_subIndicator_${symbol}`);
         return saved || 'NONE';
     }); // NONE, RSI, MACD, KDJ
     const [showSubMenu, setShowSubMenu] = useState(false);
+    const [indicatorMenuFocus, setIndicatorMenuFocus] = useState('sub');
     const subSeriesRefs = useRef({}); // To store sub-chart series objects
+
+    const DEFAULT_SUB_INDICATOR_CONFIG = {
+        RSI: { period: 14, color: '#a855f7', width: 2 },
+        MACD: {
+            fast: 12,
+            slow: 26,
+            signal: 9,
+            diffColor: '#fcd535',
+            deaColor: '#ff9f43',
+            histUp: '#26a69a',
+            histDown: '#ef5350'
+        },
+        KDJ: { period: 9, m1: 3, m2: 3, kColor: '#ffffff', dColor: '#fcd535', jColor: '#a855f7' }
+    };
+
+    const normalizeSubIndicatorConfig = (savedRaw) => {
+        if (!savedRaw || typeof savedRaw !== 'object') return DEFAULT_SUB_INDICATOR_CONFIG;
+        return {
+            RSI: { ...DEFAULT_SUB_INDICATOR_CONFIG.RSI, ...(savedRaw.RSI || {}) },
+            MACD: { ...DEFAULT_SUB_INDICATOR_CONFIG.MACD, ...(savedRaw.MACD || {}) },
+            KDJ: { ...DEFAULT_SUB_INDICATOR_CONFIG.KDJ, ...(savedRaw.KDJ || {}) }
+        };
+    };
+
+    const [subIndicatorConfig, setSubIndicatorConfig] = useState(() => {
+        const saved = localStorage.getItem(`chart_subIndicatorConfig_${symbol}`);
+        return normalizeSubIndicatorConfig(saved ? JSON.parse(saved) : null);
+    });
+
+    const maKeys = ['ma1', 'ma2', 'ma3', 'ma4'];
+    const maLines = maKeys.map(key => ({ key, ...(indicators[key] || {}) })).filter(line => line.period);
+    const visibleMaLines = maLines.filter(line => line.visible !== false);
+    const mainIndicatorLabel = mainIndicatorType === 'VEGAS' ? 'VEGAS' : mainIndicatorType;
+    const getSubIndicatorLabel = () => {
+        if (subIndicator === 'NONE') return '';
+        if (subIndicator === 'RSI') return `RSI(${subIndicatorConfig.RSI.period})`;
+        if (subIndicator === 'MACD') {
+            const cfg = subIndicatorConfig.MACD;
+            return `MACD(${cfg.fast},${cfg.slow},${cfg.signal})`;
+        }
+        if (subIndicator === 'KDJ') {
+            const cfg = subIndicatorConfig.KDJ;
+            return `KDJ(${cfg.period},${cfg.m1},${cfg.m2})`;
+        }
+        return subIndicator;
+    };
+
+    const applyMainIndicatorType = (type) => {
+        if (!MAIN_INDICATOR_TYPES.includes(type)) return;
+        setMainIndicatorType(type);
+        if (type !== 'VEGAS') return;
+        setIndicators(prev => ({
+            ...prev,
+            ma1: { ...prev.ma1, period: 12, visible: true },
+            ma2: { ...prev.ma2, period: 144, visible: true },
+            ma3: { ...prev.ma3, period: 169, visible: true },
+            ma4: { ...prev.ma4, period: prev.ma4?.period || 200, visible: false }
+        }));
+    };
 
     // Save indicators when changed
     useEffect(() => {
@@ -165,6 +232,11 @@ export default function ChartPage() {
         localStorage.setItem(`chart_indicators_v2_${symbol}`, JSON.stringify(indicators));
         if (allDataRef.current.length > 0) updateIndicators(allDataRef.current);
     }, [indicators, symbol]);
+
+    useEffect(() => {
+        localStorage.setItem(`chart_mainIndicatorType_${symbol}`, mainIndicatorType);
+        if (allDataRef.current.length > 0) updateIndicators(allDataRef.current);
+    }, [mainIndicatorType, symbol]);
 
     // Drawing state: pendingPoints = confirmed points, activePoint = point being positioned
     const [pendingPoints, setPendingPoints] = useState([]);
@@ -579,7 +651,7 @@ export default function ChartPage() {
     // Recalculate indicators on state change
     useEffect(() => {
         if (allDataRef.current.length > 0) updateIndicators(allDataRef.current);
-    }, [indicators]);
+    }, [indicators, mainIndicatorType, subIndicatorConfig]);
 
     const updateScreenDrawings = useCallback(() => {
         if (!allDataRef.current.length) return;
@@ -783,31 +855,34 @@ export default function ChartPage() {
         });
 
         // Add Indicator Series
-        Object.entries(indicators).forEach(([key, cfg]) => {
-            let s;
-            if (key === 'vol') {
-                s = chart.addSeries(HistogramSeries, {
-                    color: cfg.color,
-                    priceFormat: { type: 'volume' },
-                    priceScaleId: 'vol',
-                    visible: cfg.visible,
-                });
-                chart.priceScale('vol').applyOptions({
-                    scaleMargins: { top: 0.8, bottom: 0 },
-                    borderVisible: false,
-                });
-            } else {
-                s = chart.addSeries(LineSeries, {
-                    color: cfg.color,
-                    lineWidth: cfg.width,
-                    visible: cfg.visible,
-                    crosshairMarkerVisible: false,
-                    priceLineVisible: false,
-                    lastValueVisible: false
-                });
-            }
+        maKeys.forEach((key) => {
+            const cfg = indicators[key];
+            if (!cfg) return;
+            const s = chart.addSeries(LineSeries, {
+                color: cfg.color,
+                lineWidth: cfg.width,
+                visible: cfg.visible,
+                crosshairMarkerVisible: false,
+                priceLineVisible: false,
+                lastValueVisible: false
+            });
             maSeriesRefs.current[key] = s;
         });
+
+        if (indicators.vol) {
+            const cfg = indicators.vol;
+            const s = chart.addSeries(HistogramSeries, {
+                color: cfg.color,
+                priceFormat: { type: 'volume' },
+                priceScaleId: 'vol',
+                visible: cfg.visible,
+            });
+            chart.priceScale('vol').applyOptions({
+                scaleMargins: { top: 0.8, bottom: 0 },
+                borderVisible: false,
+            });
+            maSeriesRefs.current.vol = s;
+        }
 
         // Initialize Sub-Indicator Series if any (should be NONE initially but good for hot reload)
         // Actually, we'll handle sub-indicator changes in a separate useEffect or inside updateIndicators
@@ -889,6 +964,18 @@ export default function ChartPage() {
         return result;
     };
 
+    const calEMA = (data, period) => {
+        if (!data.length) return [];
+        const k = 2 / (period + 1);
+        let last = data[0].close;
+        const result = [];
+        data.forEach((d, i) => {
+            last = d.close * k + last * (1 - k);
+            if (i >= period - 1) result.push({ time: d.time, value: last });
+        });
+        return result;
+    };
+
     const calRSI = (data, period = 14) => {
         let result = [];
         let gains = 0, losses = 0;
@@ -922,7 +1009,7 @@ export default function ChartPage() {
         return result;
     };
 
-    const calMACD = (data, fast = 12, slow = 26, signal = 9) => {
+    const calMACD = (data, fast = 12, slow = 26, signal = 9, histUp = '#26a69a', histDown = '#ef5350') => {
         // EMA helper
         const ema = (src, p) => {
             const k = 2 / (p + 1);
@@ -965,7 +1052,7 @@ export default function ChartPage() {
 
             diff.push({ time: d.time, value: df });
             dea.push({ time: d.time, value: lastDea });
-            hist.push({ time: d.time, value: h, color: h >= 0 ? '#26a69a' : '#ef5350' });
+            hist.push({ time: d.time, value: h, color: h >= 0 ? histUp : histDown });
         });
 
         return { diff, dea, hist };
@@ -1013,22 +1100,25 @@ export default function ChartPage() {
         //     return res.filter(x => !isNaN(x.value));
         // };
 
+        const useEma = mainIndicatorType === 'EMA' || mainIndicatorType === 'VEGAS';
+        const maCalculator = useEma ? calEMA : calSMA;
+
         Object.entries(indicatorsRef.current).forEach(([key, cfg]) => {
-            if (maSeriesRefs.current[key]) {
-                const s = maSeriesRefs.current[key];
-                if (key === 'vol') {
-                    s.applyOptions({ visible: cfg.visible });
-                    const volData = data.map(d => ({
-                        time: d.time,
-                        value: d.volume,
-                        color: d.close >= d.open ? '#26a69a' : '#ef5350'
-                    }));
-                    s.setData(volData);
-                } else {
-                    s.applyOptions({ color: cfg.color, lineWidth: cfg.width, visible: cfg.visible });
-                    s.setData(calSMA(data, cfg.period));
-                }
+            if (!maSeriesRefs.current[key]) return;
+            const s = maSeriesRefs.current[key];
+            if (key === 'vol') {
+                s.applyOptions({ visible: cfg.visible });
+                const volData = data.map(d => ({
+                    time: d.time,
+                    value: d.volume,
+                    color: d.close >= d.open ? '#26a69a' : '#ef5350'
+                }));
+                s.setData(volData);
+                return;
             }
+
+            s.applyOptions({ color: cfg.color, lineWidth: cfg.width, visible: cfg.visible });
+            s.setData(maCalculator(data, cfg.period));
         });
 
         // Update Sub Indicator
@@ -1043,14 +1133,23 @@ export default function ChartPage() {
             // But we need data to push.
 
             if (subIndicator === 'RSI' && subSeriesRefs.current.rsi) {
-                subSeriesRefs.current.rsi.setData(calRSI(data));
+                const cfg = subIndicatorConfig.RSI;
+                subSeriesRefs.current.rsi.applyOptions({ color: cfg.color, lineWidth: cfg.width });
+                subSeriesRefs.current.rsi.setData(calRSI(data, cfg.period));
             } else if (subIndicator === 'MACD' && subSeriesRefs.current.hist) {
-                const m = calMACD(data);
+                const cfg = subIndicatorConfig.MACD;
+                const m = calMACD(data, cfg.fast, cfg.slow, cfg.signal, cfg.histUp, cfg.histDown);
+                subSeriesRefs.current.diff.applyOptions({ color: cfg.diffColor });
+                subSeriesRefs.current.dea.applyOptions({ color: cfg.deaColor });
                 subSeriesRefs.current.diff.setData(m.diff);
                 subSeriesRefs.current.dea.setData(m.dea);
                 subSeriesRefs.current.hist.setData(m.hist);
             } else if (subIndicator === 'KDJ' && subSeriesRefs.current.k) {
-                const k = calKDJ(data);
+                const cfg = subIndicatorConfig.KDJ;
+                const k = calKDJ(data, cfg.period, cfg.m1, cfg.m2);
+                subSeriesRefs.current.k.applyOptions({ color: cfg.kColor });
+                subSeriesRefs.current.d.applyOptions({ color: cfg.dColor });
+                subSeriesRefs.current.j.applyOptions({ color: cfg.jColor });
                 subSeriesRefs.current.k.setData(k.k);
                 subSeriesRefs.current.d.setData(k.d);
                 subSeriesRefs.current.j.setData(k.j);
@@ -1079,7 +1178,8 @@ export default function ChartPage() {
             // Vol occupies 55%-70% (middle band)
             chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.55, bottom: 0.30 } });
 
-            const s = chart.addSeries(LineSeries, { color: '#a855f7', lineWidth: 2, priceScaleId: 'sub' });
+            const cfg = subIndicatorConfig.RSI;
+            const s = chart.addSeries(LineSeries, { color: cfg.color, lineWidth: cfg.width, priceScaleId: 'sub' });
             subSeriesRefs.current = { rsi: s };
             // Sub Chart occupies bottom 25%
             chart.priceScale('sub').applyOptions({ scaleMargins: { top: 0.75, bottom: 0 }, position: 'left' });
@@ -1089,8 +1189,9 @@ export default function ChartPage() {
             chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.55, bottom: 0.30 } });
 
             const h = chart.addSeries(HistogramSeries, { priceScaleId: 'sub' });
-            const diff = chart.addSeries(LineSeries, { color: '#fcd535', lineWidth: 1, priceScaleId: 'sub' });
-            const dea = chart.addSeries(LineSeries, { color: '#ff9f43', lineWidth: 1, priceScaleId: 'sub' });
+            const cfg = subIndicatorConfig.MACD;
+            const diff = chart.addSeries(LineSeries, { color: cfg.diffColor, lineWidth: 1, priceScaleId: 'sub' });
+            const dea = chart.addSeries(LineSeries, { color: cfg.deaColor, lineWidth: 1, priceScaleId: 'sub' });
             subSeriesRefs.current = { hist: h, diff, dea };
             chart.priceScale('sub').applyOptions({ scaleMargins: { top: 0.75, bottom: 0 }, position: 'left' });
 
@@ -1098,9 +1199,10 @@ export default function ChartPage() {
             chart.priceScale('right').applyOptions({ scaleMargins: { top: 0.05, bottom: 0.45 } });
             chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.55, bottom: 0.30 } });
 
-            const k = chart.addSeries(LineSeries, { color: '#ffffff', lineWidth: 1, priceScaleId: 'sub' });
-            const d = chart.addSeries(LineSeries, { color: '#fcd535', lineWidth: 1, priceScaleId: 'sub' });
-            const j = chart.addSeries(LineSeries, { color: '#a855f7', lineWidth: 1, priceScaleId: 'sub' });
+            const cfg = subIndicatorConfig.KDJ;
+            const k = chart.addSeries(LineSeries, { color: cfg.kColor, lineWidth: 1, priceScaleId: 'sub' });
+            const d = chart.addSeries(LineSeries, { color: cfg.dColor, lineWidth: 1, priceScaleId: 'sub' });
+            const j = chart.addSeries(LineSeries, { color: cfg.jColor, lineWidth: 1, priceScaleId: 'sub' });
             subSeriesRefs.current = { k, d, j };
             chart.priceScale('sub').applyOptions({ scaleMargins: { top: 0.75, bottom: 0 }, position: 'left' });
 
@@ -1115,12 +1217,17 @@ export default function ChartPage() {
             updateIndicators(allDataRef.current);
         }
 
-    }, [subIndicator]);
+    }, [subIndicator, subIndicatorConfig]);
 
     // Persist subIndicator
     useEffect(() => {
         localStorage.setItem(`chart_subIndicator_${symbol}`, subIndicator);
     }, [subIndicator, symbol]);
+
+    useEffect(() => {
+        localStorage.setItem(`chart_subIndicatorConfig_${symbol}`, JSON.stringify(subIndicatorConfig));
+        if (allDataRef.current.length > 0) updateIndicators(allDataRef.current);
+    }, [subIndicatorConfig, symbol]);
 
     // Resume Data Gap Fill logic removed as per user request (handled by backend/other commit)
 
@@ -1878,48 +1985,133 @@ export default function ChartPage() {
                 }}>
 
                 {/* Legend */}
-                <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 30, display: 'flex', gap: '10px', fontSize: '12px', fontFamily: 'monospace', flexWrap: 'wrap' }}>
-                    {Object.entries(indicators).map(([key, cfg]) => (
-                        <div key={key}
-                            style={{ color: cfg.visible ? cfg.color : '#555', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 30, display: 'flex', gap: '12px', fontSize: '12px', fontFamily: 'monospace', flexWrap: 'wrap' }}>
+                    <div
+                        style={{ color: '#d1d5db', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            setMenu({
+                                type: 'main_indicator',
+                                id: 'ma',
+                                x: rect.left,
+                                y: rect.bottom + 5,
+                                data: { type: mainIndicatorType }
+                            });
+                        }}>
+                        <span style={{ fontWeight: 'bold' }}>{mainIndicatorLabel}</span>
+                        {visibleMaLines.length === 0 && <span style={{ fontSize: '10px', opacity: 0.6 }}>OFF</span>}
+                        {visibleMaLines.map((line) => (
+                            <span key={line.key} style={{ color: line.color }}>
+                                {line.period}
+                                {legendValues[line.key] !== undefined && `:${legendValues[line.key].toFixed(2)}`}
+                            </span>
+                        ))}
+                    </div>
+
+                    {indicators.vol && (
+                        <div
+                            style={{ color: indicators.vol.visible ? indicators.vol.color : '#555', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
                             onClick={(e) => {
                                 e.stopPropagation();
                                 const rect = e.currentTarget.getBoundingClientRect();
                                 setMenu({
                                     type: 'indicator',
-                                    id: key,
+                                    id: 'vol',
                                     x: rect.left,
                                     y: rect.bottom + 5,
-                                    data: cfg
+                                    data: indicators.vol
                                 });
                             }}>
-                            <span style={{ marginRight: 4 }}>{cfg.name}{cfg.period}</span>
-                            {cfg.visible && legendValues[key] !== undefined && <span>{legendValues[key].toFixed(2)}</span>}
-                            {!cfg.visible && <span style={{ fontSize: '10px', opacity: 0.5 }}>OFF</span>}
+                            <span style={{ marginRight: 4 }}>VOL</span>
+                            {indicators.vol.visible && legendValues.vol !== undefined && <span>{legendValues.vol.toFixed(0)}</span>}
+                            {!indicators.vol.visible && <span style={{ fontSize: '10px', opacity: 0.5 }}>OFF</span>}
                         </div>
-                    ))}
-                    <div style={{ color: '#888', cursor: 'pointer' }} onClick={() => alert('Add Indicator feature coming soon')}>+</div>
+                    )}
                 </div>
+
+                {subIndicator !== 'NONE' && (
+                    <div
+                        style={{
+                            position: 'absolute',
+                            left: 10,
+                            top: '76%',
+                            zIndex: 30,
+                            fontSize: '12px',
+                            fontFamily: 'monospace',
+                            color: '#d1d5db',
+                            cursor: 'pointer'
+                        }}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            setMenu({
+                                type: 'sub_indicator',
+                                id: subIndicator,
+                                x: rect.left,
+                                y: rect.bottom + 5,
+                                data: { type: subIndicator }
+                            });
+                        }}>
+                        {getSubIndicatorLabel()}
+                    </div>
+                )}
 
                 {/* Config Menu */}
                 {menu && (() => {
                     // Render Mini Toolbar or Settings Modal
                     const isSettings = menu.type.includes('_settings');
-                    const isIndicator = menu.type.startsWith('indicator');
+                    const isMainIndicator = menu.type.startsWith('main_indicator');
+                    const isSubIndicator = menu.type.startsWith('sub_indicator');
+                    const isVolumeIndicator = menu.type === 'indicator' || menu.type === 'indicator_settings';
+                    const isIndicator = isMainIndicator || isSubIndicator || isVolumeIndicator;
                     const targetId = menu.id;
+                    const colorChoices = ['#fcd535', '#ff9f43', '#a855f7', '#00d68f', '#ff4757', '#3b82f6', '#ffffff'];
 
                     // Common Actions
                     const close = () => { setMenu(null); setSelectedId(null); };
                     const del = () => {
-                        if (isIndicator) setIndicators(p => ({ ...p, [targetId]: { ...p[targetId], visible: false } }));
-                        else setDrawings(p => p.filter(d => d.id !== targetId));
+                        if (isMainIndicator) {
+                            setIndicators(p => {
+                                const next = { ...p };
+                                maKeys.forEach(k => {
+                                    if (next[k]) next[k] = { ...next[k], visible: false };
+                                });
+                                return next;
+                            });
+                        } else if (isSubIndicator) {
+                            setSubIndicator('NONE');
+                        } else if (isVolumeIndicator) {
+                            setIndicators(p => ({ ...p, [targetId]: { ...p[targetId], visible: false } }));
+                        } else {
+                            setDrawings(p => p.filter(d => d.id !== targetId));
+                        }
                         close();
                     };
                     const toggleVis = () => {
-                        if (isIndicator) setIndicators(p => ({ ...p, [targetId]: { ...p[targetId], visible: !p[targetId].visible } }));
-                        else setDrawings(p => p.map(d => d.id === targetId ? { ...d, visible: !(d.visible !== false) } : d));
+                        if (isMainIndicator) {
+                            setIndicators(p => {
+                                const next = { ...p };
+                                const anyVisible = maKeys.some(k => next[k]?.visible !== false);
+                                maKeys.forEach(k => {
+                                    if (next[k]) next[k] = { ...next[k], visible: !anyVisible };
+                                });
+                                return next;
+                            });
+                        } else if (isSubIndicator) {
+                            setSubIndicator('NONE');
+                        } else if (isVolumeIndicator) {
+                            setIndicators(p => ({ ...p, [targetId]: { ...p[targetId], visible: !p[targetId].visible } }));
+                        } else {
+                            setDrawings(p => p.map(d => d.id === targetId ? { ...d, visible: !(d.visible !== false) } : d));
+                        }
                     };
-                    const openSettings = () => setMenu({ ...menu, type: isIndicator ? 'indicator_settings' : 'drawing_settings' });
+                    const openSettings = () => {
+                        if (isMainIndicator) setMenu({ ...menu, type: 'main_indicator_settings' });
+                        else if (isSubIndicator) setMenu({ ...menu, type: 'sub_indicator_settings' });
+                        else if (isVolumeIndicator) setMenu({ ...menu, type: 'indicator_settings' });
+                        else setMenu({ ...menu, type: 'drawing_settings' });
+                    };
 
                     if (isSettings) {
                         // Centered Modal
@@ -1935,31 +2127,294 @@ export default function ChartPage() {
                                 }} onClick={e => e.stopPropagation()}>
                                     <h3 style={{ margin: 0, color: '#fff', fontSize: '16px' }}>设置</h3>
 
-                                    {isIndicator ? (
+                                    {isMainIndicator ? (
                                         <>
                                             <div className="menu-row">
-                                                <label>周期</label>
-                                                <input type="number" value={indicators[targetId].period}
-                                                    onChange={e => setIndicators(p => ({ ...p, [targetId]: { ...p[targetId], period: parseInt(e.target.value) || 7 } }))}
-                                                    style={{ width: 60, background: '#2a2e39', border: 'none', color: '#fff', padding: 8, borderRadius: 4 }} />
-                                            </div>
-                                            <div className="menu-row">
-                                                <label>颜色</label>
+                                                <label>主图指标</label>
                                                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                                    {['#fcd535', '#ff9f43', '#a855f7', '#00d68f', '#ff4757', '#3b82f6'].map(c => (
-                                                        <div key={c} onClick={() => setIndicators(p => ({ ...p, [targetId]: { ...p[targetId], color: c } }))}
-                                                            style={{ width: 24, height: 24, borderRadius: '50%', background: c, border: indicators[targetId].color === c ? '2px solid #fff' : '2px solid transparent', cursor: 'pointer' }} />
+                                                    {MAIN_INDICATOR_TYPES.map(type => (
+                                                        <button
+                                                            key={type}
+                                                            onClick={() => applyMainIndicatorType(type)}
+                                                            style={{
+                                                                background: mainIndicatorType === type ? '#2a2e39' : 'transparent',
+                                                                border: '1px solid #444',
+                                                                color: mainIndicatorType === type ? '#fcd535' : '#ccc',
+                                                                padding: '6px 10px',
+                                                                borderRadius: 6,
+                                                                cursor: 'pointer',
+                                                                fontSize: 12
+                                                            }}>
+                                                            {type === 'VEGAS' ? 'Vegas' : type}
+                                                        </button>
                                                     ))}
                                                 </div>
                                             </div>
-                                            <div className="menu-row">
-                                                <label>线宽</label>
-                                                <div style={{ display: 'flex', gap: 8 }}>
-                                                    {[1, 2, 3, 4].map(w => (
-                                                        <div key={w} onClick={() => setIndicators(p => ({ ...p, [targetId]: { ...p[targetId], width: w } }))}
-                                                            style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', background: indicators[targetId].width === w ? '#2a2e39' : 'transparent', cursor: 'pointer', border: '1px solid #444', borderRadius: 4 }}>
-                                                            <div style={{ height: w, width: 20, background: '#888' }}></div>
+
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                                                {maLines.map((line, idx) => (
+                                                    <div key={line.key} style={{ background: '#2a2e39', padding: 10, borderRadius: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                                            <span style={{ color: '#ccc' }}>{mainIndicatorLabel}{idx + 1}</span>
+                                                            <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#aaa', fontSize: 12 }}>
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={line.visible !== false}
+                                                                    onChange={(e) => {
+                                                                        const checked = e.target.checked;
+                                                                        setIndicators(p => ({ ...p, [line.key]: { ...p[line.key], visible: checked } }));
+                                                                    }}
+                                                                />
+                                                                显示
+                                                            </label>
                                                         </div>
+                                                        <div className="menu-row">
+                                                            <label>周期</label>
+                                                            <input
+                                                                type="number"
+                                                                value={line.period}
+                                                                onChange={e => setIndicators(p => ({ ...p, [line.key]: { ...p[line.key], period: parseInt(e.target.value) || 7 } }))}
+                                                                style={{ width: 60, background: '#1e222d', border: '1px solid #444', color: '#fff', padding: 6, borderRadius: 4 }}
+                                                            />
+                                                        </div>
+                                                        <div className="menu-row">
+                                                            <label>颜色</label>
+                                                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                                                {colorChoices.map(c => (
+                                                                    <div
+                                                                        key={c}
+                                                                        onClick={() => setIndicators(p => ({ ...p, [line.key]: { ...p[line.key], color: c } }))}
+                                                                        style={{
+                                                                            width: 22,
+                                                                            height: 22,
+                                                                            borderRadius: '50%',
+                                                                            background: c,
+                                                                            border: line.color === c ? '2px solid #fff' : '2px solid transparent',
+                                                                            cursor: 'pointer'
+                                                                        }}
+                                                                    />
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                        <div className="menu-row">
+                                                            <label>线宽</label>
+                                                            <div style={{ display: 'flex', gap: 8 }}>
+                                                                {[1, 2, 3, 4].map(w => (
+                                                                    <div
+                                                                        key={w}
+                                                                        onClick={() => setIndicators(p => ({ ...p, [line.key]: { ...p[line.key], width: w } }))}
+                                                                        style={{
+                                                                            width: 32,
+                                                                            height: 28,
+                                                                            display: 'flex',
+                                                                            alignItems: 'center',
+                                                                            justifyContent: 'center',
+                                                                            background: line.width === w ? '#1e222d' : 'transparent',
+                                                                            cursor: 'pointer',
+                                                                            border: '1px solid #444',
+                                                                            borderRadius: 4
+                                                                        }}>
+                                                                        <div style={{ height: w, width: 18, background: '#888' }}></div>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </>
+                                    ) : isSubIndicator ? (
+                                        <>
+                                            {subIndicator === 'RSI' && (
+                                                <>
+                                                    <div className="menu-row">
+                                                        <label>周期</label>
+                                                        <input
+                                                            type="number"
+                                                            value={subIndicatorConfig.RSI.period}
+                                                            onChange={e => setSubIndicatorConfig(p => ({ ...p, RSI: { ...p.RSI, period: parseInt(e.target.value) || 14 } }))}
+                                                            style={{ width: 60, background: '#2a2e39', border: 'none', color: '#fff', padding: 8, borderRadius: 4 }}
+                                                        />
+                                                    </div>
+                                                    <div className="menu-row">
+                                                        <label>颜色</label>
+                                                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                                            {colorChoices.map(c => (
+                                                                <div
+                                                                    key={c}
+                                                                    onClick={() => setSubIndicatorConfig(p => ({ ...p, RSI: { ...p.RSI, color: c } }))}
+                                                                    style={{ width: 24, height: 24, borderRadius: '50%', background: c, border: subIndicatorConfig.RSI.color === c ? '2px solid #fff' : '2px solid transparent', cursor: 'pointer' }}
+                                                                />
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                    <div className="menu-row">
+                                                        <label>线宽</label>
+                                                        <div style={{ display: 'flex', gap: 8 }}>
+                                                            {[1, 2, 3, 4].map(w => (
+                                                                <div
+                                                                    key={w}
+                                                                    onClick={() => setSubIndicatorConfig(p => ({ ...p, RSI: { ...p.RSI, width: w } }))}
+                                                                    style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', background: subIndicatorConfig.RSI.width === w ? '#2a2e39' : 'transparent', cursor: 'pointer', border: '1px solid #444', borderRadius: 4 }}>
+                                                                    <div style={{ height: w, width: 20, background: '#888' }}></div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                </>
+                                            )}
+
+                                            {subIndicator === 'MACD' && (
+                                                <>
+                                                    <div className="menu-row">
+                                                        <label>参数</label>
+                                                        <div style={{ display: 'flex', gap: 8 }}>
+                                                            <input
+                                                                type="number"
+                                                                value={subIndicatorConfig.MACD.fast}
+                                                                onChange={e => setSubIndicatorConfig(p => ({ ...p, MACD: { ...p.MACD, fast: parseInt(e.target.value) || 12 } }))}
+                                                                style={{ width: 50, background: '#2a2e39', border: 'none', color: '#fff', padding: 6, borderRadius: 4 }}
+                                                            />
+                                                            <input
+                                                                type="number"
+                                                                value={subIndicatorConfig.MACD.slow}
+                                                                onChange={e => setSubIndicatorConfig(p => ({ ...p, MACD: { ...p.MACD, slow: parseInt(e.target.value) || 26 } }))}
+                                                                style={{ width: 50, background: '#2a2e39', border: 'none', color: '#fff', padding: 6, borderRadius: 4 }}
+                                                            />
+                                                            <input
+                                                                type="number"
+                                                                value={subIndicatorConfig.MACD.signal}
+                                                                onChange={e => setSubIndicatorConfig(p => ({ ...p, MACD: { ...p.MACD, signal: parseInt(e.target.value) || 9 } }))}
+                                                                style={{ width: 50, background: '#2a2e39', border: 'none', color: '#fff', padding: 6, borderRadius: 4 }}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                    <div className="menu-row">
+                                                        <label>DIFF</label>
+                                                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                                            {colorChoices.map(c => (
+                                                                <div
+                                                                    key={c}
+                                                                    onClick={() => setSubIndicatorConfig(p => ({ ...p, MACD: { ...p.MACD, diffColor: c } }))}
+                                                                    style={{ width: 22, height: 22, borderRadius: '50%', background: c, border: subIndicatorConfig.MACD.diffColor === c ? '2px solid #fff' : '2px solid transparent', cursor: 'pointer' }}
+                                                                />
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                    <div className="menu-row">
+                                                        <label>DEA</label>
+                                                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                                            {colorChoices.map(c => (
+                                                                <div
+                                                                    key={c}
+                                                                    onClick={() => setSubIndicatorConfig(p => ({ ...p, MACD: { ...p.MACD, deaColor: c } }))}
+                                                                    style={{ width: 22, height: 22, borderRadius: '50%', background: c, border: subIndicatorConfig.MACD.deaColor === c ? '2px solid #fff' : '2px solid transparent', cursor: 'pointer' }}
+                                                                />
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                    <div className="menu-row">
+                                                        <label>柱体+</label>
+                                                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                                            {colorChoices.map(c => (
+                                                                <div
+                                                                    key={c}
+                                                                    onClick={() => setSubIndicatorConfig(p => ({ ...p, MACD: { ...p.MACD, histUp: c } }))}
+                                                                    style={{ width: 22, height: 22, borderRadius: '50%', background: c, border: subIndicatorConfig.MACD.histUp === c ? '2px solid #fff' : '2px solid transparent', cursor: 'pointer' }}
+                                                                />
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                    <div className="menu-row">
+                                                        <label>柱体-</label>
+                                                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                                            {colorChoices.map(c => (
+                                                                <div
+                                                                    key={c}
+                                                                    onClick={() => setSubIndicatorConfig(p => ({ ...p, MACD: { ...p.MACD, histDown: c } }))}
+                                                                    style={{ width: 22, height: 22, borderRadius: '50%', background: c, border: subIndicatorConfig.MACD.histDown === c ? '2px solid #fff' : '2px solid transparent', cursor: 'pointer' }}
+                                                                />
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                </>
+                                            )}
+
+                                            {subIndicator === 'KDJ' && (
+                                                <>
+                                                    <div className="menu-row">
+                                                        <label>参数</label>
+                                                        <div style={{ display: 'flex', gap: 8 }}>
+                                                            <input
+                                                                type="number"
+                                                                value={subIndicatorConfig.KDJ.period}
+                                                                onChange={e => setSubIndicatorConfig(p => ({ ...p, KDJ: { ...p.KDJ, period: parseInt(e.target.value) || 9 } }))}
+                                                                style={{ width: 50, background: '#2a2e39', border: 'none', color: '#fff', padding: 6, borderRadius: 4 }}
+                                                            />
+                                                            <input
+                                                                type="number"
+                                                                value={subIndicatorConfig.KDJ.m1}
+                                                                onChange={e => setSubIndicatorConfig(p => ({ ...p, KDJ: { ...p.KDJ, m1: parseInt(e.target.value) || 3 } }))}
+                                                                style={{ width: 50, background: '#2a2e39', border: 'none', color: '#fff', padding: 6, borderRadius: 4 }}
+                                                            />
+                                                            <input
+                                                                type="number"
+                                                                value={subIndicatorConfig.KDJ.m2}
+                                                                onChange={e => setSubIndicatorConfig(p => ({ ...p, KDJ: { ...p.KDJ, m2: parseInt(e.target.value) || 3 } }))}
+                                                                style={{ width: 50, background: '#2a2e39', border: 'none', color: '#fff', padding: 6, borderRadius: 4 }}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                    <div className="menu-row">
+                                                        <label>K</label>
+                                                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                                            {colorChoices.map(c => (
+                                                                <div
+                                                                    key={c}
+                                                                    onClick={() => setSubIndicatorConfig(p => ({ ...p, KDJ: { ...p.KDJ, kColor: c } }))}
+                                                                    style={{ width: 22, height: 22, borderRadius: '50%', background: c, border: subIndicatorConfig.KDJ.kColor === c ? '2px solid #fff' : '2px solid transparent', cursor: 'pointer' }}
+                                                                />
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                    <div className="menu-row">
+                                                        <label>D</label>
+                                                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                                            {colorChoices.map(c => (
+                                                                <div
+                                                                    key={c}
+                                                                    onClick={() => setSubIndicatorConfig(p => ({ ...p, KDJ: { ...p.KDJ, dColor: c } }))}
+                                                                    style={{ width: 22, height: 22, borderRadius: '50%', background: c, border: subIndicatorConfig.KDJ.dColor === c ? '2px solid #fff' : '2px solid transparent', cursor: 'pointer' }}
+                                                                />
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                    <div className="menu-row">
+                                                        <label>J</label>
+                                                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                                            {colorChoices.map(c => (
+                                                                <div
+                                                                    key={c}
+                                                                    onClick={() => setSubIndicatorConfig(p => ({ ...p, KDJ: { ...p.KDJ, jColor: c } }))}
+                                                                    style={{ width: 22, height: 22, borderRadius: '50%', background: c, border: subIndicatorConfig.KDJ.jColor === c ? '2px solid #fff' : '2px solid transparent', cursor: 'pointer' }}
+                                                                />
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                </>
+                                            )}
+                                        </>
+                                    ) : isVolumeIndicator ? (
+                                        <>
+                                            <div className="menu-row">
+                                                <label>颜色</label>
+                                                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                                    {colorChoices.map(c => (
+                                                        <div
+                                                            key={c}
+                                                            onClick={() => setIndicators(p => ({ ...p, [targetId]: { ...p[targetId], color: c } }))}
+                                                            style={{ width: 24, height: 24, borderRadius: '50%', background: c, border: indicators[targetId].color === c ? '2px solid #fff' : '2px solid transparent', cursor: 'pointer' }}
+                                                        />
                                                     ))}
                                                 </div>
                                             </div>
@@ -2403,9 +2858,32 @@ export default function ChartPage() {
                 }}>
                 <style>{`.drawing-toolbar::-webkit-scrollbar { display: none; }`}</style>
                 <div style={{ position: 'relative' }}>
+                    <button className={mainIndicatorType !== 'MA' ? 'active' : ''}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            setIndicatorMenuFocus('main');
+                            if (showSubMenu) {
+                                setShowSubMenu(false);
+                            } else {
+                                const rect = e.currentTarget.getBoundingClientRect();
+                                // User request: Always open UPWARDS
+                                setSubMenuPos({
+                                    x: rect.left + (rect.width / 2),
+                                    y: rect.top - 10, // Position above the button
+                                    isBottom: true // Force 'bottom' calculation logic in render
+                                });
+                                setShowSubMenu(true);
+                            }
+                        }}
+                        style={{ fontSize: '13px', fontWeight: 'bold' }}>
+                        {mainIndicatorLabel}
+                    </button>
+                </div>
+                <div style={{ position: 'relative' }}>
                     <button className={subIndicator !== 'NONE' ? 'active' : ''}
                         onClick={(e) => {
                             e.stopPropagation();
+                            setIndicatorMenuFocus('sub');
                             if (showSubMenu) {
                                 setShowSubMenu(false);
                             } else {
@@ -2447,7 +2925,7 @@ export default function ChartPage() {
                 <button onClick={() => setShowAddMenu(true)} style={{ marginLeft: '8px', fontSize: '16px' }}>+</button>
             </div>
 
-            {/* Sub Indicator Menu (Fixed Global Position) */}
+            {/* Indicator Menu (Fixed Global Position) */}
             {showSubMenu && subMenuPos && (
                 <div style={{
                     position: 'fixed',
@@ -2455,21 +2933,40 @@ export default function ChartPage() {
                     bottom: subMenuPos.isBottom ? (window.innerHeight - subMenuPos.y) : 'auto',
                     left: subMenuPos.x,
                     transform: 'translateX(-50%)',
-                    background: '#1e222d', border: '1px solid #2a2e39', borderRadius: '8px',
-                    padding: '4px', display: 'flex', flexDirection: 'column', gap: '4px',
-                    boxShadow: '0 4px 12px rgba(0,0,0,0.5)', zIndex: 9999, minWidth: '80px'
+                    background: '#1e222d', border: '1px solid #2a2e39', borderRadius: '10px',
+                    padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.5)', zIndex: 9999, minWidth: '220px'
                 }} onClick={(e) => e.stopPropagation()}>
-                    {['NONE', 'RSI', 'MACD', 'KDJ'].map(type => (
-                        <button key={type}
-                            onClick={(e) => { e.stopPropagation(); setSubIndicator(type); setShowSubMenu(false); }}
-                            style={{
-                                background: subIndicator === type ? '#2a2e39' : 'transparent',
-                                border: 'none', color: subIndicator === type ? '#fcd535' : '#ccc',
-                                padding: '8px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', textAlign: 'left'
-                            }}>
-                            {type === 'NONE' ? '无' : type}
-                        </button>
-                    ))}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                        <div style={{ borderRight: '1px solid #2a2e39', paddingRight: 8 }}>
+                            <div style={{ fontSize: 11, color: indicatorMenuFocus === 'sub' ? '#fcd535' : '#888', marginBottom: 6 }}>附图指标</div>
+                            {['NONE', 'RSI', 'MACD', 'KDJ'].map(type => (
+                                <button key={type}
+                                    onClick={(e) => { e.stopPropagation(); setSubIndicator(type); setShowSubMenu(false); }}
+                                    style={{
+                                        background: subIndicator === type ? '#2a2e39' : 'transparent',
+                                        border: 'none', color: subIndicator === type ? '#fcd535' : '#ccc',
+                                        padding: '8px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', textAlign: 'left', width: '100%'
+                                    }}>
+                                    {type === 'NONE' ? '无' : type}
+                                </button>
+                            ))}
+                        </div>
+                        <div style={{ paddingLeft: 4 }}>
+                            <div style={{ fontSize: 11, color: indicatorMenuFocus === 'main' ? '#fcd535' : '#888', marginBottom: 6 }}>主图指标</div>
+                            {MAIN_INDICATOR_TYPES.map(type => (
+                                <button key={type}
+                                    onClick={(e) => { e.stopPropagation(); applyMainIndicatorType(type); setShowSubMenu(false); }}
+                                    style={{
+                                        background: mainIndicatorType === type ? '#2a2e39' : 'transparent',
+                                        border: 'none', color: mainIndicatorType === type ? '#fcd535' : '#ccc',
+                                        padding: '8px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', textAlign: 'left', width: '100%'
+                                    }}>
+                                    {type === 'VEGAS' ? 'Vegas' : type}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
                 </div>
             )}
 
