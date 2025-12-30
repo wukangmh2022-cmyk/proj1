@@ -16,7 +16,7 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override
-    protected void onResume() {
+    public void onResume() {
         super.onResume();
         long now = System.currentTimeMillis();
         Log.d(TAG, "onResume at " + now);
