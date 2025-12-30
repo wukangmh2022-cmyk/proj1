@@ -1572,7 +1572,7 @@ export default function ChartPage() {
     const saveRangeTimerRef = useRef(null); // For range persistence
     const isLongPressingRef = useRef(false);
     const toolbarRef = useRef(null); // For toolbar scroll
-    const toolbarDragRef = useRef({ isDragging: false, startX: 0, scrollLeft: 0 });
+    const toolbarDragRef = useRef({ isDragging: false, startX: 0, scrollLeft: 0, allowDrag: false });
     const intervalRef = useRef(null);
     const intervalDragRef = useRef({ isDragging: false, startX: 0, scrollLeft: 0, allowDrag: false });
     const startCoordRef = useRef({ x: 0, y: 0 });
@@ -2945,26 +2945,42 @@ export default function ChartPage() {
             <div className="drawing-toolbar"
                 ref={toolbarRef}
                 onPointerDown={(e) => {
-                    toolbarDragRef.current = { isDragging: false, startX: e.pageX, scrollLeft: e.currentTarget.scrollLeft };
-                    e.currentTarget.setPointerCapture(e.pointerId);
+                    const isButton = e.target.closest('button');
+                    toolbarDragRef.current = {
+                        isDragging: false,
+                        startX: e.pageX,
+                        scrollLeft: e.currentTarget.scrollLeft,
+                        allowDrag: !isButton
+                    };
+                    if (!isButton) e.currentTarget.setPointerCapture(e.pointerId);
                 }}
                 onPointerMove={(e) => {
                     if (e.pointerType === 'mouse' && e.buttons !== 1) return;
                     const drag = toolbarDragRef.current;
+                    if (!drag || !drag.allowDrag) return;
                     const walk = e.pageX - drag.startX;
-                    if (Math.abs(walk) > 5) drag.isDragging = true;
+                    const threshold = e.pointerType === 'touch' ? 12 : 5;
+                    if (Math.abs(walk) > threshold) drag.isDragging = true;
                     if (drag.isDragging) {
                         e.currentTarget.scrollLeft = drag.scrollLeft - walk;
                     }
                 }}
                 onPointerUp={(e) => {
-                    e.currentTarget.releasePointerCapture(e.pointerId);
+                    const drag = toolbarDragRef.current;
+                    if (drag && drag.allowDrag) {
+                        e.currentTarget.releasePointerCapture(e.pointerId);
+                    }
+                    toolbarDragRef.current = {
+                        isDragging: false,
+                        startX: 0,
+                        scrollLeft: e.currentTarget.scrollLeft,
+                        allowDrag: false
+                    };
                 }}
                 onClickCapture={(e) => {
                     if (toolbarDragRef.current.isDragging) {
                         e.stopPropagation();
                         e.preventDefault();
-                        toolbarDragRef.current.isDragging = false;
                     }
                 }}
                 style={{

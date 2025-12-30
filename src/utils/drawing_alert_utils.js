@@ -8,24 +8,28 @@
 // --- Serializers: Frontend Drawing -> Backend Config ---
 
 export const serializeDrawingAlert = (drawing) => {
-    if (!drawing || !drawing.points) return null;
+    if (!drawing) return null;
 
-    const { type, id, points } = drawing;
+    const { type, id } = drawing;
+    const points = drawing.points || [];
     const base = { id, type, symbol: drawing.symbol || 'UNKNOWN' };
 
     // 1. Horizontal Line (Price Level)
     if (type === 'hline') {
+        const price = (points[0] && points[0].price !== undefined) ? points[0].price : drawing.price;
+        if (price === undefined || price === null) return null;
         return {
             ...base,
             algo: 'price_level',
             params: {
-                price: points[0].price
+                price
             }
         };
     }
 
     // 2. Trendline (Ray/Line) - Linear Function
     if (type === 'trendline') {
+        if (!points.length) return null;
         const p1 = points[0];
         const p2 = points[1];
         if (!p1 || !p2) return null;
@@ -44,6 +48,7 @@ export const serializeDrawingAlert = (drawing) => {
 
     // 3. Parallel Channel (Two Parallel Rays)
     if (type === 'channel') {
+        if (!points.length) return null;
         const p1 = points[0];
         const p2 = points[1];
         const p3 = points[2]; // Width control point
@@ -69,6 +74,7 @@ export const serializeDrawingAlert = (drawing) => {
 
     // 4. Fibonacci Channel (Multi-level Rays)
     if (type === 'fib') {
+        if (!points.length) return null;
         const p1 = points[0];
         const p2 = points[1];
         const p3 = points[2];
@@ -96,6 +102,7 @@ export const serializeDrawingAlert = (drawing) => {
 
     // 5. Rectangle (Time-Bound Price Zone)
     if (type === 'rect') {
+        if (!points.length) return null;
         const p1 = points[0];
         const p2 = points[1];
         if (!p1 || !p2) return null;
