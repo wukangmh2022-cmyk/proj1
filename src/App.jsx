@@ -11,6 +11,7 @@ import { serializeDrawingAlert } from './utils/drawing_alert_utils';
 import ChartPage from './components/ChartPage';
 import AlertConfigModal from './components/AlertConfigModal';
 import './App.css';
+import { perfLog } from './utils/perfLogger';
 
 import { App as CapacitorApp } from '@capacitor/app';
 
@@ -68,15 +69,15 @@ function HomePage() {
   }, [showSettings, alertModalSymbol, isEditMode]);
 
   useEffect(() => {
-    console.log('[perf] HomePage mount at', Date.now());
+    perfLog('[perf] HomePage mount at', Date.now());
     return () => {
-      console.log('[perf] HomePage unmount at', Date.now());
+      perfLog('[perf] HomePage unmount at', Date.now());
     };
   }, []);
 
   // Start native data service and sync alerts on mount (for Android)
   useEffect(() => {
-    console.log('[perf] HomePage useEffect startData/syncAlerts at', Date.now(), 'isNative=', Capacitor.isNativePlatform());
+    perfLog('[perf] HomePage useEffect startData/syncAlerts at', Date.now(), 'isNative=', Capacitor.isNativePlatform());
     if (Capacitor.isNativePlatform()) {
       FloatingWidget.startData({ symbols }).catch(console.error);
       // Initial alert sync

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Capacitor } from '@capacitor/core';
 import FloatingWidget from '../plugins/FloatingWidget';
+import { perfLog } from '../utils/perfLogger';
 
 const BINANCE_SPOT_WS = 'wss://stream.binance.com:9443/stream';
 const BINANCE_FUTURES_WS = 'wss://fstream.binance.com/stream';
@@ -27,9 +28,9 @@ export const useBinanceTickers = (symbols = []) => {
     useEffect(() => {
         if (perfLoggedRef.current) return;
         perfLoggedRef.current = true;
-        console.log('[perf] useBinanceTickers mount at', Date.now(), 'isNative=', isNative, 'symbols=', symbols);
+        perfLog('[perf] useBinanceTickers mount at', Date.now(), 'isNative=', isNative, 'symbols=', symbols);
         return () => {
-            console.log('[perf] useBinanceTickers unmount at', Date.now());
+            perfLog('[perf] useBinanceTickers unmount at', Date.now());
         };
         // Intentionally run once per hook instance to avoid noisy logs.
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -75,10 +76,10 @@ export const useBinanceTickers = (symbols = []) => {
         // Handle Background/Foreground
         const handleVisibilityChange = () => {
             if (document.hidden) {
-                console.log('[perf] visibilitychange hidden at', Date.now());
+                perfLog('[perf] visibilitychange hidden at', Date.now());
                 stopLoop();
             } else {
-                console.log('[perf] visibilitychange visible at', Date.now(), 'isNative=', isNative);
+                perfLog('[perf] visibilitychange visible at', Date.now(), 'isNative=', isNative);
                 startLoop();
                 // On resume, if native, request fresh data
                 if (isNative) FloatingWidget.requestTickerUpdate();
@@ -97,7 +98,7 @@ export const useBinanceTickers = (symbols = []) => {
     useEffect(() => {
         if (!isNative) return;
 
-        console.log('[perf] useBinanceTickers native listener setup at', Date.now(), 'symbols=', symbols);
+        perfLog('[perf] useBinanceTickers native listener setup at', Date.now(), 'symbols=', symbols);
 
         listenerRef.current = FloatingWidget.addListener('tickerUpdate', (data) => {
             const { symbol, price, changePercent } = data;
@@ -111,7 +112,7 @@ export const useBinanceTickers = (symbols = []) => {
         });
 
         // Request immediate update (replay last cached data)
-        console.log('[perf] useBinanceTickers requestTickerUpdate at', Date.now());
+        perfLog('[perf] useBinanceTickers requestTickerUpdate at', Date.now());
         FloatingWidget.requestTickerUpdate();
 
         return () => {

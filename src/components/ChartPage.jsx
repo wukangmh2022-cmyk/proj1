@@ -5,6 +5,7 @@ import { Capacitor } from '@capacitor/core';
 import { createChart, CandlestickSeries, LineSeries, HistogramSeries } from 'lightweight-charts';
 import { getSymbols } from '../utils/storage';
 import { useBinanceTickers } from '../hooks/useBinanceTickers';
+import { perfLog } from '../utils/perfLogger';
 import '../App.css';
 
 const DRAW_MODES = { NONE: 'none', TRENDLINE: 'trendline', CHANNEL: 'channel', RECT: 'rect', HLINE: 'hline', FIB: 'fib' };
@@ -119,9 +120,9 @@ export default function ChartPage() {
     // Orientation toggle removed per latest request (rely on system auto-rotate)
 
     useEffect(() => {
-        console.log('[perf] ChartPage mount for', symbol, 'at', Date.now());
+        perfLog('[perf] ChartPage mount for', symbol, 'at', Date.now());
         return () => {
-            console.log('[perf] ChartPage unmount for', symbol, 'at', Date.now());
+            perfLog('[perf] ChartPage unmount for', symbol, 'at', Date.now());
         };
     }, [symbol]);
 
