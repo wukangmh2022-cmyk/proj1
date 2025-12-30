@@ -27,6 +27,7 @@ const parseInterval = (int) => {
 export default function ChartPage() {
     const { symbol } = useParams();
     const navigate = useNavigate();
+    console.log('[perf] ChartPage mount for', symbol, 'at', Date.now());
     const containerRef = useRef(null);
     const chartRef = useRef(null);
     const seriesRef = useRef(null);
@@ -111,7 +112,7 @@ export default function ChartPage() {
         labelsInitializedRef.current = true;
     }, [drawings]);
     const [screenDrawings, setScreenDrawings] = useState([]);
-    const [loadingStage, setLoadingStage] = useState('');
+    const [loadingStage, setLoadingStage] = useState('[init]');
     const [isLoading, setIsLoading] = useState(true);
     const [selectedId, setSelectedId] = useState(null);
     const [isLandscape, setIsLandscape] = useState(false);

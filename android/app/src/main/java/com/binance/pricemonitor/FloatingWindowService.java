@@ -65,6 +65,7 @@ public class FloatingWindowService extends Service {
     public static final String EXTRA_SOUND_ID = "SOUND_ID";
 
     private boolean windowVisible = false;
+    private static final String PERF_TAG = "[perf] FloatingWindowService";
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -74,6 +75,7 @@ public class FloatingWindowService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        android.util.Log.d(PERF_TAG, "onCreate at " + System.currentTimeMillis());
         startForegroundService();
         
         // Prepare floating view but don't show yet
@@ -160,6 +162,8 @@ public class FloatingWindowService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        android.util.Log.d(PERF_TAG, "onStartCommand at " + System.currentTimeMillis() +
+                " action=" + (intent != null ? intent.getAction() : "null"));
         if (intent == null) return START_STICKY;
         
         String action = intent.getAction();
@@ -234,6 +238,9 @@ public class FloatingWindowService extends Service {
 
         // Request immediate update (replay last data)
         if (ACTION_REQUEST_UPDATE.equals(action)) {
+            android.util.Log.d(PERF_TAG, "ACTION_REQUEST_UPDATE at " + System.currentTimeMillis() +
+                    " hasListener=" + (tickerListener != null) +
+                    " symbolsCount=" + rawPriceDataMap.size());
             if (tickerListener != null && !rawPriceDataMap.isEmpty()) {
                 for (java.util.Map.Entry<String, double[]> entry : rawPriceDataMap.entrySet()) {
                     String symbol = entry.getKey();

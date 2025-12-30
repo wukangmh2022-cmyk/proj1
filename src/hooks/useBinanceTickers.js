@@ -23,6 +23,7 @@ export const useBinanceTickers = (symbols = []) => {
     const flushIntervalRef = useRef(null);
 
     const isNative = Capacitor.isNativePlatform();
+    console.log('[perf] useBinanceTickers init at', Date.now(), 'isNative=', isNative, 'symbols=', symbols);
 
     // Helper: Check if symbol is perpetual (.P suffix)
     const isPerpetual = (symbol) => symbol.endsWith('.P');
@@ -59,13 +60,16 @@ export const useBinanceTickers = (symbols = []) => {
         };
 
         // Initial Start
+        console.log('[perf] useBinanceTickers startLoop at', Date.now());
         startLoop();
 
         // Handle Background/Foreground
         const handleVisibilityChange = () => {
             if (document.hidden) {
+                console.log('[perf] visibilitychange hidden at', Date.now());
                 stopLoop();
             } else {
+                console.log('[perf] visibilitychange visible at', Date.now(), 'isNative=', isNative);
                 startLoop();
                 // On resume, if native, request fresh data
                 if (isNative) FloatingWidget.requestTickerUpdate();
@@ -84,6 +88,8 @@ export const useBinanceTickers = (symbols = []) => {
     useEffect(() => {
         if (!isNative) return;
 
+        console.log('[perf] useBinanceTickers native listener setup at', Date.now(), 'symbols=', symbols);
+
         listenerRef.current = FloatingWidget.addListener('tickerUpdate', (data) => {
             const { symbol, price, changePercent } = data;
 
@@ -96,6 +102,7 @@ export const useBinanceTickers = (symbols = []) => {
         });
 
         // Request immediate update (replay last cached data)
+        console.log('[perf] useBinanceTickers requestTickerUpdate at', Date.now());
         FloatingWidget.requestTickerUpdate();
 
         return () => {

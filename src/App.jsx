@@ -15,6 +15,7 @@ import './App.css';
 import { App as CapacitorApp } from '@capacitor/app';
 
 function HomePage() {
+  console.log('[perf] HomePage mount at', Date.now());
   const navigate = useNavigate();
   const [symbols, setSymbols] = useState(getSymbols());
   const [showSettings, setShowSettings] = useState(false);
@@ -69,6 +70,7 @@ function HomePage() {
 
   // Start native data service and sync alerts on mount (for Android)
   useEffect(() => {
+    console.log('[perf] HomePage useEffect startData/syncAlerts at', Date.now(), 'isNative=', Capacitor.isNativePlatform());
     if (Capacitor.isNativePlatform()) {
       FloatingWidget.startData({ symbols }).catch(console.error);
       // Initial alert sync
