@@ -1236,6 +1236,9 @@ export default function ChartPage() {
     useEffect(() => {
         if (!seriesRef.current || !chartRef.current) return;
         let stageTimer;
+        let loadStart = Date.now();
+        let firstWsTick = false;
+        perfLog('[perf] chart load start', symbol, interval, loadStart);
 
         // Save interval preference
         localStorage.setItem(`chart_interval_${symbol}`, interval);
@@ -1254,6 +1257,7 @@ export default function ChartPage() {
         // Initial Load
         const load = async () => {
             try {
+                perfLog('[perf] chart fetch start', symbol, interval);
                 const res = await fetch(`${apiBase}/klines?symbol=${baseSymbol}&interval=${interval}&limit=500`);
                 const data = await res.json();
                 setLoadingStage('数据处理中...');
@@ -1264,6 +1268,7 @@ export default function ChartPage() {
                 dataIntervalRef.current = interval; // mark data interval
                 lastLogicalRangeRef.current = chartRef.current.timeScale().getVisibleLogicalRange() || lastLogicalRangeRef.current;
                 updateIndicators(formatted);
+                perfLog('[perf] chart data set', symbol, interval, 'bars=', formatted.length, 'ms=', Date.now() - loadStart);
                 // Force redraw drawings with new data time-scale, using rAF to ensure TimeScale is ready
                 requestAnimationFrame(() => updateScreenDrawings());
 
@@ -1297,8 +1302,13 @@ export default function ChartPage() {
                     chartRef.current.timeScale().fitContent();
                 }
 
-            } catch (e) { console.error(e); setLoadingStage('加载失败'); }
+            } catch (e) {
+                console.error(e);
+                perfLog('[perf] chart load error', symbol, interval, String(e));
+                setLoadingStage('加载失败');
+            }
             setIsLoading(false);
+            perfLog('[perf] chart load end', symbol, interval, 'ms=', Date.now() - loadStart);
             // Clear stage shortly after finishing to avoid stale text
             stageTimer = setTimeout(() => setLoadingStage(''), 300);
         };
@@ -1306,10 +1316,17 @@ export default function ChartPage() {
 
         // WebSocket
         const ws = new WebSocket(`${wsBase}/${baseSymbol.toLowerCase()}@kline_${interval}`);
+        ws.onopen = () => {
+            perfLog('[perf] chart ws open', symbol, interval);
+        };
         ws.onmessage = (e) => {
             // Guard: don't update if initial load hasn't finished (prevent mixing intervals)
             if (allDataRef.current.length === 0) return;
 
+            if (!firstWsTick) {
+                firstWsTick = true;
+                perfLog('[perf] chart ws first tick', symbol, interval, 'ms=', Date.now() - loadStart);
+            }
             const m = JSON.parse(e.data);
             if (m.k) {
                 const k = { time: m.k.t / 1000, open: +m.k.o, high: +m.k.h, low: +m.k.l, close: +m.k.c, volume: +m.k.v };
@@ -2121,15 +2138,16 @@ export default function ChartPage() {
                                 display: 'flex', alignItems: 'center', justifyContent: 'center'
                             }} onClick={close}>
                                 <div style={{
-                                    background: '#1e222d', padding: '20px', borderRadius: '12px', width: '300px',
+                                    background: '#1e222d', padding: '16px', borderRadius: '12px', width: '280px',
+                                    maxHeight: '80vh', overflowY: 'auto',
                                     border: '1px solid #2a2e39', boxShadow: '0 8px 24px rgba(0,0,0,0.8)',
-                                    display: 'flex', flexDirection: 'column', gap: '16px'
+                                    display: 'flex', flexDirection: 'column', gap: '12px'
                                 }} onClick={e => e.stopPropagation()}>
                                     <h3 style={{ margin: 0, color: '#fff', fontSize: '16px' }}>设置</h3>
 
                                     {isMainIndicator ? (
                                         <>
-                                            <div className="menu-row">
+                                            <div className="menu-row" style={{ gap: 6 }}>
                                                 <label>主图指标</label>
                                                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                                                     {MAIN_INDICATOR_TYPES.map(type => (
@@ -2151,12 +2169,40 @@ export default function ChartPage() {
                                                 </div>
                                             </div>
 
-                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                                                 {maLines.map((line, idx) => (
-                                                    <div key={line.key} style={{ background: '#2a2e39', padding: 10, borderRadius: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                                            <span style={{ color: '#ccc' }}>{mainIndicatorLabel}{idx + 1}</span>
-                                                            <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#aaa', fontSize: 12 }}>
+                                                    <div key={line.key} style={{ background: '#2a2e39', padding: 8, borderRadius: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                                            <span style={{ color: '#ccc', minWidth: 36 }}>{mainIndicatorLabel}{idx + 1}</span>
+                                                            <span style={{ fontSize: 11, color: '#888' }}>周期</span>
+                                                            <input
+                                                                type="number"
+                                                                value={line.period}
+                                                                onChange={e => setIndicators(p => ({ ...p, [line.key]: { ...p[line.key], period: parseInt(e.target.value) || 7 } }))}
+                                                                style={{ width: 56, background: '#1e222d', border: '1px solid #444', color: '#fff', padding: '4px 6px', borderRadius: 4 }}
+                                                            />
+                                                            <span style={{ fontSize: 11, color: '#888' }}>线宽</span>
+                                                            <div style={{ display: 'flex', gap: 6 }}>
+                                                                {[1, 2, 3, 4].map(w => (
+                                                                    <div
+                                                                        key={w}
+                                                                        onClick={() => setIndicators(p => ({ ...p, [line.key]: { ...p[line.key], width: w } }))}
+                                                                        style={{
+                                                                            width: 26,
+                                                                            height: 22,
+                                                                            display: 'flex',
+                                                                            alignItems: 'center',
+                                                                            justifyContent: 'center',
+                                                                            background: line.width === w ? '#1e222d' : 'transparent',
+                                                                            cursor: 'pointer',
+                                                                            border: '1px solid #444',
+                                                                            borderRadius: 4
+                                                                        }}>
+                                                                        <div style={{ height: w, width: 14, background: '#888' }}></div>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                            <label style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#aaa', fontSize: 11, marginLeft: 'auto' }}>
                                                                 <input
                                                                     type="checkbox"
                                                                     checked={line.visible !== false}
@@ -2168,56 +2214,22 @@ export default function ChartPage() {
                                                                 显示
                                                             </label>
                                                         </div>
-                                                        <div className="menu-row">
-                                                            <label>周期</label>
-                                                            <input
-                                                                type="number"
-                                                                value={line.period}
-                                                                onChange={e => setIndicators(p => ({ ...p, [line.key]: { ...p[line.key], period: parseInt(e.target.value) || 7 } }))}
-                                                                style={{ width: 60, background: '#1e222d', border: '1px solid #444', color: '#fff', padding: 6, borderRadius: 4 }}
-                                                            />
-                                                        </div>
-                                                        <div className="menu-row">
-                                                            <label>颜色</label>
-                                                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                                                {colorChoices.map(c => (
-                                                                    <div
-                                                                        key={c}
-                                                                        onClick={() => setIndicators(p => ({ ...p, [line.key]: { ...p[line.key], color: c } }))}
-                                                                        style={{
-                                                                            width: 22,
-                                                                            height: 22,
-                                                                            borderRadius: '50%',
-                                                                            background: c,
-                                                                            border: line.color === c ? '2px solid #fff' : '2px solid transparent',
-                                                                            cursor: 'pointer'
-                                                                        }}
-                                                                    />
-                                                                ))}
-                                                            </div>
-                                                        </div>
-                                                        <div className="menu-row">
-                                                            <label>线宽</label>
-                                                            <div style={{ display: 'flex', gap: 8 }}>
-                                                                {[1, 2, 3, 4].map(w => (
-                                                                    <div
-                                                                        key={w}
-                                                                        onClick={() => setIndicators(p => ({ ...p, [line.key]: { ...p[line.key], width: w } }))}
-                                                                        style={{
-                                                                            width: 32,
-                                                                            height: 28,
-                                                                            display: 'flex',
-                                                                            alignItems: 'center',
-                                                                            justifyContent: 'center',
-                                                                            background: line.width === w ? '#1e222d' : 'transparent',
-                                                                            cursor: 'pointer',
-                                                                            border: '1px solid #444',
-                                                                            borderRadius: 4
-                                                                        }}>
-                                                                        <div style={{ height: w, width: 18, background: '#888' }}></div>
-                                                                    </div>
-                                                                ))}
-                                                            </div>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                                            <span style={{ fontSize: 11, color: '#888' }}>颜色</span>
+                                                            {colorChoices.map(c => (
+                                                                <div
+                                                                    key={c}
+                                                                    onClick={() => setIndicators(p => ({ ...p, [line.key]: { ...p[line.key], color: c } }))}
+                                                                    style={{
+                                                                        width: 18,
+                                                                        height: 18,
+                                                                        borderRadius: '50%',
+                                                                        background: c,
+                                                                        border: line.color === c ? '2px solid #fff' : '2px solid transparent',
+                                                                        cursor: 'pointer'
+                                                                    }}
+                                                                />
+                                                            ))}
                                                         </div>
                                                     </div>
                                                 ))}
