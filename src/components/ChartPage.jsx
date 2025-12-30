@@ -224,10 +224,10 @@ export default function ChartPage() {
     const panZoomEnabledRef = useRef(true);
 
     const setPanZoom = useCallback((enabled, reason) => {
+        console.log('[interact] chart pan/zoom', enabled ? 'ENABLED' : 'DISABLED', 'reason:', reason);
         if (!chartRef.current) return;
         if (panZoomEnabledRef.current === enabled) return;
         panZoomEnabledRef.current = enabled;
-        console.log('[interact] chart pan/zoom', enabled ? 'ENABLED' : 'DISABLED', 'reason:', reason);
         chartRef.current.applyOptions({
             handleScroll: enabled,
             handleScale: enabled,
