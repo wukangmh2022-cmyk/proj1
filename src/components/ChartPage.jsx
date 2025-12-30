@@ -226,6 +226,22 @@ export default function ChartPage() {
         }));
     };
 
+    const openIndicatorMenu = (rect, focus) => {
+        const menuWidth = 160;
+        const padding = 8;
+        const desiredLeft = rect.left + (rect.width / 2) - (menuWidth / 2);
+        const maxLeft = Math.max(padding, window.innerWidth - menuWidth - padding);
+        const left = Math.min(Math.max(desiredLeft, padding), maxLeft);
+        setIndicatorMenuFocus(focus);
+        setSubMenuPos({
+            left,
+            y: rect.top - 10, // Position above the button
+            isBottom: true,
+            width: menuWidth
+        });
+        setShowSubMenu(true);
+    };
+
     // Save indicators when changed
     useEffect(() => {
         indicatorsRef.current = indicators; // Keep ref in sync
@@ -2879,15 +2895,9 @@ export default function ChartPage() {
                                 setShowSubMenu(false);
                                 return;
                             }
-                            setIndicatorMenuFocus(nextFocus);
                             const rect = e.currentTarget.getBoundingClientRect();
                             // User request: Always open UPWARDS
-                            setSubMenuPos({
-                                x: rect.left + (rect.width / 2),
-                                y: rect.top - 10, // Position above the button
-                                isBottom: true // Force 'bottom' calculation logic in render
-                            });
-                            setShowSubMenu(true);
+                            openIndicatorMenu(rect, nextFocus);
                         }}
                         style={{ fontSize: '13px', fontWeight: 'bold' }}>
                         {mainIndicatorLabel}
@@ -2903,15 +2913,9 @@ export default function ChartPage() {
                                 setShowSubMenu(false);
                                 return;
                             }
-                            setIndicatorMenuFocus(nextFocus);
                             const rect = e.currentTarget.getBoundingClientRect();
                             // User request: Always open UPWARDS
-                            setSubMenuPos({
-                                x: rect.left + (rect.width / 2),
-                                y: rect.top - 10, // Position above the button
-                                isBottom: true // Force 'bottom' calculation logic in render
-                            });
-                            setShowSubMenu(true);
+                            openIndicatorMenu(rect, nextFocus);
                         }}
                         style={{ fontSize: '13px', fontWeight: 'bold' }}>
                         {subIndicator !== 'NONE' ? subIndicator : (
@@ -2947,11 +2951,11 @@ export default function ChartPage() {
                     position: 'fixed',
                     top: subMenuPos.isBottom ? 'auto' : subMenuPos.y,
                     bottom: subMenuPos.isBottom ? (window.innerHeight - subMenuPos.y) : 'auto',
-                    left: subMenuPos.x,
-                    transform: 'translateX(-50%)',
+                    left: subMenuPos.left,
+                    transform: 'none',
                     background: '#1e222d', border: '1px solid #2a2e39', borderRadius: '10px',
                     padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px',
-                    boxShadow: '0 4px 12px rgba(0,0,0,0.5)', zIndex: 9999, minWidth: '140px'
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.5)', zIndex: 9999, minWidth: subMenuPos.width || 140
                 }} onClick={(e) => e.stopPropagation()}>
                     {indicatorMenuFocus === 'sub' ? (
                         <>
