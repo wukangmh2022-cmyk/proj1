@@ -1751,8 +1751,10 @@ export default function ChartPage() {
     const clearAll = () => { setDrawings([]); setSelectedId(null); };
     // Virtual Cursor Interaction Logic
     const lastTouchRef = useRef(null);
+    const interactStateRef = useRef({ startX: 0, startY: 0, pointerId: null });
     const onInteractStart = (e) => {
         lastTouchRef.current = { x: e.clientX, y: e.clientY };
+        interactStateRef.current = { startX: e.clientX, startY: e.clientY, pointerId: e.pointerId };
     };
 
     const onInteractMove = (e) => {
@@ -1784,6 +1786,13 @@ export default function ChartPage() {
             activePointRef.current = newP; // Update Sync Ref
             setActivePoint(newP); // Trigger Render
         }
+    };
+
+    const onInteractEnd = (e) => {
+        if (interactStateRef.current.pointerId !== null && e.pointerId !== interactStateRef.current.pointerId) return;
+        lastTouchRef.current = null;
+        interactStateRef.current = { startX: 0, startY: 0, pointerId: null };
+        confirmPoint();
     };
 
     const confirmPoint = () => {
@@ -2928,7 +2937,7 @@ export default function ChartPage() {
                         style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 20, cursor: 'none', touchAction: 'none' }}
                         onPointerDown={onInteractStart}
                         onPointerMove={onInteractMove}
-                        onClick={confirmPoint}
+                        onPointerUp={onInteractEnd}
                     />
                 )}
             </div>
