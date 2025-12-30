@@ -273,6 +273,7 @@ export default function ChartPage() {
     const [legendValues, setLegendValues] = useState({});
     const [customCrosshair, setCustomCrosshair] = useState(null); // { x, y } for long-press crosshair
     const screenDrawingsRef = useRef([]);
+    const screenDrawingsRafRef = useRef(null);
     const drawingPrimitiveRef = useRef(null);
 
     const drawModeRef = useRef(DRAW_MODES.NONE);
@@ -459,7 +460,11 @@ export default function ChartPage() {
     const rafRef = useRef(null);
     const passthroughRef = useRef(null);
 
-    const logInteract = (...args) => console.log('[interact]', ...args);
+    const logInteract = (...args) => {
+        if (typeof window !== 'undefined' && window.userDebugMode === true) {
+            console.log('[interact]', ...args);
+        }
+    };
 
     const forwardPointerToChart = (type, srcEvent) => {
         const canvas = containerRef.current?.querySelector('canvas');
@@ -686,6 +691,7 @@ export default function ChartPage() {
         if (!allDataRef.current.length) return;
         // Prevent mixing old data interval with new interval
         if (dataIntervalRef.current !== interval) return;
+        const isDebug = typeof window !== 'undefined' && window.userDebugMode === true;
         const prevMap = Object.fromEntries((screenDrawingsRef.current || []).map(d => [d.id, d]));
         const data = allDataRef.current;
         const estimatedStep = parseInterval(interval);
@@ -710,7 +716,9 @@ export default function ChartPage() {
                 const diff = data[0].time - time;
                 const step = data[1] ? data[1].time - data[0].time : estimatedStep; // Use interval-aware step
                 const res = -diff / step;
-                console.log(`[getLogic] PRE-DATA: Time=${time} First=${data[0].time} Diff=${diff} Step=${step} Res=${res}`);
+                if (isDebug) {
+                    console.log(`[getLogic] PRE-DATA: Time=${time} First=${data[0].time} Diff=${diff} Step=${step} Res=${res}`);
+                }
                 return res;
             }
             if (l >= data.length) {
@@ -718,7 +726,9 @@ export default function ChartPage() {
                 const prev = data[data.length - 2] || { time: last.time - estimatedStep };
                 const step = last.time - prev.time;
                 const res = (data.length - 1) + (time - last.time) / step;
-                console.log(`[getLogic] PAST-DATA: Time=${time} Last=${last.time} Step=${step} Res=${res}`);
+                if (isDebug) {
+                    console.log(`[getLogic] PAST-DATA: Time=${time} Last=${last.time} Step=${step} Res=${res}`);
+                }
                 return res;
             }
 
@@ -727,7 +737,9 @@ export default function ChartPage() {
             const t1 = data[idx].time;
             const t2 = data[idx + 1].time;
             const ratio = (time - t1) / (t2 - t1);
-            if (ratio < 0 || ratio > 1) console.warn(`[getLogic] INTERP ODD: Ratio=${ratio} T1=${t1} T2=${t2} Time=${time}`);
+            if (ratio < 0 || ratio > 1) {
+                if (isDebug) console.warn(`[getLogic] INTERP ODD: Ratio=${ratio} T1=${t1} T2=${t2} Time=${time}`);
+            }
             return idx + ratio;
         };
 
@@ -749,7 +761,7 @@ export default function ChartPage() {
 
                 // DEBUG: Check for off-screen points to left
                 // DEBUG: Check for off-screen points to left
-                if (chartRef.current && window.userDebugMode !== false && debugLogTriggerRef.current) {
+                if (chartRef.current && isDebug && debugLogTriggerRef.current) {
                     debugLogTriggerRef.current = false; // Reset trigger
 
                     console.groupCollapsed(`[Drawings Debug] ${new Date().toLocaleTimeString()} ID=${d.id}`);
@@ -773,7 +785,7 @@ export default function ChartPage() {
                 }
 
                 // Debug Geometry Enchanced
-                if (d.type === 'channel' || d.id === selectedId) {
+                if (isDebug && (d.type === 'channel' || d.id === selectedId)) {
                     console.log(`[ScreenPoints] ID=${d.id} Interval=${interval} Type=${d.type}`);
                     d.points.forEach((p, i) => {
                         const l = getLogic(p.time);
@@ -795,6 +807,25 @@ export default function ChartPage() {
         setScreenDrawings(result);
         screenDrawingsRef.current = result;
     }, [drawings, logicToScreen, interval]); // Added interval dependency
+
+    useEffect(() => {
+        if (!chartRef.current || !seriesRef.current) return;
+        if (!allDataRef.current.length) return;
+        if (screenDrawingsRafRef.current) return;
+        screenDrawingsRafRef.current = requestAnimationFrame(() => {
+            screenDrawingsRafRef.current = null;
+            updateScreenDrawings();
+        });
+    }, [drawings, interval, updateScreenDrawings]);
+
+    useEffect(() => {
+        return () => {
+            if (screenDrawingsRafRef.current) {
+                cancelAnimationFrame(screenDrawingsRafRef.current);
+                screenDrawingsRafRef.current = null;
+            }
+        };
+    }, []);
 
     useEffect(() => {
         if (!chartRef.current || !seriesRef.current) return;
@@ -1543,7 +1574,7 @@ export default function ChartPage() {
     const toolbarRef = useRef(null); // For toolbar scroll
     const toolbarDragRef = useRef({ isDragging: false, startX: 0, scrollLeft: 0 });
     const intervalRef = useRef(null);
-    const intervalDragRef = useRef({ isDragging: false, startX: 0, scrollLeft: 0 });
+    const intervalDragRef = useRef({ isDragging: false, startX: 0, scrollLeft: 0, allowDrag: false });
     const startCoordRef = useRef({ x: 0, y: 0 });
     const lastCoordRef = useRef({ x: 0, y: 0 });
     const customCrosshairRef = useRef(null);
@@ -1969,25 +2000,43 @@ export default function ChartPage() {
                 <div className="interval-selector"
                     ref={intervalRef}
                     onPointerDown={(e) => {
-                        intervalDragRef.current = { isDragging: false, startX: e.pageX, scrollLeft: e.currentTarget.scrollLeft };
-                        e.currentTarget.setPointerCapture(e.pointerId);
+                        const isButton = e.target.closest('button');
+                        intervalDragRef.current = {
+                            isDragging: false,
+                            startX: e.pageX,
+                            scrollLeft: e.currentTarget.scrollLeft,
+                            allowDrag: !isButton
+                        };
+                        if (!isButton) e.currentTarget.setPointerCapture(e.pointerId);
                     }}
                     onPointerMove={(e) => {
                         if (e.pointerType === 'mouse' && e.buttons !== 1) return;
                         const drag = intervalDragRef.current;
+                        if (!drag || !drag.allowDrag) return;
                         const walk = e.pageX - drag.startX;
-                        if (Math.abs(walk) > 5) drag.isDragging = true;
+                        const threshold = e.pointerType === 'touch' ? 12 : 5;
+                        if (Math.abs(walk) > threshold) drag.isDragging = true;
                         if (drag.isDragging) {
                             e.currentTarget.scrollLeft = drag.scrollLeft - walk;
                             e.preventDefault();
                         }
                     }}
-                    onPointerUp={(e) => e.currentTarget.releasePointerCapture(e.pointerId)}
+                    onPointerUp={(e) => {
+                        const drag = intervalDragRef.current;
+                        if (drag && drag.allowDrag) {
+                            e.currentTarget.releasePointerCapture(e.pointerId);
+                        }
+                        intervalDragRef.current = {
+                            isDragging: false,
+                            startX: 0,
+                            scrollLeft: e.currentTarget.scrollLeft,
+                            allowDrag: false
+                        };
+                    }}
                     onClickCapture={(e) => {
                         if (intervalDragRef.current.isDragging) {
                             e.stopPropagation();
                             e.preventDefault();
-                            intervalDragRef.current.isDragging = false;
                         }
                     }}
                     style={{
