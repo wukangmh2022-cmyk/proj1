@@ -328,10 +328,14 @@ export default function ChartPage() {
     // Drag Logic
     const [dragState, setDragState] = useState(null); // { id, index }
     const [activeHandle, setActiveHandle] = useState(null); // { id, index } - For Indirect Drag
+    const [virtualDragState, setVirtualDragState] = useState(null); // { id, index, isWhole }
     const [subMenuPos, setSubMenuPos] = useState(null); // { x, y, isBottom }
     const activeTouchIdsRef = useRef(new Set());
     const suppressDrawingInteractionRef = useRef(false);
     const panZoomEnabledRef = useRef(true);
+    const virtualDragStateRef = useRef(null);
+    const virtualDragDraftRef = useRef(null);
+    const virtualDragRafRef = useRef(null);
 
     const setPanZoom = useCallback((enabled, reason) => {
         console.log('[interact] chart pan/zoom', enabled ? 'ENABLED' : 'DISABLED', 'reason:', reason);
@@ -348,9 +352,9 @@ export default function ChartPage() {
     // Unified Chart Interaction Sync (Lock pan/zoom during drag or custom crosshair)
     useEffect(() => {
         if (!chartRef.current) return;
-        const isLocked = !!customCrosshair || !!dragState;
+        const isLocked = !!customCrosshair || !!dragState || !!virtualDragState;
         setPanZoom(!isLocked, isLocked ? 'lock: crosshair/drag' : 'unlock: idle');
-    }, [customCrosshair, dragState, setPanZoom]);
+    }, [customCrosshair, dragState, virtualDragState, setPanZoom]);
 
     // Track multitouch to avoid accidental selection when pinching/panning
     useEffect(() => {
@@ -456,6 +460,125 @@ export default function ChartPage() {
         setActiveHandle({ id, index: isWhole ? -1 : index });
         setSelectedId(id);
     };
+
+    const buildScreenDrawing = useCallback((drawing, prevEntry) => {
+        if (!drawing || drawing.visible === false) return null;
+        if (!chartRef.current || !seriesRef.current) return prevEntry || null;
+
+        if (drawing.type === 'hline') {
+            const p = (drawing.points && drawing.points[0]) ? drawing.points[0].price : drawing.price;
+            if (p === undefined || p === null) return null;
+            const y = seriesRef.current.priceToCoordinate(p);
+            if (y !== null && y !== undefined) return { ...drawing, screenY: y };
+            return prevEntry || null;
+        }
+
+        if (drawing.points && drawing.points.some(ppp => ppp.time === undefined || ppp.price === undefined)) return null;
+        if (drawing.points) {
+            const sp = drawing.points.map(p => timeToScreen(p.time, p.price)).filter(Boolean);
+            if (sp.length === drawing.points.length) return { ...drawing, screenPoints: sp };
+            if (prevEntry && prevEntry.screenPoints && prevEntry.screenPoints.length === drawing.points.length) {
+                return { ...drawing, screenPoints: prevEntry.screenPoints };
+            }
+            return prevEntry || null;
+        }
+        return null;
+    }, [timeToScreen]);
+
+    const updateScreenDrawingPreview = useCallback((drawing) => {
+        if (!drawing) return;
+        const prev = screenDrawingsRef.current || [];
+        const prevEntry = prev.find(d => d.id === drawing.id);
+        const nextEntry = buildScreenDrawing(drawing, prevEntry);
+        if (!nextEntry) return;
+        const next = prevEntry ? prev.map(d => d.id === drawing.id ? nextEntry : d) : [...prev, nextEntry];
+        screenDrawingsRef.current = next;
+        setScreenDrawings(next);
+    }, [buildScreenDrawing]);
+
+    const getAnchorPointForDrawing = useCallback((drawing, index, isWhole) => {
+        if (!drawing || !chartRef.current || !seriesRef.current || !containerRef.current) return null;
+        const screenEntry = (screenDrawingsRef.current || []).find(d => d.id === drawing.id);
+
+        if (drawing.type === 'hline') {
+            const price = (drawing.points && drawing.points[0]) ? drawing.points[0].price : drawing.price;
+            if (price === undefined || price === null) return null;
+            const y = screenEntry?.screenY ?? seriesRef.current.priceToCoordinate(price);
+            if (y === null || y === undefined) return null;
+            const x = (containerRef.current.clientWidth || 0) / 2;
+            const logic = chartRef.current.timeScale().coordinateToLogical(x);
+            return { x, y, logic, price };
+        }
+
+        const points = drawing.points || [];
+        const pointIndex = isWhole ? 0 : index;
+        const p = points[pointIndex];
+        if (!p) return null;
+        const screenPoint = screenEntry?.screenPoints?.[pointIndex] ?? timeToScreen(p.time, p.price);
+        if (!screenPoint) return null;
+        const logic = chartRef.current.timeScale().coordinateToLogical(screenPoint.x);
+        return { x: screenPoint.x, y: screenPoint.y, logic: logic ?? getLogic(p.time), price: p.price };
+    }, [getLogic, timeToScreen]);
+
+    const buildVirtualDragDraft = useCallback((state, deltaLogic, deltaPrice) => {
+        if (!state || !state.drawing) return null;
+        const drawing = state.drawing;
+
+        if (drawing.type === 'hline') {
+            const basePrice = state.origPrice ?? drawing.price ?? state.origPoints?.[0]?.price;
+            if (basePrice === undefined || basePrice === null) return null;
+            return { ...drawing, price: basePrice + deltaPrice };
+        }
+
+        const nextPoints = (state.origPoints || []).map((p, i) => {
+            if (!state.isWhole && i !== state.index) return { time: p.time, price: p.price };
+            const baseLogic = p.logic ?? getLogic(p.time) ?? 0;
+            const nextLogic = baseLogic + deltaLogic;
+            const nextTime = getTime(nextLogic) ?? p.time;
+            return { time: nextTime, price: p.price + deltaPrice };
+        });
+        return { ...drawing, points: nextPoints };
+    }, [getLogic, getTime]);
+
+    const startVirtualDrag = useCallback((e, id, index = -1) => {
+        if (drawModeRef.current !== DRAW_MODES.NONE) return;
+        if (suppressDrawingInteractionRef.current) return;
+        if (!chartRef.current || !seriesRef.current || !containerRef.current) return;
+        if (e?.preventDefault) e.preventDefault();
+        if (e?.stopPropagation) e.stopPropagation();
+
+        const drawing = drawings.find(d => d.id === id);
+        if (!drawing) return;
+
+        const isWhole = index === -1;
+        const anchor = getAnchorPointForDrawing(drawing, index, isWhole);
+        if (!anchor) return;
+
+        setSelectedId(id);
+        if (isWhole) setActiveHandle(null);
+        else setActiveHandle({ id, index });
+
+        activePointRef.current = anchor;
+        setActivePoint(anchor);
+        lastTouchRef.current = { x: e.clientX, y: e.clientY };
+        interactStateRef.current = { startX: e.clientX, startY: e.clientY, pointerId: e.pointerId };
+
+        const origPoints = (drawing.points || []).map(p => ({ time: p.time, price: p.price, logic: getLogic(p.time) }));
+        const startLogic = anchor.logic ?? (origPoints[index === -1 ? 0 : index]?.logic ?? null);
+
+        virtualDragStateRef.current = {
+            id,
+            index,
+            isWhole,
+            startLogic,
+            startPrice: anchor.price,
+            origPoints,
+            origPrice: drawing.price,
+            drawing
+        };
+        setVirtualDragState({ id, index, isWhole });
+        setPanZoom(false, 'virtual drag start');
+    }, [drawings, getAnchorPointForDrawing, getLogic, setPanZoom]);
 
     const rafRef = useRef(null);
     const passthroughRef = useRef(null);
@@ -595,6 +718,82 @@ export default function ChartPage() {
             }
         };
     }, [dragState, getTime]);
+
+    useEffect(() => {
+        if (!virtualDragState) return;
+
+        const move = (e) => {
+            if (!virtualDragStateRef.current || !containerRef.current) return;
+            if (virtualDragRafRef.current) return;
+
+            const clientX = e.clientX;
+            const clientY = e.clientY;
+
+            virtualDragRafRef.current = requestAnimationFrame(() => {
+                virtualDragRafRef.current = null;
+                if (!containerRef.current || !chartRef.current || !seriesRef.current) return;
+                if (!activePointRef.current) return;
+
+                const last = lastTouchRef.current;
+                const dx = last ? clientX - last.x : 0;
+                const dy = last ? clientY - last.y : 0;
+                lastTouchRef.current = { x: clientX, y: clientY };
+
+                const width = containerRef.current.clientWidth;
+                const height = containerRef.current.clientHeight;
+                const newX = Math.max(0, Math.min(activePointRef.current.x + dx, width));
+                const newY = Math.max(0, Math.min(activePointRef.current.y + dy, height));
+
+                const logic = chartRef.current.timeScale().coordinateToLogical(newX);
+                const price = seriesRef.current.coordinateToPrice(newY);
+                if (logic === null || price === null) return;
+
+                const newP = { x: newX, y: newY, logic, price };
+                activePointRef.current = newP;
+                setActivePoint(newP);
+
+                const state = virtualDragStateRef.current;
+                const deltaLogic = (newP.logic ?? 0) - (state.startLogic ?? 0);
+                const deltaPrice = (newP.price ?? 0) - (state.startPrice ?? 0);
+                const draft = buildVirtualDragDraft(state, deltaLogic, deltaPrice);
+                if (draft) {
+                    virtualDragDraftRef.current = draft;
+                    updateScreenDrawingPreview(draft);
+                }
+            });
+        };
+
+        const up = () => {
+            if (virtualDragRafRef.current) {
+                cancelAnimationFrame(virtualDragRafRef.current);
+                virtualDragRafRef.current = null;
+            }
+
+            const draft = virtualDragDraftRef.current;
+            if (draft) {
+                setDrawings(prev => prev.map(d => (d.id === draft.id ? draft : d)));
+            }
+
+            virtualDragDraftRef.current = null;
+            virtualDragStateRef.current = null;
+            setVirtualDragState(null);
+            setActivePoint(null);
+            activePointRef.current = null;
+            setPanZoom(true, 'virtual drag end');
+        };
+
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up);
+
+        return () => {
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', up);
+            if (virtualDragRafRef.current) {
+                cancelAnimationFrame(virtualDragRafRef.current);
+                virtualDragRafRef.current = null;
+            }
+        };
+    }, [virtualDragState, buildVirtualDragDraft, updateScreenDrawingPreview, setPanZoom]);
     const pendingPointsRef = useRef([]);
     const lastCursorRef = useRef(null);
     const allDataRef = useRef([]);
@@ -1578,9 +1777,10 @@ export default function ChartPage() {
     const startCoordRef = useRef({ x: 0, y: 0 });
     const lastCoordRef = useRef({ x: 0, y: 0 });
     const customCrosshairRef = useRef(null);
+    const startVirtualDragRef = useRef(null);
 
     // State checking refs (to avoid re-binding effect and killing timer on re-render)
-    const stateRefs = useRef({ drawMode, activeHandle, dragState });
+    const stateRefs = useRef({ drawMode, activeHandle, dragState, selectedId, virtualDragState });
 
     // Debug Logging Trigger
     const debugLogTriggerRef = useRef(false);
@@ -1588,8 +1788,11 @@ export default function ChartPage() {
         debugLogTriggerRef.current = true;
     }, [interval]);
 
-    useEffect(() => { stateRefs.current = { drawMode, activeHandle, dragState }; }, [drawMode, activeHandle, dragState]);
+    useEffect(() => {
+        stateRefs.current = { drawMode, activeHandle, dragState, selectedId, virtualDragState };
+    }, [drawMode, activeHandle, dragState, selectedId, virtualDragState]);
     useEffect(() => { customCrosshairRef.current = customCrosshair; }, [customCrosshair]);
+    useEffect(() => { startVirtualDragRef.current = startVirtualDrag; }, [startVirtualDrag]);
 
     useEffect(() => {
         const container = containerRef.current;
@@ -1597,16 +1800,16 @@ export default function ChartPage() {
 
         const handlePointerDown = (e) => {
             // Check latest state from ref
-            const { drawMode, activeHandle, dragState } = stateRefs.current;
+            const { drawMode, activeHandle, dragState, selectedId, virtualDragState } = stateRefs.current;
             const isDrawing = drawMode !== DRAW_MODES.NONE;
 
             // If in draw mode or dragging a handle, don't enable this custom interaction
-            if (isDrawing || dragState) return;
+            if (isDrawing || dragState || virtualDragState) return;
 
             // Only handle left button / primary touch
             if (e.button !== undefined && e.button !== 0) return;
             // Ignore click on UI buttons/controls
-            if (e.target.closest('button') || e.target.closest('.mini-toolbar') || e.target.closest('.interval-selector')) return;
+            if (e.target.closest('button') || e.target.closest('.mini-toolbar') || e.target.closest('.interval-selector') || e.target.closest('.drawing-toolbar')) return;
 
             // IMPORTANT: Check if clicking on a control point (anchor)
             // If so, we want to prioritize dragging over long-press crosshair
@@ -1616,6 +1819,16 @@ export default function ChartPage() {
             // But we should act conservatively: if hitting an anchor, DEFINITELY return.
             const isControlPoint = e.target.tagName === 'circle' && parseFloat(e.target.getAttribute('r')) >= 5;
             if (isControlPoint) return;
+
+            // Virtual drag: if a drawing is selected, allow delta-move from anywhere
+            const tagName = e.target.tagName ? e.target.tagName.toLowerCase() : '';
+            const isDrawingEl = ['line', 'rect', 'path', 'circle', 'text'].includes(tagName);
+            const activeId = activeHandle?.id === selectedId ? activeHandle.id : selectedId;
+            const activeIndex = activeHandle?.id === selectedId ? activeHandle.index : -1;
+            if (activeId && !isDrawingEl) {
+                startVirtualDragRef.current?.(e, activeId, activeIndex);
+                return;
+            }
 
             // Force Clear Active Handle if clicking blank
             if (activeHandle) {
@@ -1882,12 +2095,16 @@ export default function ChartPage() {
             onPointerDown: (e) => {
                 if (selectedId !== d.id) return; // allow chart pan when not selected
                 e.stopPropagation();
-                handleDragStart(e, d.id, -1);
+                startVirtualDrag(e, d.id, -1);
             }
         };
 
         const anchorHandlers = (idx) => ({
-            onPointerDown: (e) => handleDragStart(e, d.id, idx),
+            onPointerDown: (e) => {
+                if (selectedId !== d.id) return;
+                e.stopPropagation();
+                startVirtualDrag(e, d.id, idx);
+            },
             onClick: (e) => {
                 e.stopPropagation();
                 if (activeHandle && activeHandle.id === d.id && activeHandle.index === idx) {
@@ -1976,7 +2193,7 @@ export default function ChartPage() {
                                         if (selectedId !== d.id) return; // only drag when already selected
                                         e.stopPropagation();
                                         logInteract('fib pointerDown', d.id, e.pointerType);
-                                        handleDragStart(e, d.id, -1);
+                                        startVirtualDrag(e, d.id, -1);
                                     }}
                                     {...handlers}
                                 />
@@ -2074,7 +2291,7 @@ export default function ChartPage() {
                     const rect = containerRef.current?.getBoundingClientRect();
                     if (!rect) return;
                     if (e.pointerType === 'touch' && e.touches && e.touches.length > 1) return;
-                    if (dragState) return; // do not change selection during chart drag
+                    if (dragState || virtualDragState) return; // do not change selection during chart drag
                     const x = e.clientX - rect.left;
                     const y = e.clientY - rect.top;
                     const hitId = hitTestDrawing(x, y);
@@ -2089,7 +2306,7 @@ export default function ChartPage() {
                     if (dx > 8 || dy > 8) tapCandidateRef.current = null;
                 }}
                 onPointerUpCapture={() => {
-                    if (dragState) { tapCandidateRef.current = null; return; }
+                    if (dragState || virtualDragState) { tapCandidateRef.current = null; return; }
                     if (tapCandidateRef.current) setSelectedId(tapCandidateRef.current.id);
                     tapCandidateRef.current = null;
                 }}
@@ -2731,7 +2948,11 @@ export default function ChartPage() {
                                 }
                             };
                             const anchorHandlers = (idx) => ({
-                                onPointerDown: (e) => handleDragStart(e, d.id, idx),
+                                onPointerDown: (e) => {
+                                    if (selectedId !== d.id) return;
+                                    e.stopPropagation();
+                                    startVirtualDrag(e, d.id, idx);
+                                },
                                 onClick: (e) => {
                                     e.stopPropagation();
                                     // Toggle Active Handle
@@ -2759,7 +2980,7 @@ export default function ChartPage() {
                                         onPointerDown={(e) => {
                                             if (selectedId !== d.id) return; // only drag when selected
                                             e.stopPropagation();
-                                            handleDragStart(e, d.id, -1);
+                                            startVirtualDrag(e, d.id, -1);
                                         }}
                                     {...handlers}
                                 />
@@ -2789,7 +3010,7 @@ export default function ChartPage() {
                                             if (selectedId !== d.id) return; // only drag when selected
                                             e.stopPropagation();
                                             logInteract('trendline pointerDown', d.id, e.pointerType);
-                                            handleDragStart(e, d.id, -1);
+                                            startVirtualDrag(e, d.id, -1);
                                             }}
                                             {...handlers}
                                         />
@@ -2825,11 +3046,11 @@ export default function ChartPage() {
                         if (selectedId !== d.id) return; // only drag when selected
                         e.stopPropagation();
                         logInteract('rect pointerDown', d.id, e.pointerType);
-                        handleDragStart(e, d.id, -1);
+                        startVirtualDrag(e, d.id, -1);
                     }}
                     {...handlers}
                 />
-                                        {sel && <><circle cx={p1.x} cy={p1.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 0)} /><circle cx={p2.x} cy={p2.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 1)} /></>}
+                                        {sel && <><circle cx={p1.x} cy={p1.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => { if (selectedId !== d.id) return; e.stopPropagation(); startVirtualDrag(e, d.id, 0); }} /><circle cx={p2.x} cy={p2.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => { if (selectedId !== d.id) return; e.stopPropagation(); startVirtualDrag(e, d.id, 1); }} /></>}
                                         <text x={x + 5} y={y - 5} fill={color} fontSize="10" pointerEvents="auto" onClick={(e) => { e.stopPropagation(); setSelectedId(d.id); }}>{d.label || d.id}</text>
                                     </g>
                                 );
