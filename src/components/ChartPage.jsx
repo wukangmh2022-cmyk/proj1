@@ -9,7 +9,7 @@ import { perfLog } from '../utils/perfLogger';
 import '../App.css';
 
 const DRAW_MODES = { NONE: 'none', TRENDLINE: 'trendline', CHANNEL: 'channel', RECT: 'rect', HLINE: 'hline', FIB: 'fib' };
-const MAIN_INDICATOR_TYPES = ['MA', 'EMA', 'SMA', 'VEGAS'];
+const MAIN_INDICATOR_TYPES = ['NONE', 'MA', 'EMA', 'SMA', 'VEGAS'];
 const FIB_RATIOS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.382, 1.618, 2.618, 3.618];
 const LABEL_PREFIX = { hline: 'h', trendline: 't', rect: 'r', channel: 'c', fib: 'f' };
 
@@ -198,7 +198,7 @@ export default function ChartPage() {
     const maKeys = ['ma1', 'ma2', 'ma3', 'ma4'];
     const maLines = maKeys.map(key => ({ key, ...(indicators[key] || {}) })).filter(line => line.period);
     const visibleMaLines = maLines.filter(line => line.visible !== false);
-    const mainIndicatorLabel = mainIndicatorType === 'VEGAS' ? 'VEGAS' : mainIndicatorType;
+    const mainIndicatorLabel = mainIndicatorType === 'VEGAS' ? 'VEGAS' : (mainIndicatorType === 'NONE' ? '无' : mainIndicatorType);
     const getSubIndicatorLabel = () => {
         if (subIndicator === 'NONE') return '';
         if (subIndicator === 'RSI') return `RSI(${subIndicatorConfig.RSI.period})`;
@@ -216,6 +216,16 @@ export default function ChartPage() {
     const applyMainIndicatorType = (type) => {
         if (!MAIN_INDICATOR_TYPES.includes(type)) return;
         setMainIndicatorType(type);
+        if (type === 'NONE') {
+            setIndicators(prev => {
+                const next = { ...prev };
+                maKeys.forEach(k => {
+                    if (next[k]) next[k] = { ...next[k], visible: false };
+                });
+                return next;
+            });
+            return;
+        }
         if (type !== 'VEGAS') return;
         setIndicators(prev => ({
             ...prev,
@@ -229,21 +239,14 @@ export default function ChartPage() {
     const openIndicatorMenu = (rect, focus) => {
         const menuWidth = 160;
         const padding = 8;
-        const itemCount = focus === 'sub' ? 4 : MAIN_INDICATOR_TYPES.length;
-        const estimatedHeight = 12 + itemCount * 34 + 16;
-        const topSpace = rect.top;
-        const bottomSpace = window.innerHeight - rect.bottom;
-        const shouldOpenUp = topSpace >= estimatedHeight || topSpace >= bottomSpace;
-
         const desiredLeft = rect.left + (rect.width / 2) - (menuWidth / 2);
         const maxLeft = Math.max(padding, window.innerWidth - menuWidth - padding);
         const left = Math.min(Math.max(desiredLeft, padding), maxLeft);
-
         setIndicatorMenuFocus(focus);
         setSubMenuPos({
             left,
-            y: shouldOpenUp ? rect.top - 10 : rect.bottom + 10,
-            isBottom: shouldOpenUp,
+            y: rect.top - 10, // Position above the button
+            isBottom: true,
             width: menuWidth
         });
         setShowSubMenu(true);
@@ -2186,7 +2189,7 @@ export default function ChartPage() {
                                                                 cursor: 'pointer',
                                                                 fontSize: 12
                                                             }}>
-                                                            {type === 'VEGAS' ? 'Vegas' : type}
+                                                            {type === 'NONE' ? '无' : (type === 'VEGAS' ? 'Vegas' : type)}
                                                         </button>
                                                     ))}
                                                 </div>
@@ -2962,8 +2965,7 @@ export default function ChartPage() {
                     transform: 'none',
                     background: '#1e222d', border: '1px solid #2a2e39', borderRadius: '10px',
                     padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px',
-                    boxShadow: '0 4px 12px rgba(0,0,0,0.5)', zIndex: 9999,
-                    minWidth: subMenuPos.width || 140, maxHeight: '60vh', overflowY: 'auto'
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.5)', zIndex: 9999, minWidth: subMenuPos.width || 140
                 }} onClick={(e) => e.stopPropagation()}>
                     {indicatorMenuFocus === 'sub' ? (
                         <>
@@ -2991,7 +2993,7 @@ export default function ChartPage() {
                                         border: 'none', color: mainIndicatorType === type ? '#fcd535' : '#ccc',
                                         padding: '8px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', textAlign: 'left', width: '100%'
                                     }}>
-                                    {type === 'VEGAS' ? 'Vegas' : type}
+                                    {type === 'NONE' ? '无' : (type === 'VEGAS' ? 'Vegas' : type)}
                                 </button>
                             ))}
                         </>
