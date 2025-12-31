@@ -13,6 +13,24 @@ export const usePriceAlerts = (tickers) => {
     const pendingCandleWaitRef = useRef({}); // Tracks candle wait: { alertId: { remainingCandles: k } }
     const lastProcessedCandleRef = useRef({}); // Tracks processed candle times { alertId: timestamp }
 
+    const normalizeConditions = (condition) => {
+        const list = Array.isArray(condition) ? condition : (condition ? [condition] : []);
+        const ordered = [];
+        if (list.includes('crossing_up')) ordered.push('crossing_up');
+        if (list.includes('crossing_down')) ordered.push('crossing_down');
+        return ordered.length ? ordered : ['crossing_up'];
+    };
+
+    const getConditionLabel = (condition) => {
+        const list = normalizeConditions(condition);
+        const up = list.includes('crossing_up');
+        const down = list.includes('crossing_down');
+        if (up && down) return '上下穿';
+        if (up) return '上穿';
+        if (down) return '下穿';
+        return '穿越';
+    };
+
     // 1. Identify subscriptions needed
     const subscriptions = alerts
         .filter(a => a.active && (a.targetType === 'indicator' || a.confirmation === 'candle_close'))
@@ -80,8 +98,10 @@ export const usePriceAlerts = (tickers) => {
                 } else if (alert.targetType === 'drawing') {
                     // Load Drawings
                     const allDrawings = getDrawings(symbol);
-                    const d = allDrawings.find(x => x.id === alert.targetValue);
-                    if (!d) return;
+                    const targetIds = Array.isArray(alert.targetValues)
+                        ? alert.targetValues
+                        : (Array.isArray(alert.targetValue) ? alert.targetValue : [alert.targetValue]).filter(Boolean);
+                    if (targetIds.length === 0) return;
 
                     // Calculate target based on Candle Time (Current/Latest)
                     // data.kline.t is open time? data.t is time?
@@ -89,9 +109,17 @@ export const usePriceAlerts = (tickers) => {
                     // raw kline is in data.kline
                     const t = data.kline ? data.kline.t / 1000 : Date.now() / 1000; // time in seconds (as used in drawing)
 
-                    targetPrice = getDrawingTarget(d, t);
-                    // targetPrice could be number, array, or null
-                    if (targetPrice === null) return;
+                    const targetPrices = [];
+                    targetIds.forEach(id => {
+                        const d = allDrawings.find(x => x.id === id);
+                        if (!d) return;
+                        const tp = getDrawingTarget(d, t);
+                        if (tp === null || tp === undefined) return;
+                        if (Array.isArray(tp)) targetPrices.push(...tp);
+                        else targetPrices.push(tp);
+                    });
+                    if (targetPrices.length === 0) return;
+                    targetPrice = targetPrices;
                 } else {
                     targetPrice = parseFloat(alert.target);
                 }
@@ -121,9 +149,10 @@ export const usePriceAlerts = (tickers) => {
             if (!shouldCheck) return;
 
             // --- CONDITION CHECK ---
+            const conditions = normalizeConditions(alert.conditions || alert.condition);
             const check = (t) => {
-                if (alert.condition === 'crossing_up') return currentPrice >= t;
-                if (alert.condition === 'crossing_down') return currentPrice <= t;
+                if (conditions.includes('crossing_up') && currentPrice >= t) return true;
+                if (conditions.includes('crossing_down') && currentPrice <= t) return true;
                 return false;
             };
 
@@ -216,7 +245,7 @@ export const usePriceAlerts = (tickers) => {
         // 2. Log History
         const targetStr = alert.targetType === 'indicator' ? alert.targetValue.toUpperCase() : targetPrice;
         // Localized message logic could go here or in UI. Storing raw string for now.
-        const conditionStr = alert.condition === 'crossing_up' ? '上穿' : '下穿'; // Localized
+        const conditionStr = getConditionLabel(alert.conditions || alert.condition); // Localized
         const message = `${alert.symbol} ${conditionStr} ${targetStr}. 价格: ${currentPrice}`;
 
         addAlertHistory({

@@ -520,6 +520,7 @@ public class FloatingWindowService extends Service {
         public double target;
         public String targetValue;
         public String condition;
+        public java.util.List<String> conditions;
         public String confirmation;
         public String interval;
         public int delaySeconds; // Field for time delay
@@ -546,6 +547,16 @@ public class FloatingWindowService extends Service {
         // ---------------------------------------------
         
         public boolean active;
+    }
+
+    private boolean hasCondition(AlertConfig alert, String cond) {
+        if (alert.conditions != null && !alert.conditions.isEmpty()) {
+            return alert.conditions.contains(cond);
+        }
+        if (alert.condition != null && !alert.condition.isEmpty()) {
+            return alert.condition.equals(cond);
+        }
+        return "crossing_up".equals(cond);
     }
     
     public void syncAlerts(String alertsJson) {
@@ -770,15 +781,17 @@ public class FloatingWindowService extends Service {
             if (alert.confirmation.equals("candle_close") && !isClosed) continue;
             
             // Check condition against ALL potential targets (e.g. channel lines)
+            final boolean allowUp = hasCondition(alert, "crossing_up");
+            final boolean allowDown = hasCondition(alert, "crossing_down");
             boolean conditionMet = false;
             double triggerTarget = 0;
             
             for (double tVal : potentialTargets) {
-                if (alert.condition.equals("crossing_up") && close >= tVal) {
+                if (allowUp && close >= tVal) {
                     conditionMet = true;
                     triggerTarget = tVal;
                     break;
-                } else if (alert.condition.equals("crossing_down") && close <= tVal) {
+                } else if (allowDown && close <= tVal) {
                     conditionMet = true;
                     triggerTarget = tVal;
                     break;
@@ -854,7 +867,7 @@ public class FloatingWindowService extends Service {
             }
             // Rectangle Zone: [High, Low] if time matches
             else if ("rect_zone".equals(alert.algo)) {
-                if (t >= alert.cachedT_Start && t <= alert.cachedT_End) {
+                if (t <= alert.cachedT_End) {
                     results.add(alert.cachedP_High);
                     results.add(alert.cachedP_Low);
                 }
@@ -935,10 +948,12 @@ public class FloatingWindowService extends Service {
             if (!alert.targetType.equals("price")) continue;
             if (!alert.confirmation.equals("immediate")) continue;
             
+            final boolean allowUp = hasCondition(alert, "crossing_up");
+            final boolean allowDown = hasCondition(alert, "crossing_down");
             boolean conditionMet = false;
-            if (alert.condition.equals("crossing_up") && price >= alert.target) {
+            if (allowUp && price >= alert.target) {
                 conditionMet = true;
-            } else if (alert.condition.equals("crossing_down") && price <= alert.target) {
+            } else if (allowDown && price <= alert.target) {
                 conditionMet = true;
             }
             
@@ -951,7 +966,9 @@ public class FloatingWindowService extends Service {
     private void triggerAlert(AlertConfig alert, double currentPrice, double targetValue) {
         triggeredAlerts.add(alert.id);
         
-        String direction = alert.condition.equals("crossing_up") ? "↑ 突破" : "↓ 跌破";
+        final boolean allowUp = hasCondition(alert, "crossing_up");
+        final boolean allowDown = hasCondition(alert, "crossing_down");
+        String direction = allowUp && allowDown ? "↕ 穿越" : (allowUp ? "↑ 突破" : "↓ 跌破");
         String targetStr = alert.targetType.equals("indicator") 
             ? alert.targetValue.toUpperCase() 
             : String.format("$%.2f", targetValue);

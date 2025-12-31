@@ -165,7 +165,7 @@
 .toggle-group button {
     flex: 1;
     padding: 12px 16px;
-    background: rgba(255, 255, 255, 0.05);
+    background: transparent;
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 12px;
     color: #aaa;
@@ -195,6 +195,43 @@
 }
 
 .toggle-group button.active.down {
+    background: rgba(255, 71, 87, 0.1);
+    border-color: rgba(255, 71, 87, 0.4);
+    color: #ff4757;
+}
+
+/* Target toggle (price/indicator/drawing) - keep yellow active frame */
+.target-toggle button.active {
+    background: rgba(252, 213, 53, 0.1);
+    border-color: rgba(252, 213, 53, 0.4);
+    color: #fcd535;
+}
+
+/* Direction toggle (crossing) - no yellow focus/active outline */
+.direction-toggle button {
+    outline: none;
+    box-shadow: none;
+}
+
+.direction-toggle button:focus,
+.direction-toggle button:focus-visible {
+    outline: none;
+    box-shadow: none;
+}
+
+.direction-toggle button.active {
+    background: transparent;
+    border-color: rgba(255, 255, 255, 0.1);
+    color: #aaa;
+}
+
+.direction-toggle button.active.up {
+    background: rgba(0, 214, 143, 0.1);
+    border-color: rgba(0, 214, 143, 0.4);
+    color: #00d68f;
+}
+
+.direction-toggle button.active.down {
     background: rgba(255, 71, 87, 0.1);
     border-color: rgba(255, 71, 87, 0.4);
     color: #ff4757;
@@ -446,6 +483,11 @@
     color: #ff4757;
 }
 
+.direction-tag.both {
+    background: linear-gradient(135deg, rgba(0, 214, 143, 0.15) 0%, rgba(0, 214, 143, 0.15) 50%, rgba(255, 71, 87, 0.15) 50%, rgba(255, 71, 87, 0.15) 100%);
+    color: #fcd535;
+}
+
 .item-target {
     font-size: 15px;
     font-weight: 600;
@@ -477,6 +519,31 @@
 
 .item-delete:hover {
     background: rgba(255, 71, 87, 0.2);
+}
+
+/* Drawing multi-select */
+.drawing-select {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    width: 100%;
+}
+
+.drawing-chip {
+    padding: 8px 10px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(0, 0, 0, 0.2);
+    color: #c9c9c9;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.drawing-chip.active {
+    border-color: rgba(252, 213, 53, 0.6);
+    color: #fcd535;
+    background: rgba(252, 213, 53, 0.1);
 }
 
 /* History */

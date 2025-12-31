@@ -78,7 +78,7 @@ export const serializeAlertConfig = (alert, allDrawings = []) => {
     // 4. Trigger Condition
     // How do we compare Source vs Target?
     config.trigger = {
-        condition: alert.condition, // 'crossing_up', 'crossing_down'
+        condition: alert.conditions || alert.condition, // 'crossing_up', 'crossing_down'
         confirmation: alert.confirmation || 'realtime', // 'candle_close'
         delaySeconds: alert.delaySeconds || 0,
         delayCandles: alert.delayCandles || 0

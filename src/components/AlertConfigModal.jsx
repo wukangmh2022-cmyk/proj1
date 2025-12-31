@@ -276,7 +276,8 @@ const playWebSound = (id) => {
 export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
     const [targetType, setTargetType] = useState('price');
     const [targetValue, setTargetValue] = useState(currentPrice || '');
-    const [direction, setDirection] = useState('crossing_up');
+    const [drawingTargets, setDrawingTargets] = useState([]);
+    const [directions, setDirections] = useState(['crossing_up']);
     const [indicatorType, setIndicatorType] = useState('sma');
     const [indicatorPeriod, setIndicatorPeriod] = useState(7);
 
@@ -304,6 +305,38 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
     // Drawings
     const [availableDrawings, setAvailableDrawings] = useState([]);
 
+    const normalizeDirections = (value) => {
+        const list = Array.isArray(value) ? value : (value ? [value] : []);
+        const ordered = [];
+        if (list.includes('crossing_up')) ordered.push('crossing_up');
+        if (list.includes('crossing_down')) ordered.push('crossing_down');
+        return ordered;
+    };
+
+    const normalizeDrawingTargets = (value) => {
+        if (Array.isArray(value)) return value.filter(Boolean);
+        if (typeof value === 'string' && value) return [value];
+        return [];
+    };
+
+    const toggleDirection = (nextDir) => {
+        setDirections(prev => {
+            const list = normalizeDirections(prev);
+            const has = list.includes(nextDir);
+            const next = has ? list.filter(d => d !== nextDir) : [...list, nextDir];
+            return normalizeDirections(next);
+        });
+    };
+
+    const toggleDrawingTarget = (id) => {
+        setDrawingTargets(prev => {
+            const list = normalizeDrawingTargets(prev);
+            const has = list.includes(id);
+            if (has) return list.filter(x => x !== id);
+            return [...list, id];
+        });
+    };
+
     useEffect(() => {
         loadData();
     }, [symbol]);
@@ -326,8 +359,13 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
     const handleEdit = (alert) => {
         setEditId(alert.id);
         setTargetType(alert.targetType);
-        setTargetValue(alert.targetValue);
-        setDirection(alert.condition);
+        setTargetValue(Array.isArray(alert.targetValue) ? (alert.targetValue[0] || '') : alert.targetValue);
+        setDirections(normalizeDirections(alert.conditions || alert.condition));
+        if (alert.targetType === 'drawing') {
+            setDrawingTargets(normalizeDrawingTargets(alert.targetValues || alert.targetValue));
+        } else {
+            setDrawingTargets([]);
+        }
         if (alert.targetType === 'indicator') {
             // Extract indicatorType and indicatorPeriod from targetValue string
             if (alert.targetValue.startsWith('rsi')) {
@@ -366,6 +404,7 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
     const handleCreate = () => {
         let finalTarget = null; // The actual numeric value to compare against (e.g., price, RSI threshold, calculated fib level)
         let finalTargetValue = null; // The string representation of the target (e.g., "100", "rsi7", "fib_100_90_0.618", "drawing_id")
+        let finalTargetValues = null;
 
         if (targetType === 'indicator') {
             if (indicatorType === 'rsi') {
@@ -389,7 +428,10 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                 finalTargetValue = key;
             }
         } else if (targetType === 'drawing') {
-            finalTargetValue = targetValue; // The Drawing ID
+            const targets = normalizeDrawingTargets(drawingTargets);
+            if (targets.length === 0) return;
+            finalTargetValues = targets;
+            finalTargetValue = targets[0]; // Legacy fallback for native
             finalTarget = 0; // Placeholder, actual comparison happens against drawing lines
         } else { // targetType === 'price'
             if (!targetValue) return;
@@ -397,13 +439,17 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
             finalTargetValue = finalTarget; // For price, target and targetValue are the same numeric value
         }
 
+        const normalizedDirections = normalizeDirections(directions);
+        if (normalizedDirections.length === 0) return;
         const newAlert = {
             id: editId || crypto.randomUUID(),
             symbol,
             targetType,
             target: finalTarget,
             targetValue: finalTargetValue,
-            condition: direction,
+            targetValues: finalTargetValues,
+            condition: normalizedDirections[0],
+            conditions: normalizedDirections,
             confirmation,
             interval: (confirmation === 'candle_close' || confirmation === 'candle_delay' || targetType === 'indicator') ? interval : '1m',
             delaySeconds: confirmation === 'time_delay' ? parseInt(delay) : 0,
@@ -434,7 +480,8 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
         setEditId(null);
         setTargetType('price');
         setTargetValue(currentPrice || '');
-        setDirection('crossing_up');
+        setDrawingTargets([]);
+        setDirections(['crossing_up']);
         setConfirmation('immediate');
         setIndicatorType('sma');
         setIndicatorPeriod(7);
@@ -448,6 +495,10 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
             vibration: 'once'
         });
     };
+
+    const hasUp = directions.includes('crossing_up');
+    const hasDown = directions.includes('crossing_down');
+    const selectedDrawingIds = normalizeDrawingTargets(drawingTargets);
 
     return (
         <div className="alert-overlay" onClick={onClose}>
@@ -478,7 +529,7 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                             {/* Section: Target */}
                             <div className="form-section">
                                 <div className="section-title">触发目标</div>
-                                <div className="toggle-group">
+                                <div className="toggle-group direction-toggle">
                                     <button className={targetType === 'price' ? 'active' : ''} onClick={() => setTargetType('price')}>💲 价格</button>
                                     <button className={targetType === 'indicator' ? 'active' : ''} onClick={() => setTargetType('indicator')}>📊 指标</button>
                                     <button className={targetType === 'drawing' ? 'active' : ''} onClick={() => setTargetType('drawing')}>🖍 图形</button>
@@ -630,21 +681,24 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                                                 暂无图形，请先在图表上绘制
                                             </div>
                                         ) : (
-                                            <CustomSelect
-                                                value={targetValue}
-                                                onChange={setTargetValue}
-                                                placeholder="-- 选择图形 --"
-                                                options={[
-                                                    { value: '', label: '-- 选择图形 --' },
-                                                    ...availableDrawings.map(d => ({
-                                                        value: d.id,
-                                                        label: `${d.type.toUpperCase()} (${d.id.substring(0, 8)})`
-                                                    }))
-                                                ]}
-                                            />
+                                            <div className="drawing-select">
+                                                {availableDrawings.map(d => {
+                                                    const isActive = selectedDrawingIds.includes(d.id);
+                                                    return (
+                                                        <button
+                                                            key={d.id}
+                                                            type="button"
+                                                            className={`drawing-chip ${isActive ? 'active' : ''}`}
+                                                            onClick={() => toggleDrawingTarget(d.id)}
+                                                        >
+                                                            {d.type.toUpperCase()} ({d.id.substring(0, 8)})
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
                                         )}
                                         <div style={{ marginTop: 8, fontSize: 12, color: '#888' }}>
-                                            {targetValue ? '提示: 将监控价格穿越该图形的任意线条' : ''}
+                                            {selectedDrawingIds.length > 0 ? `已选 ${selectedDrawingIds.length} 个图形，监控穿越任意线条` : ''}
                                         </div>
                                     </div>
                                 )}
@@ -653,9 +707,9 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                             {/* Section: Direction */}
                             <div className="form-section">
                                 <div className="section-title">触发方向</div>
-                                <div className="toggle-group">
-                                    <button className={direction === 'crossing_up' ? 'active up' : ''} onClick={() => setDirection('crossing_up')}>📈 上穿</button>
-                                    <button className={direction === 'crossing_down' ? 'active down' : ''} onClick={() => setDirection('crossing_down')}>📉 下穿</button>
+                                <div className="toggle-group target-toggle">
+                                    <button className={hasUp ? 'active up' : ''} onClick={() => toggleDirection('crossing_up')}>📈 上穿</button>
+                                    <button className={hasDown ? 'active down' : ''} onClick={() => toggleDirection('crossing_down')}>📉 下穿</button>
                                 </div>
                             </div>
 
@@ -943,36 +997,48 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                             {myAlerts.length === 0 ? (
                                 <div className="empty-state">暂无预警，点击"新建"添加</div>
                             ) : (
-                                myAlerts.map(alert => (
-                                    <div key={alert.id} className="list-item" onClick={() => handleEdit(alert)}>
-                                        <div className="item-main">
-                                            <span className={`direction-tag ${alert.condition === 'crossing_up' ? 'up' : 'down'}`}>
-                                                {alert.condition === 'crossing_up' ? '↑' : '↓'}
-                                            </span>
-                                            <span className="item-target">
-                                                {(() => {
-                                                    if (alert.targetType === 'price') return `$${alert.target}`;
-                                                    if (alert.targetType === 'drawing') return `图形 ${alert.targetValue}`;
-                                                    if (alert.targetType === 'indicator') {
-                                                        const t = alert.targetValue;
-                                                        if (t.startsWith('rsi')) return `RSI${t.slice(3)} @ ${alert.target}`;
-                                                        if (t.startsWith('sma')) return `SMA${t.slice(3)}`;
-                                                        if (t.startsWith('ema')) return `EMA${t.slice(3)}`;
-                                                        if (t.startsWith('fib')) return `Fib ${(alert.targetValue.split('_')[2] || '')}`;
-                                                        return t.toUpperCase();
-                                                    }
-                                                    return alert.targetValue;
-                                                })()}
-                                            </span>
+                                myAlerts.map(alert => {
+                                    const conditions = normalizeDirections(alert.conditions || alert.condition);
+                                    const up = conditions.includes('crossing_up');
+                                    const down = conditions.includes('crossing_down');
+                                    const dirClass = up && down ? 'both' : up ? 'up' : 'down';
+                                    const dirLabel = up && down ? '↕' : up ? '↑' : '↓';
+                                    const drawingTargets = normalizeDrawingTargets(alert.targetValues || alert.targetValue);
+                                    return (
+                                        <div key={alert.id} className="list-item" onClick={() => handleEdit(alert)}>
+                                            <div className="item-main">
+                                                <span className={`direction-tag ${dirClass}`}>
+                                                    {dirLabel}
+                                                </span>
+                                                <span className="item-target">
+                                                    {(() => {
+                                                        if (alert.targetType === 'price') return `$${alert.target}`;
+                                                        if (alert.targetType === 'drawing') {
+                                                            return drawingTargets.length > 1
+                                                                ? `图形 ${drawingTargets.length}个`
+                                                                : `图形 ${drawingTargets[0] || ''}`;
+                                                        }
+                                                        if (alert.targetType === 'indicator') {
+                                                            const t = alert.targetValue;
+                                                            if (t.startsWith('rsi')) return `RSI${t.slice(3)} @ ${alert.target}`;
+                                                            if (t.startsWith('sma')) return `SMA${t.slice(3)}`;
+                                                            if (t.startsWith('ema')) return `EMA${t.slice(3)}`;
+                                                            if (t.startsWith('fib')) return `Fib ${(alert.targetValue.split('_')[2] || '')}`;
+                                                            return t.toUpperCase();
+                                                        }
+                                                        return alert.targetValue;
+                                                    })()}
+                                                </span>
+                                            </div>
+                                            <div className="item-meta">
+                                                {alert.confirmation === 'candle_close'
+                                                    ? `${alert.interval} 收盘`
+                                                    : alert.delaySeconds > 0 ? `${alert.delaySeconds}秒` : '即时'}
+                                            </div>
+                                            <button className="item-delete" onClick={(e) => handleDelete(alert.id, e)}>×</button>
                                         </div>
-                                        <div className="item-meta">
-                                            {alert.confirmation === 'candle_close'
-                                                ? `${alert.interval} 收盘`
-                                                : alert.delaySeconds > 0 ? `${alert.delaySeconds}秒` : '即时'}
-                                        </div>
-                                        <button className="item-delete" onClick={(e) => handleDelete(alert.id, e)}>×</button>
-                                    </div>
-                                ))
+                                    );
+                                })
                             )}
                         </div>
                     )}

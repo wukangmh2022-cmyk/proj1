@@ -142,9 +142,8 @@ export const checkAlertTargets = (config, timestamp) => {
 
     // 4. Rect Zone
     if (algo === 'rect_zone') {
-        // If outside time bounds, inactive
-        if (timestamp < params.tStart || timestamp > params.tEnd) return null;
-        // Return both bounds
+        // Ignore left bound but stop after right edge
+        if (timestamp > params.tEnd) return null;
         return [params.pHigh, params.pLow];
     }
 
