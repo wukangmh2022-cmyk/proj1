@@ -643,7 +643,38 @@ export default function ChartPage() {
     };
 
     // Data <-> Screen
+    const rightScaleMarginsRef = useRef({ top: 0.05, bottom: 0.2 });
     const lastLogicalRangeRef = useRef(null);
+
+    const priceToScreenY = useCallback((price) => {
+        const series = seriesRef.current;
+        if (series) {
+            const y = series.priceToCoordinate(price);
+            if (typeof y === 'number' && isFinite(y)) return y;
+        }
+        const chart = chartRef.current;
+        const container = containerRef.current;
+        if (!chart || !container) return null;
+        const ps = chart.priceScale('right');
+        const vr = ps?.getVisiblePriceRange?.();
+        if (!vr || !isFinite(vr.from) || !isFinite(vr.to)) return null;
+
+        const fullHeight = Math.max(0, (container.clientHeight || 0) - 25);
+        const margins = rightScaleMarginsRef.current || { top: 0, bottom: 0 };
+        const topMargin = Math.max(0, Math.min(1, margins.top || 0));
+        const bottomMargin = Math.max(0, Math.min(1, margins.bottom || 0));
+        const topPx = fullHeight * topMargin;
+        const bottomPx = fullHeight * bottomMargin;
+        const usable = fullHeight - topPx - bottomPx;
+        if (usable <= 0) return null;
+
+        const high = Math.max(vr.from, vr.to);
+        const low = Math.min(vr.from, vr.to);
+        const span = high - low;
+        if (!(span > 0)) return null;
+
+        return topPx + ((high - price) / span) * usable;
+    }, []);
 
     const logicToScreen = useCallback((logic, price) => {
         if (!chartRef.current || !seriesRef.current || logic === null || isNaN(logic)) return null;
@@ -668,9 +699,9 @@ export default function ChartPage() {
             }
         }
 
-        const y = seriesRef.current.priceToCoordinate(price);
+        const y = priceToScreenY(price);
         return (x !== null && y !== null) ? { x, y } : null;
-    }, []);
+    }, [priceToScreenY]);
 
     // NOTE: keep time->logic conversion near the data helpers to avoid interval drift
 
@@ -735,7 +766,7 @@ export default function ChartPage() {
             if (d.type === 'hline') {
                 const p = (d.points && d.points[0]) ? d.points[0].price : d.price;
                 if (p === undefined) return null;
-                const y = seriesRef.current?.priceToCoordinate(p);
+                const y = priceToScreenY(p);
                 if (typeof y === 'number' && isFinite(y)) return { ...d, screenY: y };
                 if (prevEntry && typeof prevEntry.screenY === 'number' && isFinite(prevEntry.screenY)) {
                     usedFallback = true;
@@ -807,7 +838,7 @@ export default function ChartPage() {
         screenDrawingsRef.current = result;
         setScreenDrawings(result);
         return usedFallback;
-    }, [drawings, logicToScreen, interval]); // Added interval dependency
+    }, [drawings, logicToScreen, interval, priceToScreenY]); // Added interval dependency
 
     const redrawRetryRafRef = useRef(null);
     const redrawRetryCountRef = useRef(0);
@@ -1260,6 +1291,7 @@ export default function ChartPage() {
 
         if (subIndicator === 'RSI') {
             // Main Chart occupies top 55%
+            rightScaleMarginsRef.current = { top: 0.05, bottom: 0.45 };
             chart.priceScale('right').applyOptions({ scaleMargins: { top: 0.05, bottom: 0.45 } });
             // Vol occupies 55%-70% (middle band)
             chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.55, bottom: 0.30 } });
@@ -1271,6 +1303,7 @@ export default function ChartPage() {
             chart.priceScale('sub').applyOptions({ scaleMargins: { top: 0.75, bottom: 0 }, position: 'left' });
 
         } else if (subIndicator === 'MACD') {
+            rightScaleMarginsRef.current = { top: 0.05, bottom: 0.45 };
             chart.priceScale('right').applyOptions({ scaleMargins: { top: 0.05, bottom: 0.45 } });
             chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.55, bottom: 0.30 } });
 
@@ -1282,6 +1315,7 @@ export default function ChartPage() {
             chart.priceScale('sub').applyOptions({ scaleMargins: { top: 0.75, bottom: 0 }, position: 'left' });
 
         } else if (subIndicator === 'KDJ') {
+            rightScaleMarginsRef.current = { top: 0.05, bottom: 0.45 };
             chart.priceScale('right').applyOptions({ scaleMargins: { top: 0.05, bottom: 0.45 } });
             chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.55, bottom: 0.30 } });
 
@@ -1294,6 +1328,7 @@ export default function ChartPage() {
 
         } else {
             // Reset Main Chart and Vol to default layout (No Sub-Chart)
+            rightScaleMarginsRef.current = { top: 0.05, bottom: 0.20 };
             chart.priceScale('right').applyOptions({ scaleMargins: { top: 0.05, bottom: 0.20 } });
             chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.80, bottom: 0 } });
         }
@@ -1526,7 +1561,7 @@ export default function ChartPage() {
         return (l - 1) + (time - t1) / (t2 - t1);
     };
 
-    const timeToScreen = useCallback((time, price) => {
+        const timeToScreen = useCallback((time, price) => {
         if (!chartRef.current || !seriesRef.current) return null;
         const ts = chartRef.current.timeScale();
         let x = ts.timeToCoordinate(time);
@@ -1535,9 +1570,9 @@ export default function ChartPage() {
             const logic = getLogicFromTime(time);
             if (logic !== null) return logicToScreen(logic, price);
         }
-        const y = seriesRef.current.priceToCoordinate(price);
+        const y = priceToScreenY(price);
         return (x !== null && y !== null) ? { x, y } : null;
-    }, [logicToScreen, interval]);
+    }, [logicToScreen, interval, priceToScreenY]);
 
     const getTimeFromLogic = (logic) => {
         if (!allDataRef.current || allDataRef.current.length === 0) return null;
