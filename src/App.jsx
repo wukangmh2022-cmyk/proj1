@@ -537,6 +537,61 @@ function DiagnosticsPage() {
   const [nativeText, setNativeText] = useState('');
   const [jsText, setJsText] = useState('');
 
+  const copyText = async (text) => {
+    const v = text || '';
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(v);
+        return true;
+      }
+    } catch { }
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = v;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  };
+
+  const LogBox = ({ title, value, onCopy }) => {
+    return (
+      <div style={{ marginTop: 12 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', marginBottom: 6 }}>
+          <div style={{ color: '#888', fontSize: 12 }}>{title}</div>
+          <button className="btn btn-secondary" onClick={onCopy} style={{ padding: '6px 10px', fontSize: 12 }}>复制</button>
+        </div>
+        <textarea
+          readOnly
+          value={value || '(empty)'}
+          onFocus={(e) => e.currentTarget.select()}
+          style={{
+            width: '100%',
+            minHeight: '30vh',
+            resize: 'vertical',
+            background: '#0b0f14',
+            border: '1px solid rgba(255,255,255,0.1)',
+            padding: 12,
+            borderRadius: 8,
+            color: '#d1d5db',
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace',
+            fontSize: 12,
+            lineHeight: 1.35,
+            whiteSpace: 'pre',
+            overflow: 'auto'
+          }}
+        />
+      </div>
+    );
+  };
+
   const load = useCallback(async () => {
     try {
       const res = await Diagnostics.getLogs({ maxBytes: 200000 });
@@ -568,14 +623,16 @@ function DiagnosticsPage() {
           }}>清空</button>
         </div>
       </div>
-      <div style={{ marginTop: 12 }}>
-        <div style={{ color: '#888', fontSize: 12, marginBottom: 6 }}>Native 文件日志（含 MainActivity onCreate/onResume）</div>
-        <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: '#0b0f14', border: '1px solid rgba(255,255,255,0.1)', padding: 12, borderRadius: 8, maxHeight: '35vh', overflow: 'auto' }}>{nativeText || '(empty)'}</pre>
-      </div>
-      <div style={{ marginTop: 12 }}>
-        <div style={{ color: '#888', fontSize: 12, marginBottom: 6 }}>JS 本地 ring buffer（不依赖网络）</div>
-        <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: '#0b0f14', border: '1px solid rgba(255,255,255,0.1)', padding: 12, borderRadius: 8, maxHeight: '35vh', overflow: 'auto' }}>{jsText || '(empty)'}</pre>
-      </div>
+      <LogBox
+        title="Native 文件日志（含 MainActivity onCreate/onResume）"
+        value={nativeText}
+        onCopy={async () => { await copyText(nativeText); }}
+      />
+      <LogBox
+        title="JS 本地 ring buffer（不依赖网络）"
+        value={jsText}
+        onCopy={async () => { await copyText(jsText); }}
+      />
     </div>
   );
 }
