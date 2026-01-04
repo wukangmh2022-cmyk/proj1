@@ -12,6 +12,8 @@ public class MainActivity extends BridgeActivity {
         long now = System.currentTimeMillis();
         Log.d(TAG, "onCreate at " + now);
         registerPlugin(FloatingWidgetPlugin.class);
+        // Switch off the Launch (SplashScreen) theme as early as possible to avoid gray/blank window on resume.
+        setTheme(R.style.AppTheme_NoActionBar);
         super.onCreate(savedInstanceState);
     }
 

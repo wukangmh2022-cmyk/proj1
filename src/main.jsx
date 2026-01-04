@@ -14,3 +14,6 @@ createRoot(rootEl).render(
     <App />
   </StrictMode>,
 )
+
+// Helps diagnose "gray blank" resumes where WebView is alive but UI not painting yet.
+requestAnimationFrame(() => perfLog('[perf] first rAF after render call at', Date.now()))

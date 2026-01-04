@@ -75,6 +75,17 @@ function HomePage() {
     };
   }, []);
 
+  // App lifecycle logging (helps diagnose gray-screen resume without adb)
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    const l = CapacitorApp.addListener('appStateChange', (state) => {
+      perfLog('[perf] appStateChange', state?.isActive ? 'active' : 'inactive', 'at', Date.now());
+    });
+    return () => {
+      l.then(r => r.remove());
+    };
+  }, []);
+
   const normalizeAlertsForNative = (alerts) => {
     return alerts.map(a => {
       const normalizedCondition = Array.isArray(a.condition)

@@ -1108,7 +1108,7 @@ public class FloatingWindowService extends Service {
         }
 
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, channelId)
-                .setContentTitle("Binance Monitor")
+                .setContentTitle("Amaze Monitor")
                 .setContentText("后台监控价格中...")
                 .setSmallIcon(android.R.drawable.sym_def_app_icon)
                 .setOngoing(true);
