@@ -11,7 +11,9 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         long now = System.currentTimeMillis();
         Log.d(TAG, "onCreate at " + now);
+        DiagnosticsLog.append(getApplicationContext(), "[native] MainActivity onCreate at " + now);
         registerPlugin(FloatingWidgetPlugin.class);
+        registerPlugin(DiagnosticsPlugin.class);
         // Switch off the Launch (SplashScreen) theme as early as possible to avoid gray/blank window on resume.
         setTheme(R.style.AppTheme_NoActionBar);
         super.onCreate(savedInstanceState);
@@ -22,5 +24,6 @@ public class MainActivity extends BridgeActivity {
         super.onResume();
         long now = System.currentTimeMillis();
         Log.d(TAG, "onResume at " + now);
+        DiagnosticsLog.append(getApplicationContext(), "[native] MainActivity onResume at " + now);
     }
 }

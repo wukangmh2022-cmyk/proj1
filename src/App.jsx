@@ -12,6 +12,7 @@ import ChartPage from './components/ChartPage';
 import AlertConfigModal from './components/AlertConfigModal';
 import './App.css';
 import { perfLog } from './utils/perfLogger';
+import Diagnostics from './plugins/Diagnostics';
 
 import { App as CapacitorApp } from '@capacitor/app';
 
@@ -74,6 +75,11 @@ function HomePage() {
       perfLog('[perf] HomePage unmount at', Date.now());
     };
   }, []);
+
+  const openDiagnostics = () => {
+    if (!Capacitor.isNativePlatform()) return;
+    navigate('/diag');
+  };
 
   // App lifecycle logging (helps diagnose gray-screen resume without adb)
   useEffect(() => {
@@ -501,6 +507,11 @@ function HomePage() {
             </div>
             <div className="modal-actions">
               <button className="btn btn-primary" onClick={() => setShowSettings(false)}>完成</button>
+              {Capacitor.isNativePlatform() && (
+                <button className="btn btn-secondary" onClick={() => { setShowSettings(false); openDiagnostics(); }}>
+                  诊断
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -522,12 +533,60 @@ const ChartPageWrapper = () => {
   return <ChartPage key={symbol} />;
 };
 
+function DiagnosticsPage() {
+  const [nativeText, setNativeText] = useState('');
+  const [jsText, setJsText] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      const res = await Diagnostics.getLogs({ maxBytes: 200000 });
+      setNativeText(res?.text || '');
+    } catch (e) {
+      setNativeText(String(e?.message || e));
+    }
+    try {
+      const raw = localStorage.getItem('amaze_diag_js');
+      const list = raw ? JSON.parse(raw) : [];
+      setJsText(list.map(x => `${new Date(x.t).toISOString()} ${x.text}`).join('\n'));
+    } catch (e) {
+      setJsText(String(e?.message || e));
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <div className="app-container" style={{ padding: 16 }}>
+      <div className="header">
+        <h1>诊断</h1>
+        <div className="header-actions">
+          <button className="btn btn-secondary" onClick={load}>刷新</button>
+          <button className="btn btn-danger" onClick={async () => {
+            try { await Diagnostics.clearLogs(); } catch {}
+            try { localStorage.removeItem('amaze_diag_js'); } catch {}
+            load();
+          }}>清空</button>
+        </div>
+      </div>
+      <div style={{ marginTop: 12 }}>
+        <div style={{ color: '#888', fontSize: 12, marginBottom: 6 }}>Native 文件日志（含 MainActivity onCreate/onResume）</div>
+        <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: '#0b0f14', border: '1px solid rgba(255,255,255,0.1)', padding: 12, borderRadius: 8, maxHeight: '35vh', overflow: 'auto' }}>{nativeText || '(empty)'}</pre>
+      </div>
+      <div style={{ marginTop: 12 }}>
+        <div style={{ color: '#888', fontSize: 12, marginBottom: 6 }}>JS 本地 ring buffer（不依赖网络）</div>
+        <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: '#0b0f14', border: '1px solid rgba(255,255,255,0.1)', padding: 12, borderRadius: 8, maxHeight: '35vh', overflow: 'auto' }}>{jsText || '(empty)'}</pre>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   return (
     <HashRouter>
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/chart/:symbol" element={<ChartPageWrapper />} />
+        <Route path="/diag" element={<DiagnosticsPage />} />
       </Routes>
     </HashRouter>
   );
