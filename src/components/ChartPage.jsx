@@ -680,12 +680,13 @@ export default function ChartPage() {
     }, [indicators, mainIndicatorType, subIndicatorConfig]);
 
     const updateScreenDrawings = useCallback(() => {
-        if (!allDataRef.current.length) return;
+        if (!allDataRef.current.length) return false;
         // Prevent mixing old data interval with new interval
-        if (dataIntervalRef.current !== interval) return;
+        if (dataIntervalRef.current !== interval) return false;
         const prevMap = Object.fromEntries((screenDrawingsRef.current || []).map(d => [d.id, d]));
         const data = allDataRef.current;
         const estimatedStep = parseInterval(interval);
+        let usedFallback = false;
 
         const getLogic = (time) => {
             // Debug Log
@@ -735,14 +736,27 @@ export default function ChartPage() {
                 const p = (d.points && d.points[0]) ? d.points[0].price : d.price;
                 if (p === undefined) return null;
                 const y = seriesRef.current?.priceToCoordinate(p);
-                if (y !== null) return { ...d, screenY: y };
-                return prevEntry || null;
+                if (typeof y === 'number' && isFinite(y)) return { ...d, screenY: y };
+                if (prevEntry && typeof prevEntry.screenY === 'number' && isFinite(prevEntry.screenY)) {
+                    usedFallback = true;
+                    return { ...d, screenY: prevEntry.screenY };
+                }
+                return null;
             }
 
             if (d.points && d.points.some(ppp => !ppp.time)) return null;
 
             if (d.points) {
-                const sp = d.points.map(p => timeToScreen(p.time, p.price)).filter(Boolean);
+                const prevPoints = prevEntry?.screenPoints;
+                const sp = d.points.map((p, i) => {
+                    const pt = timeToScreen(p.time, p.price);
+                    if (pt && typeof pt.x === 'number' && typeof pt.y === 'number' && isFinite(pt.x) && isFinite(pt.y)) return pt;
+                    if (prevPoints && prevPoints[i]) {
+                        usedFallback = true;
+                        return prevPoints[i];
+                    }
+                    return null;
+                });
 
                 // DEBUG: Check for off-screen points to left
                 // DEBUG: Check for off-screen points to left
@@ -778,20 +792,53 @@ export default function ChartPage() {
                         console.log(`  P${i}: Time=${p.time} Price=${p.price} Logic=${l.toFixed(2)} ScreenX=${s?.x.toFixed(1)} ScreenY=${s?.y.toFixed(1)}`);
                     });
                 }
-                if (sp.length === d.points.length) return { ...d, screenPoints: sp };
-                const prev = prevMap[d.id];
-                if (prev && prev.screenPoints && prev.screenPoints.length === d.points.length) {
-                    return { ...d, screenPoints: prev.screenPoints };
-                }
+                const hasMissing = sp.some(p => !p);
+                if (!hasMissing) return { ...d, screenPoints: sp };
                 // Keep previous entry if available to avoid flicker/disappear
-                if (prevEntry) return prevEntry;
+                if (prevEntry && prevEntry.screenPoints && prevEntry.screenPoints.length === d.points.length) {
+                    usedFallback = true;
+                    return { ...d, screenPoints: prevEntry.screenPoints };
+                }
                 return null;
             }
             return null;
         }).filter(Boolean);
-        setScreenDrawings(result);
+        // Update ref immediately so subsequent recalcs don't fall back to stale coordinates.
         screenDrawingsRef.current = result;
+        setScreenDrawings(result);
+        return usedFallback;
     }, [drawings, logicToScreen, interval]); // Added interval dependency
+
+    const redrawRetryRafRef = useRef(null);
+    const redrawRetryCountRef = useRef(0);
+    const requestScreenDrawingsUpdate = useCallback(() => {
+        const usedFallback = updateScreenDrawings();
+        if (!usedFallback) {
+            redrawRetryCountRef.current = 0;
+            return;
+        }
+        if (redrawRetryCountRef.current >= 8) {
+            redrawRetryCountRef.current = 0;
+            return;
+        }
+        redrawRetryCountRef.current += 1;
+        if (redrawRetryRafRef.current) return;
+        redrawRetryRafRef.current = requestAnimationFrame(() => {
+            redrawRetryRafRef.current = null;
+            requestScreenDrawingsUpdate();
+        });
+    }, [updateScreenDrawings]);
+
+    const requestScreenDrawingsUpdateRef = useRef(requestScreenDrawingsUpdate);
+    useEffect(() => {
+        requestScreenDrawingsUpdateRef.current = requestScreenDrawingsUpdate;
+    }, [requestScreenDrawingsUpdate]);
+
+    useEffect(() => {
+        return () => {
+            if (redrawRetryRafRef.current) cancelAnimationFrame(redrawRetryRafRef.current);
+        };
+    }, []);
 
     useEffect(() => {
         if (!chartRef.current || !seriesRef.current) return;
@@ -829,7 +876,7 @@ export default function ChartPage() {
             if (timeState !== prevTimeState || priceState !== prevPriceState) {
                 prevTimeState = timeState;
                 prevPriceState = priceState;
-                updateScreenDrawings();
+                requestScreenDrawingsUpdate();
 
                 // Sync Sticky Crosshair Position during chart pan/zoom
                 if (customCrosshairRef.current) {
@@ -860,7 +907,7 @@ export default function ChartPage() {
         checkSync();
 
         return () => cancelAnimationFrame(frameId);
-    }, [drawings, updateScreenDrawings]);
+    }, [drawings, requestScreenDrawingsUpdate]);
 
     // Chart init
     useEffect(() => {
@@ -918,6 +965,13 @@ export default function ChartPage() {
         chartRef.current = chart;
         seriesRef.current = series;
 
+        // Price-scale changes (vertical zoom) must trigger drawing projection updates
+        const priceScale = chart.priceScale('right');
+        const onPriceRange = () => requestScreenDrawingsUpdateRef.current?.();
+        if (priceScale?.subscribeVisiblePriceRangeChange) {
+            priceScale.subscribeVisiblePriceRangeChange(onPriceRange);
+        }
+
         // Crosshair move - update active point position & legend
         chart.subscribeCrosshairMove((p) => {
             if (!p.point) { setCursor(null); setLegendValues({}); return; }
@@ -958,11 +1012,17 @@ export default function ChartPage() {
         const resize = () => {
             if (containerRef.current) {
                 chart.applyOptions({ width: containerRef.current.clientWidth, height: containerRef.current.clientHeight });
-                updateScreenDrawings();
+                requestScreenDrawingsUpdateRef.current?.();
             }
         };
         window.addEventListener('resize', resize);
-        return () => { window.removeEventListener('resize', resize); chart.remove(); };
+        return () => {
+            window.removeEventListener('resize', resize);
+            if (priceScale?.unsubscribeVisiblePriceRangeChange) {
+                priceScale.unsubscribeVisiblePriceRangeChange(onPriceRange);
+            }
+            chart.remove();
+        };
     }, []);
 
     // Disable native crosshair completely - we'll implement our own
@@ -1296,7 +1356,7 @@ export default function ChartPage() {
                 updateIndicators(formatted);
                 perfLog('[perf] chart data set', symbol, interval, 'bars=', formatted.length, 'ms=', Date.now() - loadStart);
                 // Force redraw drawings with new data time-scale, using rAF to ensure TimeScale is ready
-                requestAnimationFrame(() => updateScreenDrawings());
+                requestAnimationFrame(() => requestScreenDrawingsUpdateRef.current?.());
 
                 // Restore Range logic
                 // Restore Range logic
@@ -1380,8 +1440,8 @@ export default function ChartPage() {
                 }, 500);
             }
 
-                // Recompute drawing screen positions when view changes
-                requestAnimationFrame(() => updateScreenDrawings());
+            // Recompute drawing screen positions when view changes
+            requestAnimationFrame(() => requestScreenDrawingsUpdateRef.current?.());
 
             if (newRange && newRange.from < 20 && !isFetchingHistoryRef.current && allDataRef.current.length > 0) {
                 const oldestTime = allDataRef.current[0].time * 1000;
