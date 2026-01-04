@@ -33,6 +33,7 @@ export default function ChartPage() {
     const chartRef = useRef(null);
     const seriesRef = useRef(null);
     const labelsInitializedRef = useRef(false);
+    const [chartReadyTick, setChartReadyTick] = useState(0);
 
     const getPrefix = (type) => LABEL_PREFIX[type] || 'd';
 
@@ -942,7 +943,7 @@ export default function ChartPage() {
         checkSync();
 
         return () => cancelAnimationFrame(frameId);
-    }, [drawings, requestScreenDrawingsUpdate]);
+    }, [chartReadyTick, drawings, requestScreenDrawingsUpdate]);
 
     // Chart init
     useEffect(() => {
@@ -999,6 +1000,7 @@ export default function ChartPage() {
 
         chartRef.current = chart;
         seriesRef.current = series;
+        setChartReadyTick(t => t + 1);
 
         // Price-scale changes (vertical zoom) must trigger drawing projection updates
         const priceScale = chart.priceScale('right');
@@ -1071,7 +1073,7 @@ export default function ChartPage() {
                 horzLine: { visible: false, labelVisible: false },
             }
         });
-    }, [drawMode]);
+    }, [chartReadyTick, drawMode]);
 
     // Indicators Logic
     const calSMA = (data, count) => {
