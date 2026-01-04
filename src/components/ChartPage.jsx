@@ -887,22 +887,26 @@ export default function ChartPage() {
             const timeRange = chart.timeScale().getVisibleLogicalRange();
             const timeState = timeRange ? `${timeRange.from.toFixed(2)},${timeRange.to.toFixed(2)}` : null;
 
-            // Check Price Scale (by mapping fixed price points)
-            // We use two distinct prices to detect translation and scaling
-            const y1 = series.priceToCoordinate(seriesRef.current.coordinateToPrice(0) || 0);
-            // Using dynamic reference might be better: get visible range
-            // But coordinateToPrice(0) gives price at top? No.
-            // Better: just use top and bottom pixel coordinates and check their prices? 
-            // Actually, we want to know if the mapping changed.
-            // Let's use the chart height to get two prices and check their coords? 
-            // The simplest robust way: priceToCoordinate of the current top/bottom prices of the view?
-            // No, getting mapped coords of fixed values is best.
-            // Let's us 0 and 1000? No, crypto prices vary. 
-            // Let's use the first visible candle's open/close?
-            // Actually, we can just map 0 and 1000000. If scale changes, their Y changes.
-            const tY1 = series.priceToCoordinate(100);
-            const tY2 = series.priceToCoordinate(100000);
-            const priceState = `${tY1},${tY2}`;
+            // Check Price Scale (must react to vertical zoom reliably on mobile).
+            // Prefer visible price range API; fallback to reading prices at top/bottom pixels.
+            let priceState = null;
+            const ps = chart.priceScale('right');
+            const vr = ps?.getVisiblePriceRange?.();
+            if (vr && isFinite(vr.from) && isFinite(vr.to)) {
+                priceState = `${vr.from.toFixed(8)},${vr.to.toFixed(8)}`;
+            } else if (containerRef.current) {
+                const h = containerRef.current.clientHeight || 0;
+                const topP = series.coordinateToPrice(0);
+                const botP = series.coordinateToPrice(h);
+                if (isFinite(topP) && isFinite(botP)) {
+                    priceState = `${topP.toFixed(8)},${botP.toFixed(8)}`;
+                } else {
+                    // Last resort: two fixed probe prices (may be unreliable for some symbols/ranges)
+                    const tY1 = series.priceToCoordinate(100);
+                    const tY2 = series.priceToCoordinate(100000);
+                    priceState = `${tY1},${tY2}`;
+                }
+            }
 
             if (timeState !== prevTimeState || priceState !== prevPriceState) {
                 prevTimeState = timeState;
