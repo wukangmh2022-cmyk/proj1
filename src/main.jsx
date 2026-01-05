@@ -23,7 +23,7 @@ requestAnimationFrame(() => perfLog('[perf] first rAF after render call at', Dat
 // force a reload to recover from long gray-screen hangs on Android.
 if (Capacitor.isNativePlatform()) {
   const MIN_BACKGROUND_MS = 30_000; // only arm after longer background/lock
-  const WATCHDOG_MS = 400; // if no rAF within this, reload (fast-fail to avoid long gray screens)
+  const WATCHDOG_MS = 1_200; // if no 2-frame paint within this, reload
   let hiddenAt = null;
   let watchdogTimer = null;
 
@@ -48,15 +48,17 @@ if (Capacitor.isNativePlatform()) {
 
   const armWatchdog = () => {
     if (watchdogTimer) clearTimeout(watchdogTimer);
-    let painted = false;
+    let painted2Frames = false;
     requestAnimationFrame(() => {
-      painted = true;
-      if (watchdogTimer) clearTimeout(watchdogTimer);
-      watchdogTimer = null;
-      perfLog('[perf] resume watchdog: first paint at', Date.now());
+      requestAnimationFrame(() => {
+        painted2Frames = true;
+        if (watchdogTimer) clearTimeout(watchdogTimer);
+        watchdogTimer = null;
+        perfLog('[perf] resume watchdog: 2-frame paint at', Date.now());
+      });
     });
     watchdogTimer = setTimeout(() => {
-      if (painted) return;
+      if (painted2Frames) return;
       if (!canReloadNow()) {
         perfLog('[perf] resume watchdog: reload suppressed (loop guard) at', Date.now());
         return;
