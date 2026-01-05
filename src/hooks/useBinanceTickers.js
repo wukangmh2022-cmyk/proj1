@@ -5,7 +5,7 @@ import { perfLog } from '../utils/perfLogger';
 
 const BINANCE_SPOT_WS = 'wss://stream.binance.com:9443/stream';
 const BINANCE_FUTURES_WS = 'wss://fstream.binance.com/stream';
-const DIAG_ENABLED = import.meta.env.VITE_DIAG === '1';
+const DIAG_ENABLED = 1;
 
 /**
  * Hook to get real-time ticker data.

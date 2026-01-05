@@ -4,9 +4,9 @@ const PERF_LOG_ENDPOINT = 'http://47.108.203.64:5000/log';
 // - VITE_DIAG=1: enable local diagnostics (native file + localStorage ring buffer)
 // - VITE_PERF_REMOTE=1: enable remote perf log upload
 // - VITE_PERF_CONSOLE=1: force console logging in prod
-const DIAG_ENABLED = import.meta.env.VITE_DIAG === '1';
-const REMOTE_ENABLED = import.meta.env.VITE_PERF_REMOTE === '1';
-const CONSOLE_ENABLED = import.meta.env.DEV || import.meta.env.VITE_PERF_CONSOLE === '1';
+const DIAG_ENABLED = 1;
+const REMOTE_ENABLED = 0;
+const CONSOLE_ENABLED = 0;
 
 let diagnosticsPlugin = null;
 let isNative = null;

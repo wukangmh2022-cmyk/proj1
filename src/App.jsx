@@ -16,7 +16,7 @@ import Diagnostics from './plugins/Diagnostics';
 
 import { App as CapacitorApp } from '@capacitor/app';
 
-const DIAG_ENABLED = import.meta.env.VITE_DIAG === '1';
+const DIAG_ENABLED = 1;
 
 function HomePage() {
   const navigate = useNavigate();
