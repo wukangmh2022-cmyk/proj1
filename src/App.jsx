@@ -602,7 +602,12 @@ function DiagnosticsPage() {
     try {
       const raw = localStorage.getItem('amaze_diag_js');
       const list = raw ? JSON.parse(raw) : [];
-      setJsText(list.map(x => `${new Date(x.t).toISOString()} ${x.text}`).join('\n'));
+      setJsText(list.map(x => {
+        const t = typeof x.t === 'number' ? x.t : Date.now();
+        // Native file log uses device local time; show JS timestamps in local time too (and keep epoch for alignment).
+        const local = new Date(t).toLocaleString();
+        return `${local} (${t}) ${x.text}`;
+      }).join('\n'));
     } catch (e) {
       setJsText(String(e?.message || e));
     }
