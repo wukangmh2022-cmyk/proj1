@@ -23,6 +23,7 @@ export const useBinanceTickers = (symbols = []) => {
     const listenerRef = useRef(null);
     const flushIntervalRef = useRef(null);
     const perfLoggedRef = useRef(false);
+    const resumeHeartbeatRef = useRef(null);
 
     const isNative = Capacitor.isNativePlatform();
     useEffect(() => {
@@ -78,9 +79,25 @@ export const useBinanceTickers = (symbols = []) => {
             if (document.hidden) {
                 perfLog('[perf] visibilitychange hidden at', Date.now());
                 stopLoop();
+                if (resumeHeartbeatRef.current) {
+                    clearInterval(resumeHeartbeatRef.current);
+                    resumeHeartbeatRef.current = null;
+                }
             } else {
                 perfLog('[perf] visibilitychange visible at', Date.now(), 'isNative=', isNative);
                 startLoop();
+                requestAnimationFrame(() => perfLog('[perf] visibilitychange visible rAF at', Date.now()));
+                // Heartbeat for 10s to confirm JS thread is running after resume (helps diagnose gray-screen freezes)
+                let n = 0;
+                if (resumeHeartbeatRef.current) clearInterval(resumeHeartbeatRef.current);
+                resumeHeartbeatRef.current = setInterval(() => {
+                    n += 1;
+                    perfLog('[perf] resume heartbeat', n, 'at', Date.now());
+                    if (n >= 10) {
+                        clearInterval(resumeHeartbeatRef.current);
+                        resumeHeartbeatRef.current = null;
+                    }
+                }, 1000);
                 // On resume, if native, request fresh data
                 if (isNative) FloatingWidget.requestTickerUpdate();
             }
@@ -90,6 +107,10 @@ export const useBinanceTickers = (symbols = []) => {
 
         return () => {
             stopLoop();
+            if (resumeHeartbeatRef.current) {
+                clearInterval(resumeHeartbeatRef.current);
+                resumeHeartbeatRef.current = null;
+            }
             document.removeEventListener('visibilitychange', handleVisibilityChange);
         };
     }, [isNative]);

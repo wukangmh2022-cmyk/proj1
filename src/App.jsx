@@ -86,6 +86,9 @@ function HomePage() {
     if (!Capacitor.isNativePlatform()) return;
     const l = CapacitorApp.addListener('appStateChange', (state) => {
       perfLog('[perf] appStateChange', state?.isActive ? 'active' : 'inactive', 'at', Date.now());
+      if (state?.isActive) {
+        requestAnimationFrame(() => perfLog('[perf] appStateChange active rAF at', Date.now()));
+      }
     });
     return () => {
       l.then(r => r.remove());
