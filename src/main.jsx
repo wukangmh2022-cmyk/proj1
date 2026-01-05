@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Capacitor } from '@capacitor/core'
+import { Toast } from '@capacitor/toast'
 import './index.css'
 import App from './App.jsx'
 import { perfLog } from './utils/perfLogger'
@@ -55,15 +56,18 @@ if (Capacitor.isNativePlatform()) {
         if (watchdogTimer) clearTimeout(watchdogTimer);
         watchdogTimer = null;
         perfLog('[perf] resume watchdog: 2-frame paint at', Date.now());
+        Toast.show({ text: '恢复正常（已绘制）', duration: 'short' }).catch(() => {});
       });
     });
     watchdogTimer = setTimeout(() => {
       if (painted2Frames) return;
       if (!canReloadNow()) {
         perfLog('[perf] resume watchdog: reload suppressed (loop guard) at', Date.now());
+        Toast.show({ text: '恢复异常但已抑制重载', duration: 'short' }).catch(() => {});
         return;
       }
       perfLog('[perf] resume watchdog: reloading at', Date.now());
+      Toast.show({ text: '恢复超时，正在重载…', duration: 'short' }).catch(() => {});
       window.location.reload();
     }, WATCHDOG_MS);
   };
