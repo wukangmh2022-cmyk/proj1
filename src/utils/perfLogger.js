@@ -8,6 +8,8 @@ const DIAG_ENABLED = 1;
 const REMOTE_ENABLED = 0;
 const CONSOLE_ENABLED = 0;
 
+export const diagEnabled = !!DIAG_ENABLED;
+
 let diagnosticsPlugin = null;
 let isNative = null;
 const DIAG_LOCAL_KEY = 'amaze_diag_js';
