@@ -20,10 +20,42 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override
+    public void onStart() {
+        super.onStart();
+        long now = System.currentTimeMillis();
+        Log.d(TAG, "onStart at " + now);
+        DiagnosticsLog.append(getApplicationContext(), "[native] MainActivity onStart at " + now);
+    }
+
+    @Override
     public void onResume() {
         super.onResume();
         long now = System.currentTimeMillis();
         Log.d(TAG, "onResume at " + now);
         DiagnosticsLog.append(getApplicationContext(), "[native] MainActivity onResume at " + now);
+    }
+
+    @Override
+    public void onPause() {
+        super.onPause();
+        long now = System.currentTimeMillis();
+        Log.d(TAG, "onPause at " + now);
+        DiagnosticsLog.append(getApplicationContext(), "[native] MainActivity onPause at " + now);
+    }
+
+    @Override
+    public void onStop() {
+        super.onStop();
+        long now = System.currentTimeMillis();
+        Log.d(TAG, "onStop at " + now);
+        DiagnosticsLog.append(getApplicationContext(), "[native] MainActivity onStop at " + now);
+    }
+
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        long now = System.currentTimeMillis();
+        Log.d(TAG, "onDestroy at " + now);
+        DiagnosticsLog.append(getApplicationContext(), "[native] MainActivity onDestroy at " + now);
     }
 }
