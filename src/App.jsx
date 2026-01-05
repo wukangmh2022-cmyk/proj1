@@ -146,10 +146,25 @@ function HomePage() {
   useEffect(() => {
     perfLog('[perf] HomePage useEffect startData/syncAlerts at', Date.now(), 'isNative=', Capacitor.isNativePlatform());
     if (Capacitor.isNativePlatform()) {
-      FloatingWidget.startData({ symbols }).catch(console.error);
-      // Initial alert sync
-      const allAlerts = normalizeAlertsForNative(getAlerts());
-      FloatingWidget.syncAlerts({ alerts: allAlerts }).catch(console.error);
+      // Defer native/plugin work until after first paint to reduce cold-start and reload latency.
+      let cancelled = false;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (cancelled) return;
+          FloatingWidget.startData({ symbols }).catch(console.error);
+          // Initial alert sync (can be heavy if drawings are present)
+          setTimeout(() => {
+            if (cancelled) return;
+            try {
+              const allAlerts = normalizeAlertsForNative(getAlerts());
+              FloatingWidget.syncAlerts({ alerts: allAlerts }).catch(console.error);
+            } catch (e) {
+              console.error(e);
+            }
+          }, 0);
+        });
+      });
+      return () => { cancelled = true; };
     }
   }, [symbols]); // Re-start/sync when symbols change
 

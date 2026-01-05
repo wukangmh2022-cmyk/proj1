@@ -85,7 +85,7 @@ export const useBinanceTickers = (symbols = []) => {
                 startLoop();
                 if (DIAG_ENABLED) requestAnimationFrame(() => perfLog('[perf] visibilitychange visible rAF at', Date.now()));
                 // On resume, if native, request fresh data
-                if (isNative) FloatingWidget.requestTickerUpdate();
+                if (isNative) requestAnimationFrame(() => FloatingWidget.requestTickerUpdate());
             }
         };
 
@@ -114,11 +114,14 @@ export const useBinanceTickers = (symbols = []) => {
             };
         });
 
-        // Request immediate update (replay last cached data)
-        perfLog('[perf] useBinanceTickers requestTickerUpdate at', Date.now());
-        FloatingWidget.requestTickerUpdate();
+        // Request update after first paint to reduce startup jank.
+        const t = setTimeout(() => {
+            perfLog('[perf] useBinanceTickers requestTickerUpdate at', Date.now());
+            FloatingWidget.requestTickerUpdate();
+        }, 0);
 
         return () => {
+            clearTimeout(t);
             if (listenerRef.current) {
                 listenerRef.current.remove();
             }

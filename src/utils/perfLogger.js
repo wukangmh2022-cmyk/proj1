@@ -14,6 +14,8 @@ let diagnosticsPlugin = null;
 let isNative = null;
 const DIAG_LOCAL_KEY = 'amaze_diag_js';
 const DIAG_LOCAL_MAX = 200;
+let pending = null; // { items: Array<{t:number,text:string}> }
+let flushTimer = null;
 
 const safeStringify = (value) => {
     if (typeof value === 'string') return value;
@@ -42,10 +44,17 @@ const postPerfLog = (text) => {
 
 const appendLocalDiag = (text) => {
     if (!DIAG_ENABLED) return;
+    // Batch writes to avoid localStorage churn during UI interactions.
+    if (!pending) pending = { items: [] };
+    pending.items.push({ t: Date.now(), text });
+    scheduleFlush();
+};
+
+const flushLocalDiag = (items) => {
     try {
         const raw = localStorage.getItem(DIAG_LOCAL_KEY);
         const list = raw ? JSON.parse(raw) : [];
-        list.push({ t: Date.now(), text });
+        items.forEach(x => list.push(x));
         if (list.length > DIAG_LOCAL_MAX) list.splice(0, list.length - DIAG_LOCAL_MAX);
         localStorage.setItem(DIAG_LOCAL_KEY, JSON.stringify(list));
     } catch (_) {}
@@ -53,6 +62,11 @@ const appendLocalDiag = (text) => {
 
 const appendNativeDiag = async (text) => {
     if (!DIAG_ENABLED) return;
+    // Batched via scheduleFlush() to reduce bridge calls.
+    appendLocalDiag(text);
+};
+
+const flushNativeDiag = async (items) => {
     try {
         if (isNative === null) {
             const mod = await import('@capacitor/core');
@@ -62,8 +76,24 @@ const appendNativeDiag = async (text) => {
         if (!diagnosticsPlugin) {
             diagnosticsPlugin = (await import('../plugins/Diagnostics')).default;
         }
-        diagnosticsPlugin.appendLog({ text }).catch(() => {});
+        // Send as one payload to reduce bridge overhead. Native side will prefix with one timestamp.
+        diagnosticsPlugin.appendLog({ text: items.map(x => x.text).join('\n') }).catch(() => {});
     } catch (_) {}
+};
+
+const scheduleFlush = () => {
+    if (!DIAG_ENABLED) return;
+    if (flushTimer) return;
+    flushTimer = setTimeout(() => {
+        flushTimer = null;
+        const batch = pending;
+        pending = null;
+        if (!batch || !batch.items.length) return;
+        // Local ring buffer
+        flushLocalDiag(batch.items);
+        // Native file (best-effort)
+        flushNativeDiag(batch.items);
+    }, 250);
 };
 
 export const perfLog = (...args) => {
@@ -71,7 +101,5 @@ export const perfLog = (...args) => {
     if (CONSOLE_ENABLED) console.log(...args);
     const text = args.map(safeStringify).join(' ');
     appendLocalDiag(text);
-    // Best-effort native file log (doesn't rely on network).
-    appendNativeDiag(text);
     postPerfLog(text);
 };
