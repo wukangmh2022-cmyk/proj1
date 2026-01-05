@@ -16,6 +16,8 @@ import Diagnostics from './plugins/Diagnostics';
 
 import { App as CapacitorApp } from '@capacitor/app';
 
+const DIAG_ENABLED = import.meta.env.VITE_DIAG === '1';
+
 function HomePage() {
   const navigate = useNavigate();
   const [symbols, setSymbols] = useState(getSymbols());
@@ -77,6 +79,7 @@ function HomePage() {
   }, []);
 
   const openDiagnostics = () => {
+    if (!DIAG_ENABLED) return;
     if (!Capacitor.isNativePlatform()) return;
     navigate('/diag');
   };
@@ -510,7 +513,7 @@ function HomePage() {
             </div>
             <div className="modal-actions">
               <button className="btn btn-primary" onClick={() => setShowSettings(false)}>完成</button>
-              {Capacitor.isNativePlatform() && (
+              {DIAG_ENABLED && Capacitor.isNativePlatform() && (
                 <button className="btn btn-secondary" onClick={() => { setShowSettings(false); openDiagnostics(); }}>
                   诊断
                 </button>
@@ -651,7 +654,7 @@ function App() {
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/chart/:symbol" element={<ChartPageWrapper />} />
-        <Route path="/diag" element={<DiagnosticsPage />} />
+        {DIAG_ENABLED && <Route path="/diag" element={<DiagnosticsPage />} />}
       </Routes>
     </HashRouter>
   );

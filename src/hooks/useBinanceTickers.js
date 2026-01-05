@@ -5,6 +5,7 @@ import { perfLog } from '../utils/perfLogger';
 
 const BINANCE_SPOT_WS = 'wss://stream.binance.com:9443/stream';
 const BINANCE_FUTURES_WS = 'wss://fstream.binance.com/stream';
+const DIAG_ENABLED = import.meta.env.VITE_DIAG === '1';
 
 /**
  * Hook to get real-time ticker data.
@@ -79,25 +80,10 @@ export const useBinanceTickers = (symbols = []) => {
             if (document.hidden) {
                 perfLog('[perf] visibilitychange hidden at', Date.now());
                 stopLoop();
-                if (resumeHeartbeatRef.current) {
-                    clearInterval(resumeHeartbeatRef.current);
-                    resumeHeartbeatRef.current = null;
-                }
             } else {
                 perfLog('[perf] visibilitychange visible at', Date.now(), 'isNative=', isNative);
                 startLoop();
-                requestAnimationFrame(() => perfLog('[perf] visibilitychange visible rAF at', Date.now()));
-                // Heartbeat for 10s to confirm JS thread is running after resume (helps diagnose gray-screen freezes)
-                let n = 0;
-                if (resumeHeartbeatRef.current) clearInterval(resumeHeartbeatRef.current);
-                resumeHeartbeatRef.current = setInterval(() => {
-                    n += 1;
-                    perfLog('[perf] resume heartbeat', n, 'at', Date.now());
-                    if (n >= 10) {
-                        clearInterval(resumeHeartbeatRef.current);
-                        resumeHeartbeatRef.current = null;
-                    }
-                }, 1000);
+                if (DIAG_ENABLED) requestAnimationFrame(() => perfLog('[perf] visibilitychange visible rAF at', Date.now()));
                 // On resume, if native, request fresh data
                 if (isNative) FloatingWidget.requestTickerUpdate();
             }
@@ -107,10 +93,6 @@ export const useBinanceTickers = (symbols = []) => {
 
         return () => {
             stopLoop();
-            if (resumeHeartbeatRef.current) {
-                clearInterval(resumeHeartbeatRef.current);
-                resumeHeartbeatRef.current = null;
-            }
             document.removeEventListener('visibilitychange', handleVisibilityChange);
         };
     }, [isNative]);

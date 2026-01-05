@@ -1,4 +1,13 @@
 const PERF_LOG_ENDPOINT = 'http://47.108.203.64:5000/log';
+
+// Build-time toggles (Vite):
+// - VITE_DIAG=1: enable local diagnostics (native file + localStorage ring buffer)
+// - VITE_PERF_REMOTE=1: enable remote perf log upload
+// - VITE_PERF_CONSOLE=1: force console logging in prod
+const DIAG_ENABLED = import.meta.env.VITE_DIAG === '1';
+const REMOTE_ENABLED = import.meta.env.VITE_PERF_REMOTE === '1';
+const CONSOLE_ENABLED = import.meta.env.DEV || import.meta.env.VITE_PERF_CONSOLE === '1';
+
 let diagnosticsPlugin = null;
 let isNative = null;
 const DIAG_LOCAL_KEY = 'amaze_diag_js';
@@ -14,6 +23,7 @@ const safeStringify = (value) => {
 };
 
 const postPerfLog = (text) => {
+    if (!REMOTE_ENABLED) return;
     if (!text) return;
     if (typeof fetch !== 'function') return;
     try {
@@ -29,6 +39,7 @@ const postPerfLog = (text) => {
 };
 
 const appendLocalDiag = (text) => {
+    if (!DIAG_ENABLED) return;
     try {
         const raw = localStorage.getItem(DIAG_LOCAL_KEY);
         const list = raw ? JSON.parse(raw) : [];
@@ -39,6 +50,7 @@ const appendLocalDiag = (text) => {
 };
 
 const appendNativeDiag = async (text) => {
+    if (!DIAG_ENABLED) return;
     try {
         if (isNative === null) {
             const mod = await import('@capacitor/core');
@@ -53,9 +65,9 @@ const appendNativeDiag = async (text) => {
 };
 
 export const perfLog = (...args) => {
-    console.log(...args);
+    if (!CONSOLE_ENABLED && !REMOTE_ENABLED && !DIAG_ENABLED) return;
+    if (CONSOLE_ENABLED) console.log(...args);
     const text = args.map(safeStringify).join(' ');
-    // Always keep a local ring-buffer so we can inspect after a gray-screen resume.
     appendLocalDiag(text);
     // Best-effort native file log (doesn't rely on network).
     appendNativeDiag(text);
