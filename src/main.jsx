@@ -23,7 +23,7 @@ requestAnimationFrame(() => perfLog('[perf] first rAF after render call at', Dat
 // force a reload to recover from long gray-screen hangs on Android.
 if (Capacitor.isNativePlatform()) {
   const MIN_BACKGROUND_MS = 30_000; // only arm after longer background/lock
-  const WATCHDOG_MS = 4_000; // if no rAF within this, reload
+  const WATCHDOG_MS = 400; // if no rAF within this, reload (fast-fail to avoid long gray screens)
   let hiddenAt = null;
   let watchdogTimer = null;
 
