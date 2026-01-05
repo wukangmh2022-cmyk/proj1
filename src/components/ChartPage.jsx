@@ -878,6 +878,7 @@ export default function ChartPage() {
         let frameId;
         let prevTimeState = null;
         let prevPriceState = null;
+        const isFiniteNumber = (v) => typeof v === 'number' && isFinite(v);
 
         const checkSync = () => {
             const chart = chartRef.current;
@@ -886,20 +887,22 @@ export default function ChartPage() {
 
             // Check Time Scale
             const timeRange = chart.timeScale().getVisibleLogicalRange();
-            const timeState = timeRange ? `${timeRange.from.toFixed(2)},${timeRange.to.toFixed(2)}` : null;
+            const timeState = (timeRange && isFiniteNumber(timeRange.from) && isFiniteNumber(timeRange.to))
+                ? `${timeRange.from.toFixed(2)},${timeRange.to.toFixed(2)}`
+                : null;
 
             // Check Price Scale (must react to vertical zoom reliably on mobile).
             // Prefer visible price range API; fallback to reading prices at top/bottom pixels.
             let priceState = null;
             const ps = chart.priceScale('right');
             const vr = ps?.getVisiblePriceRange?.();
-            if (vr && isFinite(vr.from) && isFinite(vr.to)) {
+            if (vr && isFiniteNumber(vr.from) && isFiniteNumber(vr.to)) {
                 priceState = `${vr.from.toFixed(8)},${vr.to.toFixed(8)}`;
             } else if (containerRef.current) {
                 const h = containerRef.current.clientHeight || 0;
                 const topP = series.coordinateToPrice(0);
                 const botP = series.coordinateToPrice(h);
-                if (isFinite(topP) && isFinite(botP)) {
+                if (isFiniteNumber(topP) && isFiniteNumber(botP)) {
                     priceState = `${topP.toFixed(8)},${botP.toFixed(8)}`;
                 } else {
                     // Last resort: two fixed probe prices (may be unreliable for some symbols/ranges)
