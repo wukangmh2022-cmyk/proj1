@@ -290,6 +290,8 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
     const [soundRepeat, setSoundRepeat] = useState('once'); // 'once' | 'loop'
     const [soundDuration, setSoundDuration] = useState(10); // Seconds (Total loop time)
     const [loopPause, setLoopPause] = useState(1); // Seconds (Pause between loops)
+    const [repeatMode, setRepeatMode] = useState('once'); // 'once' | 'repeat'
+    const [repeatIntervalSec, setRepeatIntervalSec] = useState(300); // 5m default when repeating
 
     const [actions, setActions] = useState({
         toast: true,
@@ -397,7 +399,13 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
         setSoundRepeat(alert.soundRepeat || 'once');
         setSoundDuration(alert.soundDuration || 10);
         setLoopPause(alert.loopPause || 1);
-        setActions(alert.actions);
+        setRepeatMode(alert.repeatMode || 'once');
+        setRepeatIntervalSec(alert.repeatIntervalSec || 300);
+        setActions(alert.actions || {
+            toast: true,
+            notification: true,
+            vibration: 'once'
+        });
         setActiveTab('new');
     };
 
@@ -454,6 +462,8 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
             interval: (confirmation === 'candle_close' || confirmation === 'candle_delay' || targetType === 'indicator') ? interval : '1m',
             delaySeconds: confirmation === 'time_delay' ? parseInt(delay) : 0,
             delayCandles: confirmation === 'candle_delay' ? parseInt(delayCandles) : 0,
+            repeatMode,
+            repeatIntervalSec: repeatMode === 'repeat' ? parseInt(repeatIntervalSec) : 0,
             soundId: parseInt(soundId),
             soundRepeat,
             soundDuration: parseInt(soundDuration),
@@ -489,6 +499,8 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
         setDelay(10);
         setSliderVal(0);
         setDelayCandles(0);
+        setRepeatMode('once');
+        setRepeatIntervalSec(300);
         setActions({
             toast: true,
             notification: true,
@@ -803,6 +815,46 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
                                             <button onClick={() => setDelayCandles(Math.min(10, delayCandles + 1))}>+</button>
                                         </div>
                                         <span className="hint-inline">0 = 本根收盘</span>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Section: Repeat */}
+                            <div className="form-section">
+                                <div className="section-title">重复周期</div>
+                                <div className="toggle-group target-toggle">
+                                    <button
+                                        className={repeatMode === 'once' ? 'active' : ''}
+                                        onClick={() => setRepeatMode('once')}
+                                    >
+                                        仅 1 次
+                                    </button>
+                                    <button
+                                        className={repeatMode === 'repeat' ? 'active' : ''}
+                                        onClick={() => setRepeatMode('repeat')}
+                                    >
+                                        重复
+                                    </button>
+                                </div>
+
+                                {repeatMode === 'repeat' && (
+                                    <div className="sub-option">
+                                        <label>重复间隔</label>
+                                        <CustomSelect
+                                            value={repeatIntervalSec}
+                                            onChange={setRepeatIntervalSec}
+                                            options={[
+                                                { value: 60, label: '1 分钟' },
+                                                { value: 300, label: '5 分钟' },
+                                                { value: 900, label: '15 分钟' },
+                                                { value: 1800, label: '30 分钟' },
+                                                { value: 3600, label: '1 小时' },
+                                                { value: 14400, label: '4 小时' },
+                                                { value: 43200, label: '12 小时' },
+                                                { value: 86400, label: '1 天' }
+                                            ]}
+                                        />
+                                        <span className="hint-inline">到期后再次满足触发条件才会触发</span>
                                     </div>
                                 )}
                             </div>

@@ -48,6 +48,11 @@ public class FloatingWindowService extends Service {
     // Sound
     private android.media.ToneGenerator toneGenerator;
 
+    // Crossing detection state
+    private final java.util.Map<String, Double> lastTickerPriceBySymbol = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<String, Double> lastLiveCloseByKlineKey = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<String, Long> soundLoopTokens = new java.util.concurrent.ConcurrentHashMap<>();
+
     public static final String ACTION_CONFIG = "UPDATE_CONFIG";
     public static final String ACTION_SET_SYMBOLS = "SET_SYMBOLS";
     public static final String ACTION_START_DATA = "START_DATA"; // Start WS without showing window
@@ -254,7 +259,7 @@ public class FloatingWindowService extends Service {
         // Preview Sound
         if (ACTION_PREVIEW_SOUND.equals(action)) {
             int soundId = intent.getIntExtra(EXTRA_SOUND_ID, 1);
-            playAlertSound(soundId, false); // Play once for preview
+            playAlertSoundOnce(soundId); // Play once for preview
             return START_STICKY;
         }
         
@@ -363,7 +368,9 @@ public class FloatingWindowService extends Service {
                 }
                 
                 // Check simple price alerts
-                checkPriceAlerts(symbol, closePrice);
+                Double prev = lastTickerPriceBySymbol.put(symbol, closePrice);
+                double prevPrice = prev != null ? prev : Double.NaN;
+                checkPriceAlerts(symbol, closePrice, prevPrice);
                 
                 // Update UI on main thread
                 new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
@@ -505,6 +512,7 @@ public class FloatingWindowService extends Service {
     private java.util.Map<String, java.util.List<Double>> candleHistory = new java.util.concurrent.ConcurrentHashMap<>();
     private java.util.Map<String, Long> lastCandleTime = new java.util.concurrent.ConcurrentHashMap<>();
     private java.util.Set<String> triggeredAlerts = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+    private java.util.Map<String, Long> lastTriggeredAtMs = new java.util.concurrent.ConcurrentHashMap<>();
     // Map to track start time of delayed alerts: <AlertID, StartTimestampMS>
     private java.util.Map<String, Long> pendingDelayAlerts = new java.util.concurrent.ConcurrentHashMap<>();
     // Map to track consecutive candle hits: <AlertID, Count>
@@ -529,6 +537,16 @@ public class FloatingWindowService extends Service {
         public String soundRepeat; // "once" | "loop"
         public int soundDuration; // Max duration in seconds
         public int loopPause; // Pause in seconds
+        public String repeatMode; // "once" | "repeat"
+        public int repeatIntervalSec; // Repeat interval in seconds (for repeat mode)
+
+        public static class Actions {
+            public boolean toast = true;
+            public boolean notification = true;
+            public String vibration = "once"; // "none" | "once" | "continuous"
+        }
+
+        public Actions actions;
         
         public String algo;
         public java.util.Map<String, Object> params;
@@ -568,6 +586,11 @@ public class FloatingWindowService extends Service {
             // PRE-PARSE / CACHE PARAMETERS to avoid Map lookup in hot loop
             for (AlertConfig a : alerts) {
                 try {
+                    if (a.repeatMode == null || a.repeatMode.isEmpty()) a.repeatMode = "once";
+                    if (a.repeatIntervalSec < 0) a.repeatIntervalSec = 0;
+                    if (a.actions == null) a.actions = new AlertConfig.Actions();
+                    if (a.actions.vibration == null || a.actions.vibration.isEmpty()) a.actions.vibration = "once";
+
                     // Cache Indicator Params
                     if ("indicator".equals(a.targetType) && a.targetValue != null) {
                         a.cachedIndType = a.targetValue.replaceAll("[0-9]", "").toLowerCase();
@@ -599,9 +622,20 @@ public class FloatingWindowService extends Service {
                     }
                 } catch (Exception e) { e.printStackTrace(); }
             }
-            
-            // Clear triggered cache for new alerts
-            triggeredAlerts.clear();
+
+            // Prune state for removed alerts (keep "once" triggers + repeat cooldown across syncs)
+            java.util.Set<String> ids = new java.util.HashSet<>();
+            for (AlertConfig a : alerts) { if (a != null && a.id != null) ids.add(a.id); }
+            triggeredAlerts.retainAll(ids);
+            for (String k : new java.util.HashSet<>(lastTriggeredAtMs.keySet())) {
+                if (!ids.contains(k)) lastTriggeredAtMs.remove(k);
+            }
+            for (String k : new java.util.HashSet<>(pendingDelayAlerts.keySet())) {
+                if (!ids.contains(k)) pendingDelayAlerts.remove(k);
+            }
+            for (String k : new java.util.HashSet<>(candleDelayCounter.keySet())) {
+                if (!ids.contains(k)) candleDelayCounter.remove(k);
+            }
             
             // Connect to K-line streams if needed
             connectKlineWebSocket();
@@ -619,7 +653,7 @@ public class FloatingWindowService extends Service {
         // Collect all needed kline streams from alerts
         java.util.Set<String> streams = new java.util.HashSet<>();
         for (AlertConfig alert : alerts) {
-            if (alert.active && (alert.targetType.equals("indicator") || alert.confirmation.equals("candle_close"))) {
+            if (alert.active && (alert.targetType.equals("indicator") || alert.targetType.equals("drawing") || alert.confirmation.equals("candle_close"))) {
                 String interval = alert.interval != null ? alert.interval : "1m";
                 streams.add(alert.symbol.toLowerCase() + "@kline_" + interval);
             }
@@ -721,6 +755,7 @@ public class FloatingWindowService extends Service {
             long openTime = k.get("t").getAsLong();
             
             String key = symbol + "_" + interval;
+            Double prevLiveClose = lastLiveCloseByKlineKey.get(key);
             
             // Update candle history
             java.util.List<Double> history = candleHistory.get(key);
@@ -734,22 +769,39 @@ public class FloatingWindowService extends Service {
                 history.add(close);
                 if (history.size() > 100) history.remove(0);
                 lastCandleTime.put(key, openTime);
+
+                // Update live-close cache
+                lastLiveCloseByKlineKey.put(key, close);
                 
                 // Check alerts on candle close
-                checkAlertsForKline(symbol, interval, close, history, true);
+                checkAlertsForKline(symbol, interval, close, history, true, prevLiveClose != null ? prevLiveClose : Double.NaN);
             } else if (!isClosed) {
+                // Update live-close cache
+                lastLiveCloseByKlineKey.put(key, close);
                 // Live update for immediate alerts
-                checkAlertsForKline(symbol, interval, close, history, false);
+                checkAlertsForKline(symbol, interval, close, history, false, prevLiveClose != null ? prevLiveClose : Double.NaN);
             }
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
     
-    private void checkAlertsForKline(String symbol, String interval, double close, java.util.List<Double> history, boolean isClosed) {
+    private static boolean crossedUp(double prev, double curr, double target) {
+        return prev < target && curr >= target;
+    }
+
+    private static boolean crossedDown(double prev, double curr, double target) {
+        return prev > target && curr <= target;
+    }
+
+    private boolean isRepeatEnabled(AlertConfig alert) {
+        return alert != null && "repeat".equals(alert.repeatMode) && alert.repeatIntervalSec > 0;
+    }
+
+    private void checkAlertsForKline(String symbol, String interval, double close, java.util.List<Double> history, boolean isClosed, double prevLiveClose) {
         for (AlertConfig alert : alerts) {
             if (!alert.active || !alert.symbol.equals(symbol)) continue;
-            if (triggeredAlerts.contains(alert.id)) continue;
+            if (!isRepeatEnabled(alert) && triggeredAlerts.contains(alert.id)) continue;
             
             String alertInterval = alert.interval != null ? alert.interval : "1m";
             if (!alertInterval.equals(interval)) continue;
@@ -779,22 +831,51 @@ public class FloatingWindowService extends Service {
             
             // Check confirmation mode
             if (alert.confirmation.equals("candle_close") && !isClosed) continue;
+
+            // Determine previous price for crossing detection
+            double prevClose = Double.NaN;
+            if (isClosed) {
+                // history already includes current close
+                if (history != null && history.size() >= 2) {
+                    prevClose = history.get(history.size() - 2);
+                }
+            } else {
+                if (!Double.isNaN(prevLiveClose)) {
+                    prevClose = prevLiveClose;
+                } else if (history != null && !history.isEmpty()) {
+                    // fallback: last closed candle close
+                    prevClose = history.get(history.size() - 1);
+                }
+            }
+            if (Double.isNaN(prevClose)) continue;
             
             // Check condition against ALL potential targets (e.g. channel lines)
             final boolean allowUp = hasCondition(alert, "crossing_up");
             final boolean allowDown = hasCondition(alert, "crossing_down");
             boolean conditionMet = false;
             double triggerTarget = 0;
-            
-            for (double tVal : potentialTargets) {
-                if (allowUp && close >= tVal) {
+
+            if ("rect_zone".equals(alert.algo) && potentialTargets.size() >= 2) {
+                double high = java.util.Collections.max(potentialTargets);
+                double low = java.util.Collections.min(potentialTargets);
+                if (allowUp && crossedUp(prevClose, close, high)) {
                     conditionMet = true;
-                    triggerTarget = tVal;
-                    break;
-                } else if (allowDown && close <= tVal) {
+                    triggerTarget = high;
+                } else if (allowDown && crossedDown(prevClose, close, low)) {
                     conditionMet = true;
-                    triggerTarget = tVal;
-                    break;
+                    triggerTarget = low;
+                }
+            } else {
+                for (double tVal : potentialTargets) {
+                    if (allowUp && crossedUp(prevClose, close, tVal)) {
+                        conditionMet = true;
+                        triggerTarget = tVal;
+                        break;
+                    } else if (allowDown && crossedDown(prevClose, close, tVal)) {
+                        conditionMet = true;
+                        triggerTarget = tVal;
+                        break;
+                    }
                 }
             }
             
@@ -941,19 +1022,20 @@ public class FloatingWindowService extends Service {
     }
     
     // Also check simple price alerts from ticker data
-    public void checkPriceAlerts(String symbol, double price) {
+    public void checkPriceAlerts(String symbol, double price, double prevPrice) {
+        if (Double.isNaN(prevPrice)) return;
         for (AlertConfig alert : alerts) {
             if (!alert.active || !alert.symbol.equals(symbol)) continue;
-            if (triggeredAlerts.contains(alert.id)) continue;
+            if (!isRepeatEnabled(alert) && triggeredAlerts.contains(alert.id)) continue;
             if (!alert.targetType.equals("price")) continue;
             if (!alert.confirmation.equals("immediate")) continue;
             
             final boolean allowUp = hasCondition(alert, "crossing_up");
             final boolean allowDown = hasCondition(alert, "crossing_down");
             boolean conditionMet = false;
-            if (allowUp && price >= alert.target) {
+            if (allowUp && crossedUp(prevPrice, price, alert.target)) {
                 conditionMet = true;
-            } else if (allowDown && price <= alert.target) {
+            } else if (allowDown && crossedDown(prevPrice, price, alert.target)) {
                 conditionMet = true;
             }
             
@@ -964,7 +1046,17 @@ public class FloatingWindowService extends Service {
     }
     
     private void triggerAlert(AlertConfig alert, double currentPrice, double targetValue) {
-        triggeredAlerts.add(alert.id);
+        long now = System.currentTimeMillis();
+
+        if (isRepeatEnabled(alert)) {
+            Long last = lastTriggeredAtMs.get(alert.id);
+            if (last != null && now - last < alert.repeatIntervalSec * 1000L) {
+                return;
+            }
+            lastTriggeredAtMs.put(alert.id, now);
+        } else {
+            triggeredAlerts.add(alert.id);
+        }
         
         final boolean allowUp = hasCondition(alert, "crossing_up");
         final boolean allowDown = hasCondition(alert, "crossing_down");
@@ -975,23 +1067,38 @@ public class FloatingWindowService extends Service {
         String message = alert.symbol + " " + direction + " " + targetStr + "\n当前: $" + String.format("%.2f", currentPrice);
         
         // Send notification
-        sendNotification(alert.symbol + " 预警触发", message, alert.id.hashCode());
+        if (alert.actions == null || alert.actions.notification) {
+            sendNotification(alert.symbol + " 预警触发", message, alert.id.hashCode());
+        }
         
         // Play Sound
         if (alert.soundId > 0) {
-            playAlertSound(alert.soundId, "loop".equals(alert.soundRepeat));
+            playAlertSoundWithRepeat(alert);
         }
 
         // Vibrate
-        if (alert.params == null || !alert.params.containsKey("vibration") || !"none".equals(alert.params.get("vibration"))) {
-             // Default vibration if not specified or specified invalidly. 
-             // Note: AlertConfig doesn't have vibration field in Java class def yet? 
-             // Just used default for now or check params map. 
-             // Using hardcoded default logic as before:
-             try {
+        String vib = (alert.actions != null) ? alert.actions.vibration : "once";
+        if (vib == null) vib = "once";
+        if (!"none".equals(vib)) {
+            try {
                 android.os.Vibrator v = (android.os.Vibrator) getSystemService(android.content.Context.VIBRATOR_SERVICE);
-                if (v != null) v.vibrate(500);
-            } catch (Exception e) {}
+                if (v != null) {
+                    if ("continuous".equals(vib)) {
+                        long[] pattern = new long[]{0, 1000, 200, 1000, 200, 1000};
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                            v.vibrate(android.os.VibrationEffect.createWaveform(pattern, -1));
+                        } else {
+                            v.vibrate(pattern, -1);
+                        }
+                    } else {
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                            v.vibrate(android.os.VibrationEffect.createOneShot(500, android.os.VibrationEffect.DEFAULT_AMPLITUDE));
+                        } else {
+                            v.vibrate(500);
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
         }
         
         // Notify plugin to update JS (mark as inactive)
@@ -1000,40 +1107,82 @@ public class FloatingWindowService extends Service {
         }
     }
 
-    private void playAlertSound(int soundId, boolean loop) {
-        if (toneGenerator == null) return;
-        
-        int toneType = android.media.ToneGenerator.TONE_PROP_BEEP;
-        int duration = 3000; // Default to 3s per user request
-        
-        // Map IDs to Tones (Approximation without assets)
+    private int getToneType(int soundId) {
         switch (soundId) {
-            case 1: toneType = android.media.ToneGenerator.TONE_CDMA_PIP; duration = 2000; break; // Success
-            case 2: toneType = android.media.ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK; duration = 5000; break; // Danger (Longer)
-            case 3: toneType = android.media.ToneGenerator.TONE_DTMF_0; duration = 1000; break; // Coin (Short)
-            case 4: toneType = android.media.ToneGenerator.TONE_PROP_PROMPT; duration = 1000; break; // Laser
-            case 5: toneType = android.media.ToneGenerator.TONE_CDMA_ALERT_INCALL_LITE; duration = 3000; break; // Rise
-            case 6: toneType = android.media.ToneGenerator.TONE_SUP_PIP; duration = 500; break; // Pop (Short)
-            case 7: toneType = android.media.ToneGenerator.TONE_CDMA_NETWORK_BUSY; duration = 4000; break; // Tech
-            case 8: toneType = android.media.ToneGenerator.TONE_CDMA_LOW_SS; duration = 3000; break; // Low Battery
-            case 9: toneType = android.media.ToneGenerator.TONE_PROP_ACK; duration = 2000; break; // Confirm
-            case 10: toneType = android.media.ToneGenerator.TONE_CDMA_SOFT_ERROR_LITE; duration = 4000; break; // Attention
+            case 1: return android.media.ToneGenerator.TONE_CDMA_PIP; // Success
+            case 2: return android.media.ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK; // Danger
+            case 3: return android.media.ToneGenerator.TONE_DTMF_0; // Coin
+            case 4: return android.media.ToneGenerator.TONE_PROP_PROMPT; // Laser
+            case 5: return android.media.ToneGenerator.TONE_CDMA_ALERT_INCALL_LITE; // Rise
+            case 6: return android.media.ToneGenerator.TONE_SUP_PIP; // Pop
+            case 7: return android.media.ToneGenerator.TONE_CDMA_NETWORK_BUSY; // Tech
+            case 8: return android.media.ToneGenerator.TONE_CDMA_LOW_SS; // Low Battery
+            case 9: return android.media.ToneGenerator.TONE_PROP_ACK; // Confirm
+            case 10: return android.media.ToneGenerator.TONE_CDMA_SOFT_ERROR_LITE; // Attention
+            default: return android.media.ToneGenerator.TONE_PROP_BEEP;
         }
-        
-        toneGenerator.startTone(toneType, duration);
-        // Note: Simple ToneGenerator doesn't support complex looping cleanly without a thread
-        // For this version we just play the tone.
+    }
+
+    private int getToneDurationMs(int soundId) {
+        switch (soundId) {
+            case 1: return 2000;
+            case 2: return 5000;
+            case 3: return 1000;
+            case 4: return 1000;
+            case 5: return 3000;
+            case 6: return 500;
+            case 7: return 4000;
+            case 8: return 3000;
+            case 9: return 2000;
+            case 10: return 4000;
+            default: return 3000;
+        }
+    }
+
+    private void playAlertSoundOnce(int soundId) {
+        if (toneGenerator == null) return;
+        toneGenerator.startTone(getToneType(soundId), getToneDurationMs(soundId));
+    }
+
+    private void playAlertSoundWithRepeat(AlertConfig alert) {
+        if (alert == null || alert.soundId <= 0) return;
+        if (!"loop".equals(alert.soundRepeat)) {
+            playAlertSoundOnce(alert.soundId);
+            return;
+        }
+
+        final long token = System.currentTimeMillis();
+        soundLoopTokens.put(alert.id, token);
+
+        final int soundId = alert.soundId;
+        final int toneDurationMs = getToneDurationMs(soundId);
+        final long pauseMs = Math.max(0, alert.loopPause) * 1000L;
+        final long totalMs = Math.max(5, alert.soundDuration) * 1000L;
+        final long endAt = System.currentTimeMillis() + totalMs;
+
+        new Thread(() -> {
+            try {
+                while (System.currentTimeMillis() < endAt) {
+                    Long currentToken = soundLoopTokens.get(alert.id);
+                    if (currentToken == null || currentToken != token) return;
+                    playAlertSoundOnce(soundId);
+                    Thread.sleep(toneDurationMs + pauseMs);
+                }
+            } catch (InterruptedException ignored) {
+            }
+        }, "AlertSoundLoop-" + alert.id).start();
     }
     
     private void sendNotification(String title, String message, int id) {
-        String channelId = "alert_channel";
+        String channelId = "alert_channel_v2";
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
                 channelId, "价格预警", NotificationManager.IMPORTANCE_HIGH
             );
             channel.setDescription("价格预警通知");
-            channel.enableVibration(true);
+            channel.enableVibration(false);
+            channel.setSound(null, null);
             channel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
             getSystemService(NotificationManager.class).createNotificationChannel(channel);
         }
@@ -1057,7 +1206,7 @@ public class FloatingWindowService extends Service {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .setDefaults(0)
             .setAutoCancel(true);
         
         if (pendingIntent != null) {

@@ -115,6 +115,7 @@ export const useBinanceCandles = (subscriptions = []) => {
 
         const indicators = {
             close: prices[prices.length - 1],
+            prevClose: prices[prices.length - 2],
             isClosed: kline ? kline.x : true,
             kline: kline,
             // Calculate indicators based on the prices array
