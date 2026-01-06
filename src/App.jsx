@@ -468,9 +468,11 @@ function HomePage() {
 
                         <div className="card-content">
                           <div className="symbol">{symbol}</div>
-                          <div className="price">${price}</div>
-                          <div className={`change ${isPositive ? 'up' : 'down'}`}>
-                            {isPositive ? '+' : ''}{change}%
+                          <div className="price-row">
+                            <div className="price">${price}</div>
+                            <div className={`change ${isPositive ? 'up' : 'down'}`}>
+                              {isPositive ? '+' : ''}{change}%
+                            </div>
                           </div>
                         </div>
                       </div>

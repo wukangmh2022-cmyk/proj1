@@ -140,7 +140,7 @@ body {
   background: var(--bg-card);
   backdrop-filter: var(--glass-blur);
   border-radius: 16px;
-  padding: 16px;
+  padding: 12px;
   border: 1px solid var(--border-color);
   cursor: pointer;
   position: relative;
@@ -177,17 +177,23 @@ body {
 .ticker-card .symbol {
   font-size: 0.85rem;
   color: var(--text-secondary);
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+.ticker-card .price-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .ticker-card .price {
-  font-size: 1.2rem;
+  font-size: 1.1rem;
   font-weight: 700;
-  margin-bottom: 6px;
   white-space: nowrap;
 }
 
@@ -703,7 +709,7 @@ body {
 
 .ticker-card .actions {
   position: absolute;
-  top: 8px;
+  top: 0px;
   right: 8px;
   display: flex;
   gap: 8px;
