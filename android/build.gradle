@@ -6,6 +6,8 @@ buildscript {
         // Mirrors (helps in networks where Maven Central returns 403 / is blocked)
         maven { url 'https://maven.aliyun.com/repository/google' }
         maven { url 'https://maven.aliyun.com/repository/public' }
+        // Maven Central alternate hostname (some networks intermittently block repo.maven.apache.org)
+        maven { url 'https://repo1.maven.org/maven2' }
         google()
         mavenCentral()
     }
@@ -25,6 +27,8 @@ allprojects {
         // Mirrors (helps in networks where Maven Central returns 403 / is blocked)
         maven { url 'https://maven.aliyun.com/repository/google' }
         maven { url 'https://maven.aliyun.com/repository/public' }
+        // Maven Central alternate hostname (some networks intermittently block repo.maven.apache.org)
+        maven { url 'https://repo1.maven.org/maven2' }
         google()
         mavenCentral()
     }
