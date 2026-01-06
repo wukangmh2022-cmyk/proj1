@@ -26,6 +26,9 @@ public class FloatingWindowService extends Service {
     private LinearLayout container;
     private LinearLayout itemsContainer;
     private WindowManager.LayoutParams params;
+    private final android.os.Handler mainHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private long lastUiUpdateMs = 0L;
+    private static final long UI_UPDATE_THROTTLE_MS = 200L; // cap UI redraws to ~5fps to reduce jank
     
     // Data storage
     private java.util.List<String> symbolList = new java.util.ArrayList<>();
@@ -188,18 +191,23 @@ public class FloatingWindowService extends Service {
             if (!windowVisible && windowManager != null) {
                 windowManager.addView(floatingView, params);
                 windowVisible = true;
+                // Reconnect data feed if it was stopped while hidden
+                if (spotWebSocket == null && futuresWebSocket == null) {
+                    connectWebSockets();
+                }
                 applyConfig();
                 updateUI();
             }
             return START_STICKY;
         }
         
-        // Hide floating window (but keep service and WebSocket running)
+        // Hide floating window and stop data feed to release CPU
         if (ACTION_HIDE_WINDOW.equals(action)) {
             if (windowVisible && windowManager != null) {
                 windowManager.removeView(floatingView);
-                windowVisible = false;
             }
+            windowVisible = false;
+            stopWebSockets();
             return START_STICKY;
         }
         
@@ -329,6 +337,21 @@ public class FloatingWindowService extends Service {
         }
     }
     
+    private void stopWebSockets() {
+        try {
+            if (spotWebSocket != null) {
+                spotWebSocket.close(1000, "hidden");
+            }
+        } catch (Exception ignored) {}
+        try {
+            if (futuresWebSocket != null) {
+                futuresWebSocket.close(1000, "hidden");
+            }
+        } catch (Exception ignored) {}
+        spotWebSocket = null;
+        futuresWebSocket = null;
+    }
+    
     // Static listener for ticker updates (used by Plugin)
     public interface TickerUpdateListener {
         void onTickerUpdate(String symbol, double price, double changePercent);
@@ -373,11 +396,17 @@ public class FloatingWindowService extends Service {
                 checkPriceAlerts(symbol, closePrice, prevPrice);
                 
                 // Update UI on main thread
-                new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
-                    if (isSymbolVisible(symbol)) {
-                         updateUI();
-                    }
-                });
+                if (windowVisible) {
+                    mainHandler.post(() -> {
+                        // Throttle redraws to avoid hammering UI/main thread when prices tick fast.
+                        long now = android.os.SystemClock.uptimeMillis();
+                        if (now - lastUiUpdateMs < UI_UPDATE_THROTTLE_MS) return;
+                        lastUiUpdateMs = now;
+                        if (isSymbolVisible(symbol)) {
+                            updateUI();
+                        }
+                    });
+                }
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -411,7 +440,7 @@ public class FloatingWindowService extends Service {
     }
     
     private void updateUI() {
-        if (itemsContainer == null) return;
+        if (!windowVisible || itemsContainer == null) return;
         itemsContainer.removeAllViews();
         
         if (symbolList.isEmpty()) {
