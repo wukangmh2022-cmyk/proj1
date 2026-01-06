@@ -326,8 +326,9 @@ function HomePage() {
 
       {/* Add Symbol Input (Below Header) */}
       {!isEditMode && (
-        <div style={{ padding: '16px', background: '#0d1117', borderBottom: '1px solid rgba(255,255,255,0.1)', position: 'relative' }}>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+        <div style={{ padding: '16px', background: '#0d1117', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+          <div style={{ width: '100%', maxWidth: '520px', margin: '0 auto', position: 'relative' }}>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <input
               type="text"
               placeholder="添加交易对 (如 BTC, ETHUSDT)"
@@ -362,47 +363,48 @@ function HomePage() {
             >
               添加
             </button>
-          </div>
-
-          {/* Suggestions Dropdown */}
-          {showSuggestions && searchSuggestions.length > 0 && (
-            <div style={{
-              position: 'absolute',
-              top: '100%',
-              left: '16px',
-              right: '16px',
-              marginTop: '4px',
-              background: '#1e222d',
-              border: '1px solid rgba(252, 213, 53, 0.3)',
-              borderRadius: '8px',
-              overflow: 'hidden',
-              boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-              zIndex: 100
-            }}>
-              {searchSuggestions.map((sug, idx) => (
-                <div
-                  key={idx}
-                  onClick={() => handleAddSymbol(sug)}
-                  style={{
-                    padding: '12px 16px',
-                    cursor: 'pointer',
-                    borderBottom: idx < searchSuggestions.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    transition: 'background 0.2s'
-                  }}
-                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(252, 213, 53, 0.1)'}
-                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                >
-                  <span style={{ color: '#fff', fontSize: '14px', fontWeight: '500' }}>{sug}</span>
-                  <span style={{ color: '#888', fontSize: '12px' }}>
-                    {sug.endsWith('.P') ? '永续' : '现货'}
-                  </span>
-                </div>
-              ))}
             </div>
-          )}
+
+            {/* Suggestions Dropdown */}
+            {showSuggestions && searchSuggestions.length > 0 && (
+              <div style={{
+                position: 'absolute',
+                top: '100%',
+                left: 0,
+                right: 0,
+                marginTop: '4px',
+                background: '#1e222d',
+                border: '1px solid rgba(252, 213, 53, 0.3)',
+                borderRadius: '8px',
+                overflow: 'hidden',
+                boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                zIndex: 100
+              }}>
+                {searchSuggestions.map((sug, idx) => (
+                  <div
+                    key={idx}
+                    onClick={() => handleAddSymbol(sug)}
+                    style={{
+                      padding: '12px 16px',
+                      cursor: 'pointer',
+                      borderBottom: idx < searchSuggestions.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      transition: 'background 0.2s'
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(252, 213, 53, 0.1)'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                  >
+                    <span style={{ color: '#fff', fontSize: '14px', fontWeight: '500' }}>{sug}</span>
+                    <span style={{ color: '#888', fontSize: '12px' }}>
+                      {sug.endsWith('.P') ? '永续' : '现货'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
