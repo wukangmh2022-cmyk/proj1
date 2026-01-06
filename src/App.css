@@ -5,7 +5,7 @@
   --text-primary: #f0f6fc;
   --text-secondary: #8b949e;
   --accent-green: #00d68f;
-  --accent-red: #ff4757;
+  --accent-red: #ff6b81;
   --accent-gold: #fcd535;
   --border-color: rgba(255, 255, 255, 0.1);
   --glass-blur: blur(16px);
@@ -230,14 +230,14 @@ body {
 
 .ticker-card .change.down {
   color: var(--accent-red);
-  background: rgba(255, 71, 87, 0.15);
+  background: rgba(255, 107, 129, 0.15);
 }
 
 .ticker-card .remove-btn {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: rgba(255, 71, 87, 0.8);
+  background: rgba(255, 107, 129, 0.85);
   color: #fff;
   border: none;
   cursor: pointer;
