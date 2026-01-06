@@ -143,9 +143,9 @@ export default function ChartPage() {
     // Enhanced Indicator State
     const [showAddMenu, setShowAddMenu] = useState(false);
     const DEFAULT_INDICATORS = {
-        ma1: { name: 'MA', period: 7, color: '#fcd535', width: 1, visible: true },
-        ma2: { name: 'MA', period: 25, color: '#ff9f43', width: 1, visible: true },
-        ma3: { name: 'MA', period: 99, color: '#a855f7', width: 1, visible: true },
+        ma1: { name: 'MA', period: 7, color: '#fcd535', width: 1, visible: false },
+        ma2: { name: 'MA', period: 25, color: '#ff9f43', width: 1, visible: false },
+        ma3: { name: 'MA', period: 99, color: '#a855f7', width: 1, visible: false },
         ma4: { name: 'MA', period: 200, color: '#00d68f', width: 1, visible: false },
         vol: { name: 'VOL', period: 20, color: '#26a69a', downColor: '#ef5350', visible: true },
     };
@@ -157,7 +157,7 @@ export default function ChartPage() {
 
     const [mainIndicatorType, setMainIndicatorType] = useState(() => {
         const saved = localStorage.getItem(`chart_mainIndicatorType_${symbol}`);
-        return MAIN_INDICATOR_TYPES.includes(saved) ? saved : 'MA';
+        return MAIN_INDICATOR_TYPES.includes(saved) ? saved : 'NONE';
     });
 
     const [subIndicator, setSubIndicator] = useState(() => {
