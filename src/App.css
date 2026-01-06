@@ -57,6 +57,7 @@ body {
   border: 1px solid var(--border-color);
   gap: 12px;
   flex-wrap: wrap;
+  overflow: hidden;
 }
 
 .header h1 {
@@ -110,7 +111,6 @@ body {
 /* Avoid sticky :hover transforms on touch devices (can make buttons look "floated out"). */
 @media (hover: hover) and (pointer: fine) {
   .btn-primary:hover {
-    transform: translateY(-2px);
     box-shadow: 0 4px 20px rgba(252, 213, 53, 0.4);
   }
 }
