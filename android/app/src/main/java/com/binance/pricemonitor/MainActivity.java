@@ -11,6 +11,10 @@ public class MainActivity extends BridgeActivity {
     private static final String TAG = "[perf] MainActivity";
     private FrameLayout loadingOverlay;
     private boolean overlayAttached = false;
+    private final android.os.Handler uiHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private boolean waitingForWebViewDraw = false;
+    private Runnable resumeReloadRunnable = null;
+    private static final long RESUME_WATCHDOG_MS = 2200;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -25,7 +29,7 @@ public class MainActivity extends BridgeActivity {
 
         // Native overlay for renderer-not-ready cases (JS not yet running).
         attachLoadingOverlay();
-        wireWebViewFirstDraw();
+        setNativeWatchdogFlagInJs();
     }
 
     @Override
@@ -43,6 +47,9 @@ public class MainActivity extends BridgeActivity {
         Log.d(TAG, "onResume at " + now);
         DiagnosticsLog.append(getApplicationContext(), "[native] MainActivity onResume at " + now);
         showOverlay();
+        waitingForWebViewDraw = true;
+        wireWebViewFirstDraw();
+        armResumeReloadWatchdog();
     }
 
     @Override
@@ -67,6 +74,7 @@ public class MainActivity extends BridgeActivity {
         long now = System.currentTimeMillis();
         Log.d(TAG, "onDestroy at " + now);
         DiagnosticsLog.append(getApplicationContext(), "[native] MainActivity onDestroy at " + now);
+        if (resumeReloadRunnable != null) uiHandler.removeCallbacks(resumeReloadRunnable);
     }
 
     private void attachLoadingOverlay() {
@@ -91,10 +99,13 @@ public class MainActivity extends BridgeActivity {
 
     private void wireWebViewFirstDraw() {
         if (getBridge() == null || getBridge().getWebView() == null) return;
+        // Add a one-shot listener for each resume; remove after first draw.
         getBridge().getWebView().getViewTreeObserver().addOnPreDrawListener(new android.view.ViewTreeObserver.OnPreDrawListener() {
             @Override
             public boolean onPreDraw() {
                 hideOverlay();
+                waitingForWebViewDraw = false;
+                if (resumeReloadRunnable != null) uiHandler.removeCallbacks(resumeReloadRunnable);
                 // Remove listener after first draw
                 if (getBridge() != null && getBridge().getWebView() != null) {
                     getBridge().getWebView().getViewTreeObserver().removeOnPreDrawListener(this);
@@ -110,5 +121,60 @@ public class MainActivity extends BridgeActivity {
 
     private void hideOverlay() {
         if (loadingOverlay != null) loadingOverlay.setVisibility(android.view.View.GONE);
+    }
+
+    private boolean canReloadNow() {
+        try {
+            android.content.SharedPreferences sp = getSharedPreferences("resume_watchdog", MODE_PRIVATE);
+            long now = android.os.SystemClock.uptimeMillis();
+            long lastAt = sp.getLong("at", 0);
+            int count = sp.getInt("count", 0);
+            if (now - lastAt < 120_000) {
+                if (count >= 2) return false;
+                sp.edit().putLong("at", now).putInt("count", count + 1).apply();
+                return true;
+            }
+            sp.edit().putLong("at", now).putInt("count", 1).apply();
+            return true;
+        } catch (Exception ignored) {
+            return true;
+        }
+    }
+
+    private void armResumeReloadWatchdog() {
+        if (resumeReloadRunnable != null) uiHandler.removeCallbacks(resumeReloadRunnable);
+        resumeReloadRunnable = () -> {
+            if (!waitingForWebViewDraw) return;
+            if (!canReloadNow()) {
+                long now = System.currentTimeMillis();
+                Log.d(TAG, "resume watchdog: reload suppressed at " + now);
+                DiagnosticsLog.append(getApplicationContext(), "[native] resume watchdog: reload suppressed at " + now);
+                return;
+            }
+            long now = System.currentTimeMillis();
+            Log.d(TAG, "resume watchdog: forcing webview reload at " + now);
+            DiagnosticsLog.append(getApplicationContext(), "[native] resume watchdog: forcing webview reload at " + now);
+            try {
+                if (getBridge() != null && getBridge().getWebView() != null) {
+                    getBridge().getWebView().post(() -> {
+                        try {
+                            getBridge().getWebView().reload();
+                        } catch (Exception ignored) {}
+                    });
+                }
+            } catch (Exception ignored) {}
+        };
+        uiHandler.postDelayed(resumeReloadRunnable, RESUME_WATCHDOG_MS);
+    }
+
+    private void setNativeWatchdogFlagInJs() {
+        try {
+            if (getBridge() == null || getBridge().getWebView() == null) return;
+            getBridge().getWebView().post(() -> {
+                try {
+                    getBridge().getWebView().evaluateJavascript("window.__NATIVE_RESUME_WATCHDOG__=true;", null);
+                } catch (Exception ignored) {}
+            });
+        } catch (Exception ignored) {}
     }
 }
