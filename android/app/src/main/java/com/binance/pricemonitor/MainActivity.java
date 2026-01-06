@@ -116,8 +116,11 @@ public class MainActivity extends BridgeActivity {
         // 1) Best signal: visual state callback (fires once content is actually drawn).
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             try {
-                webView.postVisualStateCallback(0, requestId -> {
-                    onWebViewDrewFrame();
+                webView.postVisualStateCallback(0, new android.webkit.WebView.VisualStateCallback() {
+                    @Override
+                    public void onComplete(long requestId) {
+                        onWebViewDrewFrame();
+                    }
                 });
             } catch (Exception ignored) {}
             // On modern Android, do NOT use pre-draw as "ready" (it can fire even when the first frame is blank),
