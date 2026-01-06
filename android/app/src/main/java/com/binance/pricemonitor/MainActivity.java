@@ -5,6 +5,7 @@ import android.util.Log;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.ProgressBar;
+import android.os.Build;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
@@ -15,6 +16,8 @@ public class MainActivity extends BridgeActivity {
     private boolean waitingForWebViewDraw = false;
     private Runnable resumeReloadRunnable = null;
     private static final long RESUME_WATCHDOG_MS = 2200;
+    private android.view.ViewTreeObserver.OnPreDrawListener webViewPreDrawListener = null;
+    private Runnable forceHideOverlayRunnable = null;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -30,6 +33,8 @@ public class MainActivity extends BridgeActivity {
         // Native overlay for renderer-not-ready cases (JS not yet running).
         attachLoadingOverlay();
         setNativeWatchdogFlagInJs();
+        // Hide overlay when the very first frame is drawn on cold start.
+        armWebViewReadyCallbacks();
     }
 
     @Override
@@ -48,7 +53,7 @@ public class MainActivity extends BridgeActivity {
         DiagnosticsLog.append(getApplicationContext(), "[native] MainActivity onResume at " + now);
         showOverlay();
         waitingForWebViewDraw = true;
-        wireWebViewFirstDraw();
+        armWebViewReadyCallbacks();
         armResumeReloadWatchdog();
     }
 
@@ -75,6 +80,7 @@ public class MainActivity extends BridgeActivity {
         Log.d(TAG, "onDestroy at " + now);
         DiagnosticsLog.append(getApplicationContext(), "[native] MainActivity onDestroy at " + now);
         if (resumeReloadRunnable != null) uiHandler.removeCallbacks(resumeReloadRunnable);
+        if (forceHideOverlayRunnable != null) uiHandler.removeCallbacks(forceHideOverlayRunnable);
     }
 
     private void attachLoadingOverlay() {
@@ -82,8 +88,9 @@ public class MainActivity extends BridgeActivity {
         ViewGroup root = findViewById(android.R.id.content);
         if (root == null) return;
         loadingOverlay = new FrameLayout(this);
-        loadingOverlay.setClickable(true);
-        loadingOverlay.setFocusable(true);
+        // Visual overlay only; do not block interactions even if it sticks for any reason.
+        loadingOverlay.setClickable(false);
+        loadingOverlay.setFocusable(false);
         loadingOverlay.setBackgroundColor(0xCC0D1117); // semi-opaque dark to match theme
         ProgressBar spinner = new ProgressBar(this, null, android.R.attr.progressBarStyleLarge);
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
@@ -94,33 +101,66 @@ public class MainActivity extends BridgeActivity {
         root.addView(loadingOverlay, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT));
+        loadingOverlay.setVisibility(android.view.View.GONE);
         overlayAttached = true;
     }
 
-    private void wireWebViewFirstDraw() {
-        if (getBridge() == null || getBridge().getWebView() == null) return;
-        // Add a one-shot listener for each resume; remove after first draw.
-        getBridge().getWebView().getViewTreeObserver().addOnPreDrawListener(new android.view.ViewTreeObserver.OnPreDrawListener() {
-            @Override
-            public boolean onPreDraw() {
-                hideOverlay();
-                waitingForWebViewDraw = false;
-                if (resumeReloadRunnable != null) uiHandler.removeCallbacks(resumeReloadRunnable);
-                // Remove listener after first draw
-                if (getBridge() != null && getBridge().getWebView() != null) {
-                    getBridge().getWebView().getViewTreeObserver().removeOnPreDrawListener(this);
-                }
-                return true;
+    private void armWebViewReadyCallbacks() {
+        if (getBridge() == null || getBridge().getWebView() == null) {
+            uiHandler.postDelayed(this::armWebViewReadyCallbacks, 50);
+            return;
+        }
+
+        final android.webkit.WebView webView = getBridge().getWebView();
+
+        // 1) Best signal: visual state callback (fires once content is actually drawn).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                webView.postVisualStateCallback(0, requestId -> {
+                    onWebViewDrewFrame();
+                });
+            } catch (Exception ignored) {}
+        }
+
+        // 2) Fallback: first pre-draw of the WebView view tree.
+        try {
+            if (webViewPreDrawListener != null) {
+                try {
+                    webView.getViewTreeObserver().removeOnPreDrawListener(webViewPreDrawListener);
+                } catch (Exception ignored) {}
+                webViewPreDrawListener = null;
             }
-        });
+            webViewPreDrawListener = new android.view.ViewTreeObserver.OnPreDrawListener() {
+                @Override
+                public boolean onPreDraw() {
+                    onWebViewDrewFrame();
+                    try {
+                        webView.getViewTreeObserver().removeOnPreDrawListener(this);
+                    } catch (Exception ignored) {}
+                    return true;
+                }
+            };
+            webView.getViewTreeObserver().addOnPreDrawListener(webViewPreDrawListener);
+        } catch (Exception ignored) {}
     }
 
     private void showOverlay() {
         if (loadingOverlay != null) loadingOverlay.setVisibility(android.view.View.VISIBLE);
+        // Safety: never let spinner stick forever in normal cases.
+        if (forceHideOverlayRunnable != null) uiHandler.removeCallbacks(forceHideOverlayRunnable);
+        forceHideOverlayRunnable = this::hideOverlay;
+        uiHandler.postDelayed(forceHideOverlayRunnable, 5000);
     }
 
     private void hideOverlay() {
         if (loadingOverlay != null) loadingOverlay.setVisibility(android.view.View.GONE);
+    }
+
+    private void onWebViewDrewFrame() {
+        hideOverlay();
+        waitingForWebViewDraw = false;
+        if (resumeReloadRunnable != null) uiHandler.removeCallbacks(resumeReloadRunnable);
+        if (forceHideOverlayRunnable != null) uiHandler.removeCallbacks(forceHideOverlayRunnable);
     }
 
     private boolean canReloadNow() {

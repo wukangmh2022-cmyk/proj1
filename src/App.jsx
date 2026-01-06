@@ -347,19 +347,18 @@ function HomePage() {
             />
             <button
               onClick={() => handleAddSymbol()}
-              style={{
-                padding: '12px 24px',
-                background: '#fcd535',
-                border: 'none',
-                borderRadius: '8px',
-                color: '#000',
-                fontSize: '14px',
-                fontWeight: 'bold',
-                fontWeight: 'bold',
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-                flexShrink: 0
-              }}
+	              style={{
+	                padding: '12px 24px',
+	                background: '#fcd535',
+	                border: 'none',
+	                borderRadius: '8px',
+	                color: '#000',
+	                fontSize: '14px',
+	                fontWeight: 'bold',
+	                cursor: 'pointer',
+	                whiteSpace: 'nowrap',
+	                flexShrink: 0
+	              }}
             >
               添加
             </button>
