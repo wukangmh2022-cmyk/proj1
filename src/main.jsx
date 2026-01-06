@@ -27,6 +27,7 @@ if (Capacitor.isNativePlatform()) {
   const WATCHDOG_MS = 1_200; // if no 2-frame paint within this, reload
   let hiddenAt = null;
   let watchdogTimer = null;
+  let reloadTimer = null;
 
   const canReloadNow = () => {
     try {
@@ -49,17 +50,20 @@ if (Capacitor.isNativePlatform()) {
 
   const armWatchdog = () => {
     if (watchdogTimer) clearTimeout(watchdogTimer);
+    if (reloadTimer) clearTimeout(reloadTimer);
     let painted2Frames = false;
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         painted2Frames = true;
         if (watchdogTimer) clearTimeout(watchdogTimer);
+        if (reloadTimer) clearTimeout(reloadTimer);
         watchdogTimer = null;
+        reloadTimer = null;
         perfLog('[perf] resume watchdog: 2-frame paint at', Date.now());
         if (diagEnabled) Toast.show({ text: '恢复正常（已绘制）', duration: 'short' }).catch(() => {});
       });
     });
-    watchdogTimer = setTimeout(() => {
+    reloadTimer = setTimeout(() => {
       if (painted2Frames) return;
       if (!canReloadNow()) {
         perfLog('[perf] resume watchdog: reload suppressed (loop guard) at', Date.now());
@@ -70,15 +74,14 @@ if (Capacitor.isNativePlatform()) {
       if (diagEnabled) Toast.show({ text: '恢复超时，正在重载…', duration: 'short' }).catch(() => {});
       window.location.reload();
     }, WATCHDOG_MS);
+    watchdogTimer = reloadTimer;
   };
 
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       hiddenAt = Date.now();
-      if (watchdogTimer) {
-        clearTimeout(watchdogTimer);
-        watchdogTimer = null;
-      }
+      if (watchdogTimer) { clearTimeout(watchdogTimer); watchdogTimer = null; }
+      if (reloadTimer) { clearTimeout(reloadTimer); reloadTimer = null; }
       return;
     }
     const now = Date.now();
