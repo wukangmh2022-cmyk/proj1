@@ -615,6 +615,7 @@ public class FloatingWindowService extends Service {
             // PRE-PARSE / CACHE PARAMETERS to avoid Map lookup in hot loop
             for (AlertConfig a : alerts) {
                 try {
+                    if (a.confirmation == null || a.confirmation.isEmpty()) a.confirmation = "immediate";
                     if (a.repeatMode == null || a.repeatMode.isEmpty()) a.repeatMode = "once";
                     if (a.repeatIntervalSec < 0) a.repeatIntervalSec = 0;
                     if (a.actions == null) a.actions = new AlertConfig.Actions();
@@ -682,7 +683,7 @@ public class FloatingWindowService extends Service {
         // Collect all needed kline streams from alerts
         java.util.Set<String> streams = new java.util.HashSet<>();
         for (AlertConfig alert : alerts) {
-            if (alert.active && (alert.targetType.equals("indicator") || alert.targetType.equals("drawing") || alert.confirmation.equals("candle_close"))) {
+            if (alert.active && (alert.targetType.equals("indicator") || alert.targetType.equals("drawing") || "candle_close".equals(alert.confirmation))) {
                 String interval = alert.interval != null ? alert.interval : "1m";
                 streams.add(alert.symbol.toLowerCase() + "@kline_" + interval);
             }
@@ -831,6 +832,7 @@ public class FloatingWindowService extends Service {
         for (AlertConfig alert : alerts) {
             if (!alert.active || !alert.symbol.equals(symbol)) continue;
             if (!isRepeatEnabled(alert) && triggeredAlerts.contains(alert.id)) continue;
+            if (alert.confirmation == null || alert.confirmation.isEmpty()) alert.confirmation = "immediate";
             
             String alertInterval = alert.interval != null ? alert.interval : "1m";
             if (!alertInterval.equals(interval)) continue;
@@ -881,74 +883,84 @@ public class FloatingWindowService extends Service {
             // Check condition against ALL potential targets (e.g. channel lines)
             final boolean allowUp = hasCondition(alert, "crossing_up");
             final boolean allowDown = hasCondition(alert, "crossing_down");
-            boolean conditionMet = false;
+            boolean crossingMet = false;
+            boolean beyondMet = false; // price stays beyond target (for delay modes)
             double triggerTarget = 0;
 
             if ("rect_zone".equals(alert.algo) && potentialTargets.size() >= 2) {
                 double high = java.util.Collections.max(potentialTargets);
                 double low = java.util.Collections.min(potentialTargets);
                 if (allowUp && crossedUp(prevClose, close, high)) {
-                    conditionMet = true;
+                    crossingMet = true;
+                    triggerTarget = high;
+                } else if (allowUp && close >= high) {
+                    beyondMet = true;
                     triggerTarget = high;
                 } else if (allowDown && crossedDown(prevClose, close, low)) {
-                    conditionMet = true;
+                    crossingMet = true;
+                    triggerTarget = low;
+                } else if (allowDown && close <= low) {
+                    beyondMet = true;
                     triggerTarget = low;
                 }
             } else {
                 for (double tVal : potentialTargets) {
-                    if (allowUp && crossedUp(prevClose, close, tVal)) {
-                        conditionMet = true;
+                    boolean crossUp = allowUp && crossedUp(prevClose, close, tVal);
+                    boolean crossDown = allowDown && crossedDown(prevClose, close, tVal);
+                    boolean beyondUp = allowUp && close >= tVal;
+                    boolean beyondDown = allowDown && close <= tVal;
+                    if (crossUp || crossDown) {
+                        crossingMet = true;
                         triggerTarget = tVal;
                         break;
-                    } else if (allowDown && crossedDown(prevClose, close, tVal)) {
-                        conditionMet = true;
+                    }
+                    if (beyondUp || beyondDown) {
+                        beyondMet = true;
                         triggerTarget = tVal;
-                        break;
                     }
                 }
             }
             
-            if (conditionMet) {
-                // Handle Confirmation Mode
-                if ("time_delay".equals(alert.confirmation) && alert.delaySeconds > 0) {
+            final boolean isCandleDelay = "candle_delay".equals(alert.confirmation) && alert.delayCandles > 0;
+            final boolean isTimeDelay = "time_delay".equals(alert.confirmation) && alert.delaySeconds > 0;
+
+            if (isCandleDelay) {
+                if (!isClosed) continue; // only evaluate on closed candles
+                if (beyondMet || crossingMet) {
+                    int count = candleDelayCounter.getOrDefault(alert.id, 0) + 1;
+                    if (count >= alert.delayCandles) {
+                        triggerAlert(alert, close, triggerTarget);
+                        candleDelayCounter.put(alert.id, 0);
+                    } else {
+                        candleDelayCounter.put(alert.id, count);
+                    }
+                } else {
+                    candleDelayCounter.put(alert.id, 0);
+                }
+                pendingDelayAlerts.remove(alert.id);
+            } else if (isTimeDelay) {
+                if (beyondMet || crossingMet) {
                     long now = System.currentTimeMillis();
                     if (!pendingDelayAlerts.containsKey(alert.id)) {
-                        // First time condition met: Start timer
                         pendingDelayAlerts.put(alert.id, now);
                     } else {
-                        // Already pending: Check duration
                         long startTime = pendingDelayAlerts.get(alert.id);
                         if (now - startTime >= alert.delaySeconds * 1000L) {
-                            // Time up! Trigger.
                             triggerAlert(alert, close, triggerTarget);
-                           if (pendingDelayAlerts.containsKey(alert.id)) {
-                        pendingDelayAlerts.remove(alert.id);
-                    }
+                            pendingDelayAlerts.remove(alert.id);
                         }
                     }
-                } else if ("candle_delay".equals(alert.confirmation) && alert.delayCandles > 0) {
-                    if (isClosed) {
-                        int count = candleDelayCounter.getOrDefault(alert.id, 0) + 1;
-                        if (count >= alert.delayCandles) {
-                            triggerAlert(alert, close, triggerTarget);
-                            candleDelayCounter.put(alert.id, 0); // Reset or Keep? Usually trigger once.
-                        } else {
-                            candleDelayCounter.put(alert.id, count);
-                        }
-                    }
-                    // For open candles, do nothing (wait for close)
                 } else {
-                    // Immediate trigger (or candle close which is already filtered)
-                    triggerAlert(alert, close, triggerTarget);
-                }
-            } else {
-                // Condition NOT met
-                if (pendingDelayAlerts.containsKey(alert.id)) {
                     pendingDelayAlerts.remove(alert.id);
                 }
-                if (isClosed) {
-                    // Reset candle counter if condition broke on a CLOSED candle
-                    candleDelayCounter.put(alert.id, 0);
+                candleDelayCounter.put(alert.id, 0);
+            } else {
+                // Immediate / candle_close (already filtered above)
+                if (crossingMet) {
+                    triggerAlert(alert, close, triggerTarget);
+                } else {
+                    pendingDelayAlerts.remove(alert.id);
+                    if (isClosed) candleDelayCounter.put(alert.id, 0);
                 }
             }
         }
@@ -977,7 +989,7 @@ public class FloatingWindowService extends Service {
             }
             // Rectangle Zone: [High, Low] if time matches
             else if ("rect_zone".equals(alert.algo)) {
-                if (t <= alert.cachedT_End) {
+                if (t >= alert.cachedT_Start && t <= alert.cachedT_End) {
                     results.add(alert.cachedP_High);
                     results.add(alert.cachedP_Low);
                 }
@@ -1057,7 +1069,7 @@ public class FloatingWindowService extends Service {
             if (!alert.active || !alert.symbol.equals(symbol)) continue;
             if (!isRepeatEnabled(alert) && triggeredAlerts.contains(alert.id)) continue;
             if (!alert.targetType.equals("price")) continue;
-            if (!alert.confirmation.equals("immediate")) continue;
+            if (alert.confirmation == null || alert.confirmation.isEmpty()) alert.confirmation = "immediate";
             
             final boolean allowUp = hasCondition(alert, "crossing_up");
             final boolean allowDown = hasCondition(alert, "crossing_down");
@@ -1090,9 +1102,14 @@ public class FloatingWindowService extends Service {
         final boolean allowUp = hasCondition(alert, "crossing_up");
         final boolean allowDown = hasCondition(alert, "crossing_down");
         String direction = allowUp && allowDown ? "↕ 穿越" : (allowUp ? "↑ 突破" : "↓ 跌破");
-        String targetStr = alert.targetType.equals("indicator") 
-            ? alert.targetValue.toUpperCase() 
-            : String.format("$%.2f", targetValue);
+        String targetStr;
+        if ("indicator".equals(alert.targetType)) {
+            targetStr = alert.targetValue != null ? alert.targetValue.toUpperCase() : String.format("%.4f", targetValue);
+        } else if ("drawing".equals(alert.targetType) || alert.targetType == null) {
+            targetStr = String.format("%.4f", targetValue);
+        } else {
+            targetStr = String.format("$%.2f", targetValue);
+        }
         String message = alert.symbol + " " + direction + " " + targetStr + "\n当前: $" + String.format("%.2f", currentPrice);
         
         // Send notification
