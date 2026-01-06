@@ -120,6 +120,9 @@ public class MainActivity extends BridgeActivity {
                     onWebViewDrewFrame();
                 });
             } catch (Exception ignored) {}
+            // On modern Android, do NOT use pre-draw as "ready" (it can fire even when the first frame is blank),
+            // keep watchdog + overlay until we get an actual visual-state callback.
+            return;
         }
 
         // 2) Fallback: first pre-draw of the WebView view tree.
