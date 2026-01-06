@@ -5,7 +5,7 @@
   --text-primary: #f0f6fc;
   --text-secondary: #8b949e;
   --accent-green: #00d68f;
-  --accent-red: #ff6b81;
+  --accent-red: #ff4757;
   --accent-gold: #fcd535;
   --border-color: rgba(255, 255, 255, 0.1);
   --glass-blur: blur(16px);
@@ -108,11 +108,9 @@ body {
   color: #000;
 }
 
-/* Avoid sticky :hover transforms on touch devices (can make buttons look "floated out"). */
-@media (hover: hover) and (pointer: fine) {
-  .btn-primary:hover {
-    box-shadow: 0 4px 20px rgba(252, 213, 53, 0.4);
-  }
+/* Keep primary buttons stable across touch/mouse (avoid sticky hover visuals on mobile emulation). */
+.btn-primary:hover {
+  box-shadow: 0 4px 20px rgba(252, 213, 53, 0.4);
 }
 
 .btn-secondary {
@@ -230,14 +228,14 @@ body {
 
 .ticker-card .change.down {
   color: var(--accent-red);
-  background: rgba(255, 107, 129, 0.15);
+  background: rgba(255, 71, 87, 0.15);
 }
 
 .ticker-card .remove-btn {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: rgba(255, 107, 129, 0.85);
+  background: rgba(255, 71, 87, 0.8);
   color: #fff;
   border: none;
   cursor: pointer;
@@ -303,6 +301,8 @@ body {
 .ticker-card.edit-active .actions {
   right: 50px;
   /* Shift Remove button left of handle */
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 /* Removed wobble animation */
