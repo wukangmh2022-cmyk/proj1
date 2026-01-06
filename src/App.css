@@ -107,9 +107,12 @@ body {
   color: #000;
 }
 
-.btn-primary:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 20px rgba(252, 213, 53, 0.4);
+/* Avoid sticky :hover transforms on touch devices (can make buttons look "floated out"). */
+@media (hover: hover) and (pointer: fine) {
+  .btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 20px rgba(252, 213, 53, 0.4);
+  }
 }
 
 .btn-secondary {
@@ -176,14 +179,16 @@ body {
   transition: opacity 0.3s ease;
 }
 
-.ticker-card:hover {
-  transform: translateY(-4px);
-  border-color: var(--accent-gold);
-  box-shadow: 0 8px 32px rgba(252, 213, 53, 0.15);
-}
+@media (hover: hover) and (pointer: fine) {
+  .ticker-card:hover {
+    transform: translateY(-4px);
+    border-color: var(--accent-gold);
+    box-shadow: 0 8px 32px rgba(252, 213, 53, 0.15);
+  }
 
-.ticker-card:hover::before {
-  opacity: 1;
+  .ticker-card:hover::before {
+    opacity: 1;
+  }
 }
 
 .ticker-card .symbol {
@@ -737,8 +742,10 @@ body {
   opacity: 0.6;
 }
 
-.btn-bell:hover {
-  opacity: 1;
+@media (hover: hover) and (pointer: fine) {
+  .btn-bell:hover {
+    opacity: 1;
+  }
 }
 
 .loading::after {
