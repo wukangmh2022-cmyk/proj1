@@ -3204,6 +3204,27 @@ export default function ChartPage() {
                     </div>
                 </>
             )}
+
+            {(isLoading || (loadingStage && loadingStage !== '')) && (
+                <div style={{
+                    position: 'fixed',
+                    top: 0, left: 0, width: '100%', height: '100%',
+                    background: 'rgba(0,0,0,0.65)',
+                    zIndex: 12000,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexDirection: 'column',
+                    pointerEvents: 'none'
+                }}>
+                    <svg width="42" height="42" viewBox="0 0 50 50" style={{ opacity: 0.9 }}>
+                        <circle cx="25" cy="25" r="20" stroke="#fcd535" strokeWidth="4" fill="none" strokeLinecap="round">
+                            <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="0.9s" repeatCount="indefinite" />
+                        </circle>
+                    </svg>
+                    <div style={{ marginTop: 10, color: '#fcd535', fontSize: 13 }}>{loadingStage || '加载中...'}</div>
+                </div>
+            )}
         </div>
     );
 }

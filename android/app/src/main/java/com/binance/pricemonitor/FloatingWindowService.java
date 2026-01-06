@@ -27,14 +27,29 @@ public class FloatingWindowService extends Service {
     private LinearLayout itemsContainer;
     private WindowManager.LayoutParams params;
     private final android.os.Handler mainHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final android.os.Handler klineHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     private long lastUiUpdateMs = 0L;
     private static final long UI_UPDATE_THROTTLE_MS = 200L; // cap UI redraws to ~5fps to reduce jank
+    private long lastKlineMessageMs = 0L;
+    private int klineRetryAttempt = 0;
+    private final Runnable klineWatchdog = new Runnable() {
+        @Override
+        public void run() {
+            long now = android.os.SystemClock.uptimeMillis();
+            if (now - lastKlineMessageMs > 30000) {
+                connectKlineWebSocket();
+                return;
+            }
+            klineHandler.postDelayed(this, 15000);
+        }
+    };
     
     // Data storage
     private java.util.List<String> symbolList = new java.util.ArrayList<>();
     private java.util.Map<String, String[]> priceDataMap = new java.util.concurrent.ConcurrentHashMap<>();
     private java.util.Map<String, double[]> rawPriceDataMap = new java.util.concurrent.ConcurrentHashMap<>();
     private int currentIndex = 0;
+    private boolean hasPriceAlerts = false;
     
     // Config values
     private float fontSize = 14f;
@@ -207,7 +222,9 @@ public class FloatingWindowService extends Service {
                 windowManager.removeView(floatingView);
             }
             windowVisible = false;
-            stopWebSockets();
+            if (!hasPriceAlerts) {
+                stopWebSockets();
+            }
             return START_STICKY;
         }
         
@@ -611,6 +628,7 @@ public class FloatingWindowService extends Service {
             com.google.gson.reflect.TypeToken<java.util.List<AlertConfig>> typeToken = 
                 new com.google.gson.reflect.TypeToken<java.util.List<AlertConfig>>() {};
             alerts = gson.fromJson(alertsJson, typeToken.getType());
+            hasPriceAlerts = false;
             
             // PRE-PARSE / CACHE PARAMETERS to avoid Map lookup in hot loop
             for (AlertConfig a : alerts) {
@@ -620,6 +638,7 @@ public class FloatingWindowService extends Service {
                     if (a.repeatIntervalSec < 0) a.repeatIntervalSec = 0;
                     if (a.actions == null) a.actions = new AlertConfig.Actions();
                     if (a.actions.vibration == null || a.actions.vibration.isEmpty()) a.actions.vibration = "once";
+                    if (a.active && "price".equals(a.targetType)) hasPriceAlerts = true;
 
                     // Cache Indicator Params
                     if ("indicator".equals(a.targetType) && a.targetValue != null) {
@@ -667,6 +686,11 @@ public class FloatingWindowService extends Service {
                 if (!ids.contains(k)) candleDelayCounter.remove(k);
             }
             
+            // Keep ticker WS alive for price alerts even when window hidden
+            if (hasPriceAlerts && spotWebSocket == null && futuresWebSocket == null && !symbolList.isEmpty()) {
+                connectWebSockets();
+            }
+            
             // Connect to K-line streams if needed
             connectKlineWebSocket();
         } catch (Exception e) {
@@ -694,8 +718,12 @@ public class FloatingWindowService extends Service {
             if (wakeLock != null && wakeLock.isHeld()) {
                 wakeLock.release();
             }
+            klineHandler.removeCallbacks(klineWatchdog);
             return;
         }
+        lastKlineMessageMs = android.os.SystemClock.uptimeMillis();
+        klineHandler.removeCallbacks(klineWatchdog);
+        klineHandler.postDelayed(klineWatchdog, 15000);
         
         // Smart WakeLock: Only acquire if we have ACTUAL ALERTS monitoring.
         // If we are just streaming for the UI (activeAlertsCount == 0), we DO NOT hold the lock.
@@ -722,14 +750,16 @@ public class FloatingWindowService extends Service {
         klineWebSocket = client.newWebSocket(request, new okhttp3.WebSocketListener() {
             @Override
             public void onMessage(okhttp3.WebSocket webSocket, String text) {
+                lastKlineMessageMs = android.os.SystemClock.uptimeMillis();
+                klineRetryAttempt = 0;
                 handleKlineMessage(text);
             }
             
             @Override
             public void onFailure(okhttp3.WebSocket webSocket, Throwable t, okhttp3.Response response) {
-                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
-                    connectKlineWebSocket();
-                }, 5000);
+                long delay = (long) Math.min(30000, 5000 * Math.pow(2, Math.min(5, klineRetryAttempt)));
+                klineRetryAttempt++;
+                klineHandler.postDelayed(() -> connectKlineWebSocket(), delay);
             }
         });
         
@@ -1272,6 +1302,7 @@ public class FloatingWindowService extends Service {
         if (klineWebSocket != null) {
             klineWebSocket.cancel();
         }
+        klineHandler.removeCallbacks(klineWatchdog);
         if (floatingView != null && windowManager != null && windowVisible) {
             try {
                 windowManager.removeView(floatingView);
