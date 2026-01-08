@@ -4,10 +4,10 @@ import { Haptics } from '@capacitor/haptics';
 import { Toast } from '@capacitor/toast';
 import { getAlerts, saveAlert, addAlertHistory } from '../utils/alert_storage';
 import { Capacitor } from '@capacitor/core';
-import { useBinanceCandles } from './useBinanceCandles';
+import { useMarketCandles } from './useMarketCandles';
 import { serializeDrawingAlert, checkAlertTargets } from '../utils/drawing_alert_utils';
 
-export const usePriceAlerts = (tickers) => {
+export const usePriceAlerts = (tickers, marketProvider = 'binance') => {
     const [alerts, setAlerts] = useState([]);
     const pendingAlertsRef = useRef({}); // Tracks time delay timers: { alertId: { timerId } }
     const pendingCandleWaitRef = useRef({}); // Tracks candle wait: { alertId: { remainingCandles: k } }
@@ -47,7 +47,7 @@ export const usePriceAlerts = (tickers) => {
     const uniqueSubs = subscriptions.filter((v, i, a) => a.findIndex(t => t.symbol === v.symbol && t.interval === v.interval) === i);
 
     // 2. Fetch Candle Data
-    const candleData = useBinanceCandles(uniqueSubs);
+    const candleData = useMarketCandles(marketProvider, uniqueSubs);
 
     // Load alerts on mount
     useEffect(() => {

@@ -364,13 +364,13 @@ body {
 
 @keyframes slideUp {
   from {
-    transform: translateY(20px);
     opacity: 0;
+    margin-top: 20px;
   }
 
   to {
-    transform: translateY(0);
     opacity: 1;
+    margin-top: 0;
   }
 }
 
@@ -388,6 +388,22 @@ body {
   color: var(--text-primary);
   font-size: 16px;
   margin-bottom: 16px;
+}
+
+.modal select {
+  width: 100%;
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.modal select:focus {
+  outline: none;
+  border-color: var(--accent-gold);
 }
 
 .modal input:focus {
@@ -413,6 +429,68 @@ body {
   margin-bottom: 10px;
   color: var(--text-secondary);
   font-size: 14px;
+}
+
+.settings-provider-select {
+  position: relative;
+}
+
+.settings-provider-select-btn {
+  width: 100%;
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 16px;
+  line-height: 1.2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settings-provider-select-btn:active {
+  border-color: var(--accent-gold);
+}
+
+.settings-provider-select-caret {
+  opacity: 0.7;
+  font-size: 12px;
+  margin-left: 8px;
+}
+
+.settings-provider-select-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 6px);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  overflow: hidden;
+  z-index: 2000;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
+}
+
+.settings-provider-select-item {
+  width: 100%;
+  padding: 12px 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 16px;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settings-provider-select-item.active {
+  background: rgba(252, 213, 53, 0.15);
+}
+
+.settings-provider-select-item:active {
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .settings-group input[type="range"] {

@@ -1,20 +1,23 @@
-const SYMBOLS_KEY = 'binance_symbols';
+const SYMBOLS_KEY = 'symbols';
+const LEGACY_SYMBOLS_KEY = 'binance_symbols';
 const DEFAULT_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ZECUSDT'];
 
 export const getSymbols = () => {
-    const stored = localStorage.getItem(SYMBOLS_KEY);
-    if (stored) {
-        try {
-            return JSON.parse(stored);
-        } catch {
-            return DEFAULT_SYMBOLS;
-        }
+    const stored = localStorage.getItem(SYMBOLS_KEY) ?? localStorage.getItem(LEGACY_SYMBOLS_KEY);
+    if (!stored) return DEFAULT_SYMBOLS;
+    try {
+        const parsed = JSON.parse(stored);
+        return Array.isArray(parsed) && parsed.length ? parsed : DEFAULT_SYMBOLS;
+    } catch {
+        return DEFAULT_SYMBOLS;
     }
-    return DEFAULT_SYMBOLS;
 };
 
 export const saveSymbols = (symbols) => {
-    localStorage.setItem(SYMBOLS_KEY, JSON.stringify(symbols));
+    const s = JSON.stringify(symbols);
+    localStorage.setItem(SYMBOLS_KEY, s);
+    // Backward-compat for older builds that still read `binance_symbols`.
+    localStorage.setItem(LEGACY_SYMBOLS_KEY, s);
     return symbols;
 };
 

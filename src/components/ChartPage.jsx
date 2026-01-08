@@ -1410,19 +1410,63 @@ export default function ChartPage() {
         setIsLoading(true);
         setLoadingStage('连接中...');
 
+        const provider = marketProvider === 'hyperliquid' ? 'hyperliquid' : 'binance';
         const isPerpetual = symbol.endsWith('.P');
         const baseSymbol = isPerpetual ? symbol.slice(0, -2) : symbol;
-        const apiBase = isPerpetual ? 'https://fapi.binance.com/fapi/v1' : 'https://api.binance.com/api/v3';
-        const wsBase = isPerpetual ? 'wss://fstream.binance.com/ws' : 'wss://stream.binance.com:9443/ws';
+
+        const toHlCoin = (sym) => {
+            const s = String(sym || '').toUpperCase();
+            if (s.endsWith('USDT')) return s.slice(0, -4);
+            if (s.endsWith('USD')) return s.slice(0, -3);
+            return s;
+        };
+
+        const intervalMs = parseInterval(interval) * 1000;
+
+        const HL_INFO_URL = 'https://api.hyperliquid.xyz/info';
+        const HL_WS_URL = 'wss://api.hyperliquid.xyz/ws';
+
+        const fetchHlCandles = async ({ endTimeMs, limit }) => {
+            const coin = toHlCoin(baseSymbol);
+            const endTime = endTimeMs ?? (Date.now() + 2000);
+            const startTime = Math.max(0, endTime - Math.round(limit * intervalMs * 1.25));
+            const res = await fetch(HL_INFO_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type: 'candleSnapshot', req: { coin, interval, startTime, endTime } }),
+            });
+            const data = await res.json();
+            if (!Array.isArray(data)) return [];
+            data.sort((a, b) => (a.t || 0) - (b.t || 0));
+            return data.map(d => ({
+                time: d.t / 1000,
+                open: +d.o,
+                high: +d.h,
+                low: +d.l,
+                close: +d.c,
+                volume: +d.v,
+            })).filter(d => Number.isFinite(d.time) && Number.isFinite(d.close));
+        };
+
+        const fetchBinanceCandles = async ({ endTimeMs, limit }) => {
+            const apiBase = isPerpetual ? 'https://fapi.binance.com/fapi/v1' : 'https://api.binance.com/api/v3';
+            const url = endTimeMs
+                ? `${apiBase}/klines?symbol=${baseSymbol}&interval=${interval}&limit=${limit}&endTime=${endTimeMs}`
+                : `${apiBase}/klines?symbol=${baseSymbol}&interval=${interval}&limit=${limit}`;
+            const res = await fetch(url);
+            const data = await res.json();
+            if (!Array.isArray(data)) return [];
+            return data.map(d => ({ time: d[0] / 1000, open: +d[1], high: +d[2], low: +d[3], close: +d[4], volume: +d[5] }));
+        };
 
         // Initial Load
         const load = async () => {
             try {
                 perfLog('[perf] chart fetch start', symbol, interval);
-                const res = await fetch(`${apiBase}/klines?symbol=${baseSymbol}&interval=${interval}&limit=500`);
-                const data = await res.json();
                 setLoadingStage('数据处理中...');
-                const formatted = data.map(d => ({ time: d[0] / 1000, open: +d[1], high: +d[2], low: +d[3], close: +d[4], volume: +d[5] }));
+                const formatted = provider === 'hyperliquid'
+                    ? await fetchHlCandles({ limit: 500 })
+                    : await fetchBinanceCandles({ limit: 500 });
 
                 allDataRef.current = formatted;
                 seriesRef.current.setData(formatted);
@@ -1477,33 +1521,62 @@ export default function ChartPage() {
         load();
 
         // WebSocket
-        const ws = new WebSocket(`${wsBase}/${baseSymbol.toLowerCase()}@kline_${interval}`);
-        ws.onopen = () => {
-            perfLog('[perf] chart ws open', symbol, interval);
-        };
-        ws.onmessage = (e) => {
-            // Guard: don't update if initial load hasn't finished (prevent mixing intervals)
-            if (allDataRef.current.length === 0) return;
-
-            if (!firstWsTick) {
-                firstWsTick = true;
-                perfLog('[perf] chart ws first tick', symbol, interval, 'ms=', Date.now() - loadStart);
-            }
-            const m = JSON.parse(e.data);
-            if (m.k) {
-                const k = { time: m.k.t / 1000, open: +m.k.o, high: +m.k.h, low: +m.k.l, close: +m.k.c, volume: +m.k.v };
+        let ws;
+        if (provider === 'hyperliquid') {
+            ws = new WebSocket(HL_WS_URL);
+            ws.onopen = () => {
+                perfLog('[perf] chart ws open', symbol, interval, provider);
+                ws.send(JSON.stringify({ method: 'subscribe', subscription: { type: 'candle', coin: toHlCoin(baseSymbol), interval } }));
+            };
+            ws.onmessage = (e) => {
+                if (allDataRef.current.length === 0) return;
+                if (!firstWsTick) {
+                    firstWsTick = true;
+                    perfLog('[perf] chart ws first tick', symbol, interval, provider, 'ms=', Date.now() - loadStart);
+                }
+                let m;
+                try { m = JSON.parse(e.data); } catch { return; }
+                if (!m || m.channel !== 'candle' || !m.data) return;
+                const d = m.data;
+                const k = { time: d.t / 1000, open: +d.o, high: +d.h, low: +d.l, close: +d.c, volume: +d.v };
+                if (!Number.isFinite(k.time) || !Number.isFinite(k.close)) return;
                 seriesRef.current.update(k);
                 applyPriceFormat(k.close);
-                // Sync allDataRef
                 const last = allDataRef.current[allDataRef.current.length - 1];
-                if (last && last.time === k.time) {
-                    allDataRef.current[allDataRef.current.length - 1] = k;
-                } else {
-                    allDataRef.current.push(k);
-                }
+                if (last && last.time === k.time) allDataRef.current[allDataRef.current.length - 1] = k;
+                else allDataRef.current.push(k);
                 updateIndicators(allDataRef.current);
-            }
-        };
+            };
+        } else {
+            const wsBase = isPerpetual ? 'wss://fstream.binance.com/ws' : 'wss://stream.binance.com:9443/ws';
+            ws = new WebSocket(`${wsBase}/${baseSymbol.toLowerCase()}@kline_${interval}`);
+            ws.onopen = () => {
+                perfLog('[perf] chart ws open', symbol, interval, provider);
+            };
+            ws.onmessage = (e) => {
+                // Guard: don't update if initial load hasn't finished (prevent mixing intervals)
+                if (allDataRef.current.length === 0) return;
+
+                if (!firstWsTick) {
+                    firstWsTick = true;
+                    perfLog('[perf] chart ws first tick', symbol, interval, provider, 'ms=', Date.now() - loadStart);
+                }
+                const m = JSON.parse(e.data);
+                if (m.k) {
+                    const k = { time: m.k.t / 1000, open: +m.k.o, high: +m.k.h, low: +m.k.l, close: +m.k.c, volume: +m.k.v };
+                    seriesRef.current.update(k);
+                    applyPriceFormat(k.close);
+                    // Sync allDataRef
+                    const last = allDataRef.current[allDataRef.current.length - 1];
+                    if (last && last.time === k.time) {
+                        allDataRef.current[allDataRef.current.length - 1] = k;
+                    } else {
+                        allDataRef.current.push(k);
+                    }
+                    updateIndicators(allDataRef.current);
+                }
+            };
+        }
 
         // Infinite Scroll Handler
         const handleScroll = async (newRange) => {
@@ -1524,10 +1597,10 @@ export default function ChartPage() {
                 const oldestTime = allDataRef.current[0].time * 1000;
                 isFetchingHistoryRef.current = true;
                 try {
-                    const res = await fetch(`${apiBase}/klines?symbol=${baseSymbol}&interval=${interval}&limit=500&endTime=${oldestTime - 1}`);
-                    const raw = await res.json();
-                    if (Array.isArray(raw) && raw.length > 0) {
-                        const newData = raw.map(d => ({ time: d[0] / 1000, open: +d[1], high: +d[2], low: +d[3], close: +d[4], volume: +d[5] }));
+                    const newData = provider === 'hyperliquid'
+                        ? await fetchHlCandles({ endTimeMs: oldestTime - 1, limit: 500 })
+                        : await fetchBinanceCandles({ endTimeMs: oldestTime - 1, limit: 500 });
+                    if (Array.isArray(newData) && newData.length > 0) {
                         // Filter to avoid overlaps
                         const uniqueNew = newData.filter(d => d.time < allDataRef.current[0].time);
                         if (uniqueNew.length > 0) {
@@ -1547,11 +1620,11 @@ export default function ChartPage() {
         chartRef.current.timeScale().subscribeVisibleLogicalRangeChange(handleScroll);
 
         return () => {
-            ws.close();
+            try { ws.close(); } catch (e) {}
             if (chartRef.current) chartRef.current.timeScale().unsubscribeVisibleLogicalRangeChange(handleScroll);
             if (stageTimer) clearTimeout(stageTimer);
         };
-    }, [symbol, interval, applyPriceFormat]);
+    }, [symbol, interval, applyPriceFormat, marketProvider]);
 
     // Resize chart on orientation/viewport changes
     useEffect(() => {

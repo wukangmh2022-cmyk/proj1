@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useBinanceTickers } from './useBinanceTickers';
 import { useHyperliquidTickers } from './useHyperliquidTickers';
+import { Capacitor } from '@capacitor/core';
 
 const toHyperliquidMarketName = (symbol) => {
     if (!symbol) return null;
@@ -20,7 +21,10 @@ export const useMarketTickers = (provider, symbols = []) => {
     const safeProvider = provider === 'hyperliquid' ? 'hyperliquid' : 'binance';
     const key = useMemo(() => symbols.filter(Boolean).join(','), [symbols]);
 
-    const binanceTickers = useBinanceTickers(safeProvider === 'binance' ? symbols : []);
+    // On Android, tickers come from the native `FloatingWindowService` via plugin events.
+    // The native layer now supports multiple providers, so always consume the same event stream here.
+    const isAndroidNative = Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
+    const binanceTickers = useBinanceTickers(isAndroidNative || safeProvider === 'binance' ? symbols : []);
 
     const hyperMarkets = useMemo(() => {
         if (safeProvider !== 'hyperliquid') return [];
@@ -35,6 +39,7 @@ export const useMarketTickers = (provider, symbols = []) => {
     const hyperTickersByMarket = useHyperliquidTickers(hyperMarkets);
 
     return useMemo(() => {
+        if (isAndroidNative) return binanceTickers;
         if (safeProvider === 'binance') return binanceTickers;
         const out = {};
         symbols.forEach(sym => {
@@ -43,6 +48,5 @@ export const useMarketTickers = (provider, symbols = []) => {
             if (t) out[sym] = t;
         });
         return out;
-    }, [safeProvider, key, binanceTickers, hyperTickersByMarket]);
+    }, [isAndroidNative, safeProvider, key, binanceTickers, hyperTickersByMarket]);
 };
-

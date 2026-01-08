@@ -39,6 +39,7 @@ function HomePage() {
   const navigate = useNavigate();
   const [symbols, setSymbols] = useState(getSymbols());
   const [showSettings, setShowSettings] = useState(false);
+  const [marketProviderMenuOpen, setMarketProviderMenuOpen] = useState(false);
   const [alertModalSymbol, setAlertModalSymbol] = useState(null);
   const [newSymbol, setNewSymbol] = useState('');
   const [searchSuggestions, setSearchSuggestions] = useState([]);
@@ -169,13 +170,13 @@ function HomePage() {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           if (cancelled) return;
-          FloatingWidget.startData({ symbols }).catch(console.error);
+          FloatingWidget.startData({ symbols, marketProvider }).catch(console.error);
           // Initial alert sync (can be heavy if drawings are present)
           setTimeout(() => {
             if (cancelled) return;
             try {
               const allAlerts = normalizeAlertsForNative(getAlerts());
-              FloatingWidget.syncAlerts({ alerts: allAlerts }).catch(console.error);
+              FloatingWidget.syncAlerts({ alerts: allAlerts, marketProvider }).catch(console.error);
             } catch (e) {
               console.error(e);
             }
@@ -184,7 +185,7 @@ function HomePage() {
       });
       return () => { cancelled = true; };
     }
-  }, [symbols]); // Re-start/sync when symbols change
+  }, [symbols, marketProvider]); // Re-start/sync when symbols or provider change
 
   // Sync alerts to native whenever alert modal closes (might have changed)
   useEffect(() => {
@@ -193,10 +194,10 @@ function HomePage() {
       // Import alerts and sync to native
       import('./utils/alert_storage').then(({ getAlerts }) => {
         const allAlerts = normalizeAlertsForNative(getAlerts());
-        FloatingWidget.syncAlerts({ alerts: allAlerts }).catch(console.error);
+        FloatingWidget.syncAlerts({ alerts: allAlerts, marketProvider }).catch(console.error);
       });
     }
-  }, [alertModalSymbol]);
+  }, [alertModalSymbol, marketProvider]);
 
   useEffect(() => {
     floatingActiveRef.current = floatingActive;
@@ -204,7 +205,7 @@ function HomePage() {
 
   // Data source: native on Android (service started above), WebSocket on web
   const tickers = useMarketTickers(marketProvider, symbols);
-  usePriceAlerts(tickers);
+  usePriceAlerts(tickers, marketProvider);
 
 
   const handleAddSymbol = (symbolToAdd) => {
@@ -266,13 +267,14 @@ function HomePage() {
       setFloatingActive(true);
       localStorage.setItem('floating_active', 'true'); // Persist state
       floatingActiveRef.current = true;
-      await FloatingWidget.setSymbols({ symbols });
+      await FloatingWidget.setSymbols({ symbols, marketProvider });
       const currentConfig = getFloatingConfig();
       await FloatingWidget.updateConfig({
         fontSize: currentConfig.fontSize,
         opacity: currentConfig.opacity,
         showSymbol: currentConfig.showSymbol,
-        itemsPerPage: currentConfig.itemsPerPage
+        itemsPerPage: currentConfig.itemsPerPage,
+        marketProvider
       });
     } catch (e) {
       console.error(e);
@@ -301,13 +303,28 @@ function HomePage() {
           fontSize: newConfig.fontSize,
           opacity: newConfig.opacity,
           showSymbol: newConfig.showSymbol,
-          itemsPerPage: newConfig.itemsPerPage
+          itemsPerPage: newConfig.itemsPerPage,
+          marketProvider
         });
       } catch (e) {
         console.error('Failed to update config', e);
       }
     }
   };
+
+  useEffect(() => {
+    if (!showSettings) {
+      setMarketProviderMenuOpen(false);
+      return;
+    }
+    if (!marketProviderMenuOpen) return;
+    const onPointerDown = (e) => {
+      if (e.target.closest('.settings-provider-select')) return;
+      setMarketProviderMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [marketProviderMenuOpen, showSettings]);
 
   // Auto-start floating widget if persisted
   useEffect(() => {
@@ -532,27 +549,51 @@ function HomePage() {
             <h2>悬浮窗设置</h2>
             <div className="settings-group">
               <label>行情数据源</label>
-              <select
-                value={marketProvider}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setMarketProviderState(v);
-                  setMarketDataProvider(v);
-                }}
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  borderRadius: '10px',
-                  border: '1px solid rgba(255,255,255,0.12)',
-                  background: '#161b22',
-                  color: '#fff'
-                }}
-              >
-                <option value="binance">Binance</option>
-                <option value="hyperliquid">Hyperliquid</option>
-              </select>
+              <div className="settings-provider-select">
+                <button
+                  type="button"
+                  className="settings-provider-select-btn"
+                  onClick={() => setMarketProviderMenuOpen(v => !v)}
+                >
+                  <span>{marketProvider === 'hyperliquid' ? 'Hyperliquid' : 'Binance'}</span>
+                  <span className="settings-provider-select-caret">▾</span>
+                </button>
+                {marketProviderMenuOpen && (
+                  <div className="settings-provider-select-menu">
+                    {[
+                      { value: 'binance', label: 'Binance' },
+                      { value: 'hyperliquid', label: 'Hyperliquid' },
+                    ].map(opt => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        className={`settings-provider-select-item ${marketProvider === opt.value ? 'active' : ''}`}
+                        onClick={() => {
+                          if (opt.value !== marketProvider) {
+                            const ok = window.confirm('切换数据源会清空当前图形与预警配置（避免不同交易所/时间轴不一致导致误报）。\n\n是否继续？');
+                            if (!ok) return;
+                            try {
+                              // Clear drawing caches for all symbols
+                              const all = getSymbols();
+                              all.forEach(s => localStorage.removeItem(`chart_drawings_${s}`));
+                              // Clear alert configs + history
+                              localStorage.removeItem('binance_alerts');
+                              localStorage.removeItem('binance_alert_history');
+                            } catch {}
+                          }
+                          setMarketProviderMenuOpen(false);
+                          setMarketProviderState(opt.value);
+                          setMarketDataProvider(opt.value);
+                        }}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div style={{ marginTop: 6, fontSize: 12, color: '#888' }}>
-                仅影响主界面/图表的行情展示；悬浮窗/预警仍由原生服务处理。
+                切换数据源会清空当前图形与预警配置（避免不同交易所/时间轴不一致导致误报）。
               </div>
             </div>
             <div className="settings-group">

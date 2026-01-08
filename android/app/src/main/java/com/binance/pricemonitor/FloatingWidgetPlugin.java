@@ -56,6 +56,10 @@ public class FloatingWidgetPlugin extends Plugin {
         Intent intent = new Intent(context, FloatingWindowService.class);
         intent.setAction(FloatingWindowService.ACTION_START_DATA);
         intent.putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST, symbols);
+        String marketProvider = call.getString("marketProvider");
+        if (marketProvider != null && !marketProvider.isEmpty()) {
+            intent.putExtra(FloatingWindowService.EXTRA_MARKET_PROVIDER, marketProvider);
+        }
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             context.startForegroundService(intent);
@@ -74,6 +78,10 @@ public class FloatingWidgetPlugin extends Plugin {
         Intent intent = new Intent(context, FloatingWindowService.class);
         intent.setAction(FloatingWindowService.ACTION_SYNC_ALERTS);
         intent.putExtra(FloatingWindowService.EXTRA_ALERTS_JSON, alertsJson);
+        String marketProvider = call.getString("marketProvider");
+        if (marketProvider != null && !marketProvider.isEmpty()) {
+            intent.putExtra(FloatingWindowService.EXTRA_MARKET_PROVIDER, marketProvider);
+        }
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             context.startForegroundService(intent);
@@ -128,6 +136,10 @@ public class FloatingWidgetPlugin extends Plugin {
         Intent intent = new Intent(context, FloatingWindowService.class);
         intent.setAction(FloatingWindowService.ACTION_SET_SYMBOLS);
         intent.putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST, symbols);
+        String marketProvider = call.getString("marketProvider");
+        if (marketProvider != null && !marketProvider.isEmpty()) {
+            intent.putExtra(FloatingWindowService.EXTRA_MARKET_PROVIDER, marketProvider);
+        }
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             context.startForegroundService(intent);
@@ -159,6 +171,7 @@ public class FloatingWidgetPlugin extends Plugin {
         float opacity = call.getFloat("opacity", 0.85f);
         boolean showSymbol = call.getBoolean("showSymbol", true);
         int itemsPerPage = call.getInt("itemsPerPage", 1);
+        String marketProvider = call.getString("marketProvider");
 
         Context context = getContext().getApplicationContext();
         Intent intent = new Intent(context, FloatingWindowService.class);
@@ -167,6 +180,9 @@ public class FloatingWidgetPlugin extends Plugin {
         intent.putExtra(FloatingWindowService.EXTRA_OPACITY, opacity);
         intent.putExtra(FloatingWindowService.EXTRA_SHOW_SYMBOL, showSymbol);
         intent.putExtra(FloatingWindowService.EXTRA_ITEMS_PER_PAGE, itemsPerPage);
+        if (marketProvider != null && !marketProvider.isEmpty()) {
+            intent.putExtra(FloatingWindowService.EXTRA_MARKET_PROVIDER, marketProvider);
+        }
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             context.startForegroundService(intent);

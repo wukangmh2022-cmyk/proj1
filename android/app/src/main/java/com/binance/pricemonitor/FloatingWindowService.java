@@ -71,6 +71,14 @@ public class FloatingWindowService extends Service {
     private final java.util.Map<String, Double> lastLiveCloseByKlineKey = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.Map<String, Long> soundLoopTokens = new java.util.concurrent.ConcurrentHashMap<>();
 
+    // Market data provider (Binance vs Hyperliquid)
+    private static final String PREFS_NAME = "market_data_prefs";
+    private static final String PREF_MARKET_PROVIDER = "market_data_provider";
+    private static final String PROVIDER_BINANCE = "binance";
+    private static final String PROVIDER_HYPERLIQUID = "hyperliquid";
+    private String marketProvider = PROVIDER_BINANCE;
+    private MarketDataProvider marketDataProvider = null;
+
     public static final String ACTION_CONFIG = "UPDATE_CONFIG";
     public static final String ACTION_SET_SYMBOLS = "SET_SYMBOLS";
     public static final String ACTION_START_DATA = "START_DATA"; // Start WS without showing window
@@ -86,9 +94,42 @@ public class FloatingWindowService extends Service {
     public static final String EXTRA_SYMBOL_LIST = "SYMBOL_LIST";
     public static final String EXTRA_ITEMS_PER_PAGE = "ITEMS_PER_PAGE";
     public static final String EXTRA_SOUND_ID = "SOUND_ID";
+    public static final String EXTRA_MARKET_PROVIDER = "MARKET_PROVIDER";
 
     private boolean windowVisible = false;
     private static final String PERF_TAG = "[perf] FloatingWindowService";
+
+    private static class KlineSubscription {
+        public final String symbol;
+        public final String interval;
+
+        public KlineSubscription(String symbol, String interval) {
+            this.symbol = symbol;
+            this.interval = interval;
+        }
+
+        @Override
+        public int hashCode() {
+            return (symbol + "_" + interval).hashCode();
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (!(o instanceof KlineSubscription)) return false;
+            KlineSubscription other = (KlineSubscription) o;
+            return symbol.equals(other.symbol) && interval.equals(other.interval);
+        }
+    }
+
+    private interface MarketDataProvider {
+        String name();
+        void startTicker(java.util.List<String> symbols);
+        void stopTicker();
+        void startKlines(java.util.Set<KlineSubscription> subs);
+        void stopKlines();
+        void requestImmediateUpdate();
+        void shutdown();
+    }
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -100,6 +141,9 @@ public class FloatingWindowService extends Service {
         super.onCreate();
         android.util.Log.d(PERF_TAG, "onCreate at " + System.currentTimeMillis());
         startForegroundService();
+
+        // Load last chosen provider (default: Binance)
+        marketProvider = readMarketProviderPref();
         
         // Prepare floating view but don't show yet
         floatingView = LayoutInflater.from(this).inflate(R.layout.floating_widget, null);
@@ -129,6 +173,74 @@ public class FloatingWindowService extends Service {
 
         // Setup touch listener for floating view
         setupTouchListener();
+    }
+
+    private String normalizeProvider(String v) {
+        if (v == null) return PROVIDER_BINANCE;
+        String s = v.trim().toLowerCase();
+        if (PROVIDER_HYPERLIQUID.equals(s)) return PROVIDER_HYPERLIQUID;
+        return PROVIDER_BINANCE;
+    }
+
+    private String readMarketProviderPref() {
+        try {
+            android.content.SharedPreferences sp = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+            return normalizeProvider(sp.getString(PREF_MARKET_PROVIDER, PROVIDER_BINANCE));
+        } catch (Exception ignored) {
+            return PROVIDER_BINANCE;
+        }
+    }
+
+    private void writeMarketProviderPref(String provider) {
+        try {
+            android.content.SharedPreferences sp = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+            sp.edit().putString(PREF_MARKET_PROVIDER, provider).apply();
+        } catch (Exception ignored) {}
+    }
+
+    private void resetMarketDataCaches() {
+        try { priceDataMap.clear(); } catch (Exception ignored) {}
+        try { rawPriceDataMap.clear(); } catch (Exception ignored) {}
+        try { lastTickerPriceBySymbol.clear(); } catch (Exception ignored) {}
+        try { lastLiveCloseByKlineKey.clear(); } catch (Exception ignored) {}
+        try { candleHistory.clear(); } catch (Exception ignored) {}
+        try { lastCandleTime.clear(); } catch (Exception ignored) {}
+        try { lastTriggeredAtMs.clear(); } catch (Exception ignored) {}
+        try { pendingDelayAlerts.clear(); } catch (Exception ignored) {}
+        try { candleDelayCounter.clear(); } catch (Exception ignored) {}
+    }
+
+    private MarketDataProvider getMarketDataProvider() {
+        if (marketDataProvider != null) return marketDataProvider;
+        if (PROVIDER_HYPERLIQUID.equals(marketProvider)) {
+            marketDataProvider = new HyperliquidMarketDataProvider();
+        } else {
+            marketDataProvider = new BinanceMarketDataProvider();
+        }
+        return marketDataProvider;
+    }
+
+    private void applyMarketProvider(String provider) {
+        applyMarketProvider(provider, true);
+    }
+
+    private void applyMarketProvider(String provider, boolean restartFeeds) {
+        String next = normalizeProvider(provider);
+        if (next.equals(marketProvider) && marketDataProvider != null) return;
+        marketProvider = next;
+        writeMarketProviderPref(marketProvider);
+        if (marketDataProvider != null) {
+            try { marketDataProvider.shutdown(); } catch (Exception ignored) {}
+            marketDataProvider = null;
+        }
+        resetMarketDataCaches();
+        if (restartFeeds) {
+            // Restart feeds under the new provider if needed
+            if (!symbolList.isEmpty() && (windowVisible || hasPriceAlerts)) {
+                connectWebSockets();
+            }
+            connectKlineWebSocket();
+        }
     }
     
     private void setupTouchListener() {
@@ -190,6 +302,12 @@ public class FloatingWindowService extends Service {
         if (intent == null) return START_STICKY;
         
         String action = intent.getAction();
+        String providerExtra = intent.getStringExtra(EXTRA_MARKET_PROVIDER);
+        if (providerExtra != null && !providerExtra.isEmpty() && !ACTION_CONFIG.equals(action)) {
+            // Apply provider before handling action, but avoid auto-restarting feeds here since
+            // some actions (START_DATA/SET_SYMBOLS) mutate the symbol list afterwards.
+            applyMarketProvider(providerExtra, false);
+        }
         
         // Start data service (WebSocket) without showing window
         if (ACTION_START_DATA.equals(action)) {
@@ -248,6 +366,10 @@ public class FloatingWindowService extends Service {
         }
 
         if (ACTION_CONFIG.equals(action)) {
+            String provider = intent.getStringExtra(EXTRA_MARKET_PROVIDER);
+            if (provider != null && !provider.isEmpty()) {
+                applyMarketProvider(provider, true);
+            }
             fontSize = intent.getFloatExtra(EXTRA_FONT_SIZE, 14f);
             opacity = intent.getFloatExtra(EXTRA_OPACITY, 0.85f);
             showSymbol = intent.getBooleanExtra(EXTRA_SHOW_SYMBOL, true);
@@ -271,6 +393,9 @@ public class FloatingWindowService extends Service {
             android.util.Log.d(PERF_TAG, "ACTION_REQUEST_UPDATE at " + System.currentTimeMillis() +
                     " hasListener=" + (tickerListener != null) +
                     " symbolsCount=" + rawPriceDataMap.size());
+            try {
+                getMarketDataProvider().requestImmediateUpdate();
+            } catch (Exception ignored) {}
             if (tickerListener != null && !rawPriceDataMap.isEmpty()) {
                 for (java.util.Map.Entry<String, double[]> entry : rawPriceDataMap.entrySet()) {
                     String symbol = entry.getKey();
@@ -292,6 +417,19 @@ public class FloatingWindowService extends Service {
     }
     
     private void connectWebSockets() {
+        getMarketDataProvider().startTicker(symbolList);
+    }
+
+    private void stopWebSockets() {
+        if (marketDataProvider != null) {
+            marketDataProvider.stopTicker();
+        } else {
+            // Backward safety: stop any lingering Binance sockets.
+            stopBinanceWebSocketsInternal();
+        }
+    }
+
+    private void connectBinanceWebSocketsInternal() {
         // Close previous sockets
         if (spotWebSocket != null) { spotWebSocket.cancel(); spotWebSocket = null; }
         if (futuresWebSocket != null) { futuresWebSocket.cancel(); futuresWebSocket = null; }
@@ -353,8 +491,8 @@ public class FloatingWindowService extends Service {
             });
         }
     }
-    
-    private void stopWebSockets() {
+
+    private void stopBinanceWebSocketsInternal() {
         try {
             if (spotWebSocket != null) {
                 spotWebSocket.close(1000, "hidden");
@@ -367,6 +505,647 @@ public class FloatingWindowService extends Service {
         } catch (Exception ignored) {}
         spotWebSocket = null;
         futuresWebSocket = null;
+    }
+
+    private class BinanceMarketDataProvider implements MarketDataProvider {
+        private String lastTickerKey = null;
+        private String lastKlineKey = null;
+
+        @Override
+        public String name() {
+            return PROVIDER_BINANCE;
+        }
+
+        @Override
+        public void startTicker(java.util.List<String> symbols) {
+            String key = buildSymbolsKey(symbols);
+            boolean shouldReconnect = (spotWebSocket == null && futuresWebSocket == null) || (lastTickerKey == null) || !lastTickerKey.equals(key);
+            lastTickerKey = key;
+            if (shouldReconnect) {
+                connectBinanceWebSocketsInternal();
+            }
+        }
+
+        @Override
+        public void stopTicker() {
+            stopBinanceWebSocketsInternal();
+        }
+
+        @Override
+        public void startKlines(java.util.Set<KlineSubscription> subs) {
+            String key = buildKlineSubsKey(subs);
+            boolean shouldReconnect = (klineWebSocket == null) || (lastKlineKey == null) || !lastKlineKey.equals(key);
+            lastKlineKey = key;
+            if (shouldReconnect) {
+                startBinanceKlinesInternal(subs);
+            }
+        }
+
+        @Override
+        public void stopKlines() {
+            stopBinanceKlineInternal();
+        }
+
+        @Override
+        public void requestImmediateUpdate() {
+            // No-op: ACTION_REQUEST_UPDATE already replays cached values.
+        }
+
+        @Override
+        public void shutdown() {
+            stopTicker();
+            stopKlines();
+        }
+
+        private String buildSymbolsKey(java.util.List<String> symbols) {
+            if (symbols == null || symbols.isEmpty()) return "";
+            java.util.List<String> list = new java.util.ArrayList<>(symbols);
+            java.util.Collections.sort(list);
+            return String.join(",", list);
+        }
+
+        private String buildKlineSubsKey(java.util.Set<KlineSubscription> subs) {
+            if (subs == null || subs.isEmpty()) return "";
+            java.util.List<String> list = new java.util.ArrayList<>();
+            for (KlineSubscription s : subs) {
+                if (s == null) continue;
+                list.add(s.symbol + "@" + s.interval);
+            }
+            java.util.Collections.sort(list);
+            return String.join(",", list);
+        }
+    }
+
+    private void startBinanceKlinesInternal(java.util.Set<KlineSubscription> subs) {
+        if (klineWebSocket != null) {
+            try { klineWebSocket.cancel(); } catch (Exception ignored) {}
+            klineWebSocket = null;
+        }
+
+        java.util.Set<String> streams = new java.util.HashSet<>();
+        for (KlineSubscription sub : subs) {
+            if (sub == null || sub.symbol == null || sub.interval == null) continue;
+            // NOTE: current implementation assumes spot symbols (Binance spot stream). Keep behavior stable.
+            String symLower = sub.symbol.toLowerCase();
+            streams.add(symLower + "@kline_" + sub.interval);
+        }
+
+        if (streams.isEmpty()) return;
+
+        String streamPath = String.join("/", streams);
+        String url = "wss://stream.binance.com:9443/stream?streams=" + streamPath;
+
+        okhttp3.Request request = new okhttp3.Request.Builder().url(url).build();
+        klineWebSocket = client.newWebSocket(request, new okhttp3.WebSocketListener() {
+            @Override
+            public void onMessage(okhttp3.WebSocket webSocket, String text) {
+                lastKlineMessageMs = android.os.SystemClock.uptimeMillis();
+                klineRetryAttempt = 0;
+                handleKlineMessage(text);
+            }
+
+            @Override
+            public void onFailure(okhttp3.WebSocket webSocket, Throwable t, okhttp3.Response response) {
+                long delay = (long) Math.min(30000, 5000 * Math.pow(2, Math.min(5, klineRetryAttempt)));
+                klineRetryAttempt++;
+                klineHandler.postDelayed(() -> connectKlineWebSocket(), delay);
+            }
+        });
+
+        fetchKlineHistory(streams);
+    }
+
+    private class HyperliquidMarketDataProvider implements MarketDataProvider {
+        private static final String HL_URL = "https://api.hyperliquid.xyz/info";
+        private static final String HL_WS_URL = "wss://api.hyperliquid.xyz/ws";
+        private final Object lock = new Object();
+        private volatile boolean tickerRunning = false;
+        private volatile boolean klineRunning = false;
+        private volatile java.util.List<String> symbols = new java.util.ArrayList<>();
+        private volatile java.util.Set<KlineSubscription> subs = new java.util.HashSet<>();
+        private volatile long serverTimeOffsetMs = 0L;
+        private volatile long lastServerTimeSyncUptimeMs = 0L;
+
+        private okhttp3.WebSocket ws = null;
+        private volatile boolean wsOpen = false;
+        private int wsRetryAttempt = 0;
+        private final java.util.Map<String, java.util.List<String>> tickerEmitSymbolsByCoin = new java.util.concurrent.ConcurrentHashMap<>();
+        private final java.util.Map<String, java.util.List<String>> candleEmitSymbolsByCoinInterval = new java.util.concurrent.ConcurrentHashMap<>();
+        private final java.util.Map<String, Long> lastOpenTimeByCoinInterval = new java.util.concurrent.ConcurrentHashMap<>();
+        private final java.util.Map<String, Double> lastCloseByCoinInterval = new java.util.concurrent.ConcurrentHashMap<>();
+        private final java.util.Set<String> backfillInFlight = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+        private String lastTickerKey = null;
+        private String lastKlineKey = null;
+
+        @Override
+        public String name() {
+            return PROVIDER_HYPERLIQUID;
+        }
+
+        @Override
+        public void startTicker(java.util.List<String> symbols) {
+            synchronized (lock) {
+                this.symbols = symbols != null ? new java.util.ArrayList<>(symbols) : new java.util.ArrayList<>();
+                tickerRunning = true;
+                String key = buildSymbolsKey(this.symbols);
+                boolean changed = lastTickerKey == null || !lastTickerKey.equals(key);
+                lastTickerKey = key;
+                if (changed) {
+                    restartWebSocket();
+                } else {
+                    ensureWebSocket();
+                }
+            }
+        }
+
+        @Override
+        public void stopTicker() {
+            synchronized (lock) {
+                tickerRunning = false;
+                if (!klineRunning) {
+                    closeWebSocket("stopTicker");
+                } else {
+                    restartWebSocket();
+                }
+            }
+        }
+
+        @Override
+        public void startKlines(java.util.Set<KlineSubscription> subs) {
+            synchronized (lock) {
+                this.subs = subs != null ? new java.util.HashSet<>(subs) : new java.util.HashSet<>();
+                klineRunning = true;
+                String key = buildKlineSubsKey(this.subs);
+                boolean changed = lastKlineKey == null || !lastKlineKey.equals(key);
+                lastKlineKey = key;
+                if (changed) {
+                    restartWebSocket();
+                } else {
+                    ensureWebSocket();
+                }
+                // Best-effort: seed history so indicator/drawing logic has enough window.
+                new Thread(() -> {
+                    try {
+                        for (KlineSubscription s : this.subs) {
+                            if (!klineRunning) break;
+                            ensureHistoryInitialized(s);
+                        }
+                    } catch (Exception ignored) {}
+                }, "HL-SeedHistory").start();
+            }
+        }
+
+        @Override
+        public void stopKlines() {
+            synchronized (lock) {
+                klineRunning = false;
+                if (!tickerRunning) {
+                    closeWebSocket("stopKlines");
+                } else {
+                    restartWebSocket();
+                }
+            }
+        }
+
+        @Override
+        public void requestImmediateUpdate() {
+            ensureWebSocket();
+            // Best-effort: backfill last couple of minutes after resume to avoid missing candle close.
+            if (klineRunning) {
+                java.util.Set<KlineSubscription> local = this.subs;
+                new Thread(() -> {
+                    try {
+                        for (KlineSubscription s : local) {
+                            if (!klineRunning) break;
+                            backfillRecentCandles(s);
+                        }
+                    } catch (Exception ignored) {}
+                }, "HL-ImmediateBackfill").start();
+            }
+        }
+
+        @Override
+        public void shutdown() {
+            stopTicker();
+            stopKlines();
+        }
+
+        private void ensureWebSocket() {
+            synchronized (lock) {
+                if (!tickerRunning && !klineRunning) return;
+                if (ws != null && wsOpen) return;
+                restartWebSocket();
+            }
+        }
+
+        private void restartWebSocket() {
+            closeWebSocket("restart");
+            buildEmitMaps();
+            okhttp3.Request request = new okhttp3.Request.Builder().url(HL_WS_URL).build();
+            ws = client.newWebSocket(request, new okhttp3.WebSocketListener() {
+                @Override
+                public void onOpen(okhttp3.WebSocket webSocket, okhttp3.Response response) {
+                    wsOpen = true;
+                    wsRetryAttempt = 0;
+                    try { syncServerTimeIfNeeded(true); } catch (Exception ignored) {}
+                    sendSubscriptions();
+                    // Seed history/backfill without blocking WS callbacks
+                    if (klineRunning) {
+                        new Thread(() -> {
+                            try {
+                                for (KlineSubscription s : HyperliquidMarketDataProvider.this.subs) {
+                                    if (!klineRunning) break;
+                                    ensureHistoryInitialized(s);
+                                }
+                                for (KlineSubscription s : HyperliquidMarketDataProvider.this.subs) {
+                                    if (!klineRunning) break;
+                                    backfillRecentCandles(s);
+                                }
+                            } catch (Exception ignored) {}
+                        }, "HL-OnOpenBackfill").start();
+                    }
+                }
+
+                @Override
+                public void onMessage(okhttp3.WebSocket webSocket, String text) {
+                    try {
+                        com.google.gson.JsonObject msg = com.google.gson.JsonParser.parseString(text).getAsJsonObject();
+                        if (!msg.has("channel")) return;
+                        String channel = msg.get("channel").getAsString();
+                        if ("subscriptionResponse".equals(channel)) return;
+                        if (!msg.has("data")) return;
+                        com.google.gson.JsonElement dataEl = msg.get("data");
+                        if ("candle".equals(channel) && dataEl.isJsonObject()) {
+                            handleCandleWs(dataEl.getAsJsonObject());
+                        } else if ("ticker".equals(channel)) {
+                            if (dataEl.isJsonObject()) {
+                                handleTickerWs(dataEl.getAsJsonObject());
+                            } else if (dataEl.isJsonArray()) {
+                                com.google.gson.JsonArray arr = dataEl.getAsJsonArray();
+                                for (int i = 0; i < arr.size(); i++) {
+                                    com.google.gson.JsonElement el = arr.get(i);
+                                    if (el != null && el.isJsonObject()) handleTickerWs(el.getAsJsonObject());
+                                }
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                }
+
+                @Override
+                public void onFailure(okhttp3.WebSocket webSocket, Throwable t, okhttp3.Response response) {
+                    wsOpen = false;
+                    scheduleReconnect();
+                }
+
+                @Override
+                public void onClosed(okhttp3.WebSocket webSocket, int code, String reason) {
+                    wsOpen = false;
+                    if (tickerRunning || klineRunning) scheduleReconnect();
+                }
+            });
+        }
+
+        private void scheduleReconnect() {
+            if (!tickerRunning && !klineRunning) return;
+            long delay = (long) Math.min(30000, 1000 * Math.pow(2, Math.min(6, wsRetryAttempt)));
+            wsRetryAttempt++;
+            mainHandler.postDelayed(() -> {
+                if (!tickerRunning && !klineRunning) return;
+                restartWebSocket();
+            }, delay);
+        }
+
+        private void closeWebSocket(String reason) {
+            try {
+                if (ws != null) {
+                    ws.close(1000, reason);
+                }
+            } catch (Exception ignored) {}
+            ws = null;
+            wsOpen = false;
+        }
+
+        private void buildEmitMaps() {
+            tickerEmitSymbolsByCoin.clear();
+            candleEmitSymbolsByCoinInterval.clear();
+
+            if (tickerRunning) {
+                for (String sym : symbols) {
+                    String coin = mapToHlCoin(sym);
+                    if (coin == null) continue;
+                    java.util.List<String> list = tickerEmitSymbolsByCoin.get(coin);
+                    if (list == null) list = new java.util.ArrayList<>();
+                    list.add(sym);
+                    tickerEmitSymbolsByCoin.put(coin, list);
+                }
+            }
+            if (klineRunning) {
+                for (KlineSubscription sub : subs) {
+                    if (sub == null || sub.symbol == null || sub.interval == null) continue;
+                    String coin = mapToHlCoin(sub.symbol);
+                    if (coin == null) continue;
+                    String key = coin + "_" + sub.interval;
+                    java.util.List<String> list = candleEmitSymbolsByCoinInterval.get(key);
+                    if (list == null) list = new java.util.ArrayList<>();
+                    list.add(sub.symbol);
+                    candleEmitSymbolsByCoinInterval.put(key, list);
+                }
+            }
+        }
+
+        private void sendSubscriptions() {
+            if (ws == null) return;
+            try {
+                if (tickerRunning) {
+                    for (String coin : tickerEmitSymbolsByCoin.keySet()) {
+                        String payload = "{\"method\":\"subscribe\",\"subscription\":{\"type\":\"ticker\",\"coin\":\"" + coin + "\"}}";
+                        ws.send(payload);
+                    }
+                }
+                if (klineRunning) {
+                    for (String key : candleEmitSymbolsByCoinInterval.keySet()) {
+                        String[] parts = key.split("_", 2);
+                        if (parts.length != 2) continue;
+                        String coin = parts[0];
+                        String interval = parts[1];
+                        String payload = "{\"method\":\"subscribe\",\"subscription\":{\"type\":\"candle\",\"coin\":\"" + coin + "\",\"interval\":\"" + interval + "\"}}";
+                        ws.send(payload);
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+
+        private void syncServerTimeIfNeeded(boolean force) throws Exception {
+            long nowUptime = android.os.SystemClock.uptimeMillis();
+            if (!force && nowUptime - lastServerTimeSyncUptimeMs < 15_000) return;
+            lastServerTimeSyncUptimeMs = nowUptime;
+            long serverTime = fetchExchangeStatusTimeMs();
+            if (serverTime > 0) {
+                serverTimeOffsetMs = serverTime - System.currentTimeMillis();
+            }
+        }
+
+        private long serverNowMs() {
+            return System.currentTimeMillis() + serverTimeOffsetMs;
+        }
+
+        private String mapToHlCoin(String symbol) {
+            if (symbol == null) return null;
+            String s = symbol.trim().toUpperCase();
+            if (s.endsWith(".P")) s = s.substring(0, s.length() - 2);
+            if (s.endsWith("USDT")) s = s.substring(0, s.length() - 4);
+            if (s.endsWith("USD")) s = s.substring(0, s.length() - 3);
+            return s;
+        }
+
+        private long intervalToMs(String interval) {
+            if (interval == null || interval.isEmpty()) return 60_000L;
+            String s = interval.trim().toLowerCase();
+            long mult;
+            if (s.endsWith("m")) mult = 60_000L;
+            else if (s.endsWith("h")) mult = 3_600_000L;
+            else if (s.endsWith("d")) mult = 86_400_000L;
+            else if (s.endsWith("w")) mult = 7L * 86_400_000L;
+            else return 60_000L;
+            try {
+                long n = Long.parseLong(s.substring(0, s.length() - 1));
+                return Math.max(1, n) * mult;
+            } catch (Exception ignored) {
+                return 60_000L;
+            }
+        }
+
+        private okhttp3.Request buildPost(String jsonBody) {
+            okhttp3.MediaType mt = okhttp3.MediaType.parse("application/json; charset=utf-8");
+            okhttp3.RequestBody body = okhttp3.RequestBody.create(jsonBody, mt);
+            return new okhttp3.Request.Builder().url(HL_URL).post(body).build();
+        }
+
+        private long fetchExchangeStatusTimeMs() throws Exception {
+            String payload = "{\"type\":\"exchangeStatus\"}";
+            okhttp3.Request request = buildPost(payload);
+            try (okhttp3.Response resp = client.newCall(request).execute()) {
+                if (!resp.isSuccessful()) return 0L;
+                String text = resp.body() != null ? resp.body().string() : "";
+                com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(text).getAsJsonObject();
+                if (obj.has("time")) return obj.get("time").getAsLong();
+                return 0L;
+            }
+        }
+
+        private void handleTickerWs(com.google.gson.JsonObject data) {
+            // Try common field names.
+            String coin = null;
+            if (data.has("coin")) coin = data.get("coin").getAsString();
+            else if (data.has("s")) coin = data.get("s").getAsString();
+            if (coin == null) return;
+
+            double price = Double.NaN;
+            if (data.has("midPx")) price = parseDoubleSafe(data.get("midPx"));
+            if (Double.isNaN(price) && data.has("markPx")) price = parseDoubleSafe(data.get("markPx"));
+            if (Double.isNaN(price) && data.has("price")) price = parseDoubleSafe(data.get("price"));
+            if (Double.isNaN(price) && data.has("px")) price = parseDoubleSafe(data.get("px"));
+            if (Double.isNaN(price) || price <= 0) return;
+
+            double changePercent = Double.NaN;
+            if (data.has("prevDayPx")) {
+                double prev = parseDoubleSafe(data.get("prevDayPx"));
+                if (!Double.isNaN(prev) && prev > 0) changePercent = ((price - prev) / prev) * 100.0;
+            } else if (data.has("dayOpen")) {
+                double open = parseDoubleSafe(data.get("dayOpen"));
+                if (!Double.isNaN(open) && open > 0) changePercent = ((price - open) / open) * 100.0;
+            }
+            if (Double.isNaN(changePercent)) changePercent = 0.0;
+
+            java.util.List<String> emit = tickerEmitSymbolsByCoin.get(coin);
+            if (emit == null) return;
+            for (String sym : emit) {
+                handleTickerEvent(sym, price, changePercent);
+            }
+        }
+
+        private void handleCandleWs(com.google.gson.JsonObject data) {
+            if (!data.has("s") || !data.has("i") || !data.has("t")) return;
+            String coin = data.get("s").getAsString();
+            String interval = data.get("i").getAsString();
+            long openTime = data.get("t").getAsLong();
+            double close = data.has("c") ? parseDoubleSafe(data.get("c")) : Double.NaN;
+            if (Double.isNaN(close)) return;
+
+            String key = coin + "_" + interval;
+            java.util.List<String> emit = candleEmitSymbolsByCoinInterval.get(key);
+            if (emit == null || emit.isEmpty()) return;
+
+            long intervalMs = intervalToMs(interval);
+            Long lastOpen = lastOpenTimeByCoinInterval.get(key);
+            Double lastClose = lastCloseByCoinInterval.get(key);
+
+            if (lastOpen != null && openTime > lastOpen) {
+                // If we skipped more than one candle, backfill the gap.
+                if (openTime - lastOpen > intervalMs * 2L) {
+                    backfillGapCandles(coin, interval, lastOpen, openTime);
+                } else if (lastClose != null && !Double.isNaN(lastClose)) {
+                    // Finalize previous candle close at boundary.
+                    for (String sym : emit) {
+                        handleKlineEvent(sym, interval, lastClose, true, lastOpen);
+                    }
+                }
+            }
+
+            lastOpenTimeByCoinInterval.put(key, openTime);
+            lastCloseByCoinInterval.put(key, close);
+            // Live update for current candle (not closed).
+            for (String sym : emit) {
+                handleKlineEvent(sym, interval, close, false, openTime);
+            }
+        }
+
+        private void backfillGapCandles(String coin, String interval, long lastOpenTime, long newOpenTime) {
+            String key = coin + "_" + interval;
+            if (!backfillInFlight.add(key)) return;
+            new Thread(() -> {
+                try {
+                    try { syncServerTimeIfNeeded(false); } catch (Exception ignored) {}
+                    long start = lastOpenTime + intervalToMs(interval);
+                    long end = newOpenTime + 1000L;
+                    // We need a representative original symbol to map coin for HTTP snapshot.
+                    java.util.List<String> emitSyms = candleEmitSymbolsByCoinInterval.get(key);
+                    if (emitSyms == null || emitSyms.isEmpty()) return;
+                    String rep = emitSyms.get(0);
+                    java.util.List<Candle> candles = fetchCandleSnapshot(rep, interval, start, end);
+                    if (candles == null || candles.isEmpty()) return;
+                    candles.sort((a, b) -> Long.compare(a.openTimeMs, b.openTimeMs));
+                    long now = serverNowMs();
+                    for (Candle cd : candles) {
+                        if (cd == null) continue;
+                        if (cd.openTimeMs <= lastOpenTime) continue;
+                        if (cd.openTimeMs >= newOpenTime) break;
+                        // only treat as closed if the server time is beyond its close bound
+                        if (now >= cd.closeTimeMs) {
+                            java.util.List<String> emit = candleEmitSymbolsByCoinInterval.get(key);
+                            if (emit == null) break;
+                            for (String sym : emit) {
+                                handleKlineEvent(sym, interval, cd.close, true, cd.openTimeMs);
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {
+                } finally {
+                    backfillInFlight.remove(key);
+                }
+            }, "HL-BackfillGap").start();
+        }
+
+        private void backfillRecentCandles(KlineSubscription sub) {
+            try {
+                if (sub == null || sub.symbol == null || sub.interval == null) return;
+                try { syncServerTimeIfNeeded(false); } catch (Exception ignored) {}
+                String coin = mapToHlCoin(sub.symbol);
+                if (coin == null) return;
+                String key = coin + "_" + sub.interval;
+                long intervalMs = intervalToMs(sub.interval);
+                Long lastOpen = lastOpenTimeByCoinInterval.get(key);
+                long now = serverNowMs();
+                long start = (lastOpen != null ? lastOpen : now - intervalMs * 5L) - intervalMs * 2L;
+                long end = now + 1000L;
+                java.util.List<Candle> candles = fetchCandleSnapshot(sub.symbol, sub.interval, start, end);
+                if (candles == null || candles.isEmpty()) return;
+                candles.sort((a, b) -> Long.compare(a.openTimeMs, b.openTimeMs));
+                for (Candle cd : candles) {
+                    if (cd == null) continue;
+                    if (now >= cd.closeTimeMs) {
+                        handleKlineEvent(sub.symbol, sub.interval, cd.close, true, cd.openTimeMs);
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+
+        private void ensureHistoryInitialized(KlineSubscription sub) {
+            String key = sub.symbol + "_" + sub.interval;
+            if (candleHistory.containsKey(key) && candleHistory.get(key) != null && !candleHistory.get(key).isEmpty()) return;
+            try {
+                try { syncServerTimeIfNeeded(false); } catch (Exception ignored) {}
+                long intervalMs = intervalToMs(sub.interval);
+                long end = serverNowMs();
+                long start = end - Math.min(100L * intervalMs * 2L, 7L * 24L * 3600_000L); // cap at 7d to avoid giant pulls
+                java.util.List<Candle> candles = fetchCandleSnapshot(sub.symbol, sub.interval, start, end);
+                if (candles == null || candles.isEmpty()) return;
+                long now = serverNowMs();
+                java.util.List<Double> closes = new java.util.ArrayList<>();
+                long lastClosedOpen = -1L;
+                for (Candle cd : candles) {
+                    if (cd == null) continue;
+                    if (now >= cd.closeTimeMs) {
+                        closes.add(cd.close);
+                        lastClosedOpen = cd.openTimeMs;
+                    }
+                }
+                if (!closes.isEmpty()) {
+                    if (closes.size() > 100) closes = closes.subList(closes.size() - 100, closes.size());
+                    candleHistory.put(key, new java.util.ArrayList<>(closes));
+                    if (lastClosedOpen > 0) lastCandleTime.put(key, lastClosedOpen);
+                }
+            } catch (Exception ignored) {}
+        }
+
+        private String buildSymbolsKey(java.util.List<String> symbols) {
+            if (symbols == null || symbols.isEmpty()) return "";
+            java.util.List<String> list = new java.util.ArrayList<>(symbols);
+            java.util.Collections.sort(list);
+            return String.join(",", list);
+        }
+
+        private String buildKlineSubsKey(java.util.Set<KlineSubscription> subs) {
+            if (subs == null || subs.isEmpty()) return "";
+            java.util.List<String> list = new java.util.ArrayList<>();
+            for (KlineSubscription s : subs) {
+                if (s == null) continue;
+                list.add(s.symbol + "@" + s.interval);
+            }
+            java.util.Collections.sort(list);
+            return String.join(",", list);
+        }
+
+        private java.util.List<Candle> fetchCandleSnapshot(String symbol, String interval, long startTime, long endTime) throws Exception {
+            String coin = mapToHlCoin(symbol);
+            if (coin == null) return null;
+            String payload = "{\"type\":\"candleSnapshot\",\"req\":{\"coin\":\"" + coin + "\",\"interval\":\"" + interval +
+                    "\",\"startTime\":" + startTime + ",\"endTime\":" + endTime + "}}";
+            okhttp3.Request request = buildPost(payload);
+            try (okhttp3.Response resp = client.newCall(request).execute()) {
+                if (!resp.isSuccessful()) return null;
+                String text = resp.body() != null ? resp.body().string() : "";
+                com.google.gson.JsonArray arr = com.google.gson.JsonParser.parseString(text).getAsJsonArray();
+                java.util.List<Candle> out = new java.util.ArrayList<>();
+                for (int i = 0; i < arr.size(); i++) {
+                    com.google.gson.JsonObject o = arr.get(i).getAsJsonObject();
+                    Candle c = new Candle();
+                    c.openTimeMs = o.get("t").getAsLong();
+                    c.closeTimeMs = o.get("T").getAsLong();
+                    c.close = parseDoubleSafe(o.get("c"));
+                    out.add(c);
+                }
+                return out;
+            }
+        }
+
+        private double parseDoubleSafe(com.google.gson.JsonElement el) {
+            if (el == null || el.isJsonNull()) return Double.NaN;
+            try {
+                if (el.isJsonPrimitive()) {
+                    com.google.gson.JsonPrimitive p = el.getAsJsonPrimitive();
+                    if (p.isNumber()) return p.getAsDouble();
+                    if (p.isString()) return Double.parseDouble(p.getAsString());
+                }
+            } catch (Exception ignored) {}
+            return Double.NaN;
+        }
+
+        private class Candle {
+            long openTimeMs;
+            long closeTimeMs;
+            double close;
+        }
     }
     
     // Static listener for ticker updates (used by Plugin)
@@ -393,40 +1172,43 @@ public class FloatingWindowService extends Service {
                 double closePrice = Double.parseDouble(close);
                 double openPrice = Double.parseDouble(data.get("o").getAsString());
                 double changePercent = ((closePrice - openPrice) / openPrice) * 100;
-                
-                priceDataMap.put(symbol, new String[]{
-                    formatPrice(closePrice), 
-                    String.format("%.2f", changePercent)
-                });
-                
-                // Store raw data for replay
-                rawPriceDataMap.put(symbol, new double[]{closePrice, changePercent});
-                
-                // Notify static listener (Plugin) about ticker update
-                if (tickerListener != null) {
-                    tickerListener.onTickerUpdate(symbol, closePrice, changePercent);
-                }
-                
-                // Check simple price alerts
-                Double prev = lastTickerPriceBySymbol.put(symbol, closePrice);
-                double prevPrice = prev != null ? prev : Double.NaN;
-                checkPriceAlerts(symbol, closePrice, prevPrice);
-                
-                // Update UI on main thread
-                if (windowVisible) {
-                    mainHandler.post(() -> {
-                        // Throttle redraws to avoid hammering UI/main thread when prices tick fast.
-                        long now = android.os.SystemClock.uptimeMillis();
-                        if (now - lastUiUpdateMs < UI_UPDATE_THROTTLE_MS) return;
-                        lastUiUpdateMs = now;
-                        if (isSymbolVisible(symbol)) {
-                            updateUI();
-                        }
-                    });
-                }
+                handleTickerEvent(symbol, closePrice, changePercent);
             }
         } catch (Exception e) {
             e.printStackTrace();
+        }
+    }
+
+    private void handleTickerEvent(String symbol, double closePrice, double changePercent) {
+        priceDataMap.put(symbol, new String[]{
+                formatPrice(closePrice),
+                String.format(java.util.Locale.US, "%.2f", changePercent)
+        });
+
+        // Store raw data for replay
+        rawPriceDataMap.put(symbol, new double[]{closePrice, changePercent});
+
+        // Notify static listener (Plugin) about ticker update
+        if (tickerListener != null) {
+            tickerListener.onTickerUpdate(symbol, closePrice, changePercent);
+        }
+
+        // Check simple price alerts
+        Double prev = lastTickerPriceBySymbol.put(symbol, closePrice);
+        double prevPrice = prev != null ? prev : Double.NaN;
+        checkPriceAlerts(symbol, closePrice, prevPrice);
+
+        // Update UI on main thread
+        if (windowVisible) {
+            mainHandler.post(() -> {
+                // Throttle redraws to avoid hammering UI/main thread when prices tick fast.
+                long now = android.os.SystemClock.uptimeMillis();
+                if (now - lastUiUpdateMs < UI_UPDATE_THROTTLE_MS) return;
+                lastUiUpdateMs = now;
+                if (isSymbolVisible(symbol)) {
+                    updateUI();
+                }
+            });
         }
     }
     
@@ -454,6 +1236,14 @@ public class FloatingWindowService extends Service {
         if (symbolList.isEmpty()) return;
         currentIndex = (currentIndex + itemsPerPage) % symbolList.size();
         updateUI();
+    }
+
+    private void stopBinanceKlineInternal() {
+        if (klineWebSocket != null) {
+            try { klineWebSocket.cancel(); } catch (Exception ignored) {}
+            klineWebSocket = null;
+        }
+        klineHandler.removeCallbacks(klineWatchdog);
     }
     
     private void updateUI() {
@@ -687,7 +1477,7 @@ public class FloatingWindowService extends Service {
             }
             
             // Keep ticker WS alive for price alerts even when window hidden
-            if (hasPriceAlerts && spotWebSocket == null && futuresWebSocket == null && !symbolList.isEmpty()) {
+            if (hasPriceAlerts && !symbolList.isEmpty()) {
                 connectWebSockets();
             }
             
@@ -699,26 +1489,26 @@ public class FloatingWindowService extends Service {
     }
     
     private void connectKlineWebSocket() {
-        if (klineWebSocket != null) {
-            klineWebSocket.cancel();
-            klineWebSocket = null;
-        }
-        
-        // Collect all needed kline streams from alerts
-        java.util.Set<String> streams = new java.util.HashSet<>();
+        // Collect all needed kline subscriptions from alerts
+        java.util.Set<KlineSubscription> subs = new java.util.HashSet<>();
         for (AlertConfig alert : alerts) {
             if (alert.active && (alert.targetType.equals("indicator") || alert.targetType.equals("drawing") || "candle_close".equals(alert.confirmation))) {
                 String interval = alert.interval != null ? alert.interval : "1m";
-                streams.add(alert.symbol.toLowerCase() + "@kline_" + interval);
+                subs.add(new KlineSubscription(alert.symbol, interval));
             }
         }
         
-        if (streams.isEmpty()) {
+        if (subs.isEmpty()) {
             // Release WakeLock if no active alerts
             if (wakeLock != null && wakeLock.isHeld()) {
                 wakeLock.release();
             }
             klineHandler.removeCallbacks(klineWatchdog);
+            if (marketDataProvider != null) {
+                try { marketDataProvider.stopKlines(); } catch (Exception ignored) {}
+            } else {
+                stopBinanceKlineInternal();
+            }
             return;
         }
         lastKlineMessageMs = android.os.SystemClock.uptimeMillis();
@@ -742,29 +1532,7 @@ public class FloatingWindowService extends Service {
         } else {
              if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         }
-        
-        String streamPath = String.join("/", streams);
-        String url = "wss://stream.binance.com:9443/stream?streams=" + streamPath;
-        
-        okhttp3.Request request = new okhttp3.Request.Builder().url(url).build();
-        klineWebSocket = client.newWebSocket(request, new okhttp3.WebSocketListener() {
-            @Override
-            public void onMessage(okhttp3.WebSocket webSocket, String text) {
-                lastKlineMessageMs = android.os.SystemClock.uptimeMillis();
-                klineRetryAttempt = 0;
-                handleKlineMessage(text);
-            }
-            
-            @Override
-            public void onFailure(okhttp3.WebSocket webSocket, Throwable t, okhttp3.Response response) {
-                long delay = (long) Math.min(30000, 5000 * Math.pow(2, Math.min(5, klineRetryAttempt)));
-                klineRetryAttempt++;
-                klineHandler.postDelayed(() -> connectKlineWebSocket(), delay);
-            }
-        });
-        
-        // Also fetch initial history
-        fetchKlineHistory(streams);
+        getMarketDataProvider().startKlines(subs);
     }
     
     private void fetchKlineHistory(java.util.Set<String> streams) {
@@ -813,36 +1581,40 @@ public class FloatingWindowService extends Service {
             double close = k.get("c").getAsDouble();
             boolean isClosed = k.get("x").getAsBoolean();
             long openTime = k.get("t").getAsLong();
-            
-            String key = symbol + "_" + interval;
-            Double prevLiveClose = lastLiveCloseByKlineKey.get(key);
-            
-            // Update candle history
-            java.util.List<Double> history = candleHistory.get(key);
-            if (history == null) {
-                history = new java.util.ArrayList<>();
-                candleHistory.put(key, history);
-            }
-            
-            Long lastTime = lastCandleTime.get(key);
-            if (isClosed && (lastTime == null || lastTime != openTime)) {
-                history.add(close);
-                if (history.size() > 100) history.remove(0);
-                lastCandleTime.put(key, openTime);
-
-                // Update live-close cache
-                lastLiveCloseByKlineKey.put(key, close);
-                
-                // Check alerts on candle close
-                checkAlertsForKline(symbol, interval, close, history, true, prevLiveClose != null ? prevLiveClose : Double.NaN);
-            } else if (!isClosed) {
-                // Update live-close cache
-                lastLiveCloseByKlineKey.put(key, close);
-                // Live update for immediate alerts
-                checkAlertsForKline(symbol, interval, close, history, false, prevLiveClose != null ? prevLiveClose : Double.NaN);
-            }
+            handleKlineEvent(symbol, interval, close, isClosed, openTime);
         } catch (Exception e) {
             e.printStackTrace();
+        }
+    }
+
+    private void handleKlineEvent(String symbol, String interval, double close, boolean isClosed, long openTime) {
+        lastKlineMessageMs = android.os.SystemClock.uptimeMillis();
+        String key = symbol + "_" + interval;
+        Double prevLiveClose = lastLiveCloseByKlineKey.get(key);
+
+        // Update candle history
+        java.util.List<Double> history = candleHistory.get(key);
+        if (history == null) {
+            history = new java.util.ArrayList<>();
+            candleHistory.put(key, history);
+        }
+
+        Long lastTime = lastCandleTime.get(key);
+        if (isClosed && (lastTime == null || lastTime != openTime)) {
+            history.add(close);
+            if (history.size() > 100) history.remove(0);
+            lastCandleTime.put(key, openTime);
+
+            // Update live-close cache
+            lastLiveCloseByKlineKey.put(key, close);
+
+            // Check alerts on candle close
+            checkAlertsForKline(symbol, interval, close, history, true, prevLiveClose != null ? prevLiveClose : Double.NaN);
+        } else if (!isClosed) {
+            // Update live-close cache
+            lastLiveCloseByKlineKey.put(key, close);
+            // Live update for immediate alerts
+            checkAlertsForKline(symbol, interval, close, history, false, prevLiveClose != null ? prevLiveClose : Double.NaN);
         }
     }
     
@@ -1297,10 +2069,14 @@ public class FloatingWindowService extends Service {
     @Override
     public void onDestroy() {
         super.onDestroy();
-        if (spotWebSocket != null) spotWebSocket.cancel();
-        if (futuresWebSocket != null) futuresWebSocket.cancel();
-        if (klineWebSocket != null) {
-            klineWebSocket.cancel();
+        if (marketDataProvider != null) {
+            try { marketDataProvider.shutdown(); } catch (Exception ignored) {}
+        } else {
+            if (spotWebSocket != null) spotWebSocket.cancel();
+            if (futuresWebSocket != null) futuresWebSocket.cancel();
+            if (klineWebSocket != null) {
+                klineWebSocket.cancel();
+            }
         }
         klineHandler.removeCallbacks(klineWatchdog);
         if (floatingView != null && windowManager != null && windowVisible) {
