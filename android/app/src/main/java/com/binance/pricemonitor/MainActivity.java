@@ -15,9 +15,11 @@ public class MainActivity extends BridgeActivity {
     private final android.os.Handler uiHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     private boolean waitingForWebViewDraw = false;
     private Runnable resumeReloadRunnable = null;
-    private static final long RESUME_WATCHDOG_MS = 2200;
+    private static final long RESUME_WATCHDOG_MS = 2000;
+    private static final long MIN_BG_ARM_MS = 10_000;
     private android.view.ViewTreeObserver.OnPreDrawListener webViewPreDrawListener = null;
     private Runnable forceHideOverlayRunnable = null;
+    private long lastPausedAtUptime = 0L;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -51,6 +53,16 @@ public class MainActivity extends BridgeActivity {
         long now = System.currentTimeMillis();
         Log.d(TAG, "onResume at " + now);
         DiagnosticsLog.append(getApplicationContext(), "[native] MainActivity onResume at " + now);
+        long bgMs = 0L;
+        long pauseAt = lastPausedAtUptime;
+        lastPausedAtUptime = 0L;
+        if (pauseAt > 0) {
+            bgMs = android.os.SystemClock.uptimeMillis() - pauseAt;
+        }
+        if (pauseAt > 0 && bgMs < MIN_BG_ARM_MS) {
+            // Short background: don't flash overlay or trigger watchdog.
+            return;
+        }
         showOverlay();
         waitingForWebViewDraw = true;
         armWebViewReadyCallbacks();
@@ -63,6 +75,7 @@ public class MainActivity extends BridgeActivity {
         long now = System.currentTimeMillis();
         Log.d(TAG, "onPause at " + now);
         DiagnosticsLog.append(getApplicationContext(), "[native] MainActivity onPause at " + now);
+        lastPausedAtUptime = android.os.SystemClock.uptimeMillis();
     }
 
     @Override
@@ -169,7 +182,7 @@ public class MainActivity extends BridgeActivity {
         if (forceHideOverlayRunnable != null) uiHandler.removeCallbacks(forceHideOverlayRunnable);
     }
 
-    private boolean canReloadNow() {
+    private boolean canRecoverNow() {
         try {
             android.content.SharedPreferences sp = getSharedPreferences("resume_watchdog", MODE_PRIVATE);
             long now = android.os.SystemClock.uptimeMillis();
@@ -191,23 +204,20 @@ public class MainActivity extends BridgeActivity {
         if (resumeReloadRunnable != null) uiHandler.removeCallbacks(resumeReloadRunnable);
         resumeReloadRunnable = () -> {
             if (!waitingForWebViewDraw) return;
-            if (!canReloadNow()) {
+            if (!canRecoverNow()) {
                 long now = System.currentTimeMillis();
-                Log.d(TAG, "resume watchdog: reload suppressed at " + now);
-                DiagnosticsLog.append(getApplicationContext(), "[native] resume watchdog: reload suppressed at " + now);
+                Log.d(TAG, "resume watchdog: recover suppressed at " + now);
+                DiagnosticsLog.append(getApplicationContext(), "[native] resume watchdog: recover suppressed at " + now);
                 return;
             }
             long now = System.currentTimeMillis();
-            Log.d(TAG, "resume watchdog: forcing webview reload at " + now);
-            DiagnosticsLog.append(getApplicationContext(), "[native] resume watchdog: forcing webview reload at " + now);
+            Log.d(TAG, "resume watchdog: forcing activity recreate at " + now);
+            DiagnosticsLog.append(getApplicationContext(), "[native] resume watchdog: forcing activity recreate at " + now);
             try {
-                if (getBridge() != null && getBridge().getWebView() != null) {
-                    getBridge().getWebView().post(() -> {
-                        try {
-                            getBridge().getWebView().reload();
-                        } catch (Exception ignored) {}
-                    });
-                }
+                // recreate() is more aggressive than WebView.reload and can recover faster when renderer is wedged.
+                // Best-effort hide overlay to avoid leaving a blocking surface during transition.
+                hideOverlay();
+                recreate();
             } catch (Exception ignored) {}
         };
         uiHandler.postDelayed(resumeReloadRunnable, RESUME_WATCHDOG_MS);
