@@ -5,7 +5,7 @@ const PERF_LOG_ENDPOINT = 'http://47.108.203.64:5000/log';
 // - VITE_PERF_REMOTE=1: enable remote perf log upload
 // - VITE_PERF_CONSOLE=1: force console logging in prod
 // Disable diagnostics to avoid perf impact during interactions
-const DIAG_ENABLED = 0;
+const DIAG_ENABLED = 1;
 const REMOTE_ENABLED = 0;
 const CONSOLE_ENABLED = 0;
 
