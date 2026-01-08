@@ -4,7 +4,7 @@ import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { usePriceAlerts } from './hooks/usePriceAlerts';
 import FloatingWidget from './plugins/FloatingWidget';
 import { Capacitor } from '@capacitor/core';
-import { getSymbols, addSymbol, removeSymbol, saveSymbols, getFloatingConfig, saveFloatingConfig, getMarketDataProvider, setMarketDataProvider } from './utils/storage';
+import { getSymbols, addSymbol, removeSymbol, saveSymbols, getFloatingConfig, saveFloatingConfig, getMarketDataProvider, setMarketDataProvider, getGlobalSettings, saveGlobalSettings } from './utils/storage';
 import { getAlerts } from './utils/alert_storage';
 import { serializeDrawingAlert } from './utils/drawing_alert_utils';
 import ChartPage from './components/ChartPage';
@@ -38,7 +38,8 @@ const formatQuotePrice = (price) => {
 function HomePage() {
   const navigate = useNavigate();
   const [symbols, setSymbols] = useState(getSymbols());
-  const [showSettings, setShowSettings] = useState(false);
+  const [showGlobalSettings, setShowGlobalSettings] = useState(false);
+  const [showFloatingSettings, setShowFloatingSettings] = useState(false);
   const [marketProviderMenuOpen, setMarketProviderMenuOpen] = useState(false);
   const [alertModalSymbol, setAlertModalSymbol] = useState(null);
   const [newSymbol, setNewSymbol] = useState('');
@@ -46,6 +47,7 @@ function HomePage() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [floatingActive, setFloatingActive] = useState(false);
   const [config, setConfig] = useState(getFloatingConfig());
+  const [globalSettings, setGlobalSettings] = useState(getGlobalSettings());
   const floatingActiveRef = useRef(false);
   const [marketProvider, setMarketProviderState] = useState(getMarketDataProvider());
 
@@ -58,9 +60,10 @@ function HomePage() {
 
     const handleBackButton = async () => {
       // 1. Close Modals if open
-      if (showSettings || alertModalSymbol) {
+      if (showGlobalSettings || showFloatingSettings || alertModalSymbol) {
         // No add modal anymore
-        setShowSettings(false);
+        setShowGlobalSettings(false);
+        setShowFloatingSettings(false);
         setAlertModalSymbol(null);
         return;
       }
@@ -88,7 +91,7 @@ function HomePage() {
     return () => {
       listener.then(remove => remove.remove());
     };
-  }, [showSettings, alertModalSymbol, isEditMode]);
+  }, [showGlobalSettings, showFloatingSettings, alertModalSymbol, isEditMode]);
 
   useEffect(() => {
     perfLog('[perf] HomePage mount at', Date.now());
@@ -199,6 +202,21 @@ function HomePage() {
     }
   }, [alertModalSymbol, marketProvider]);
 
+  // If provider changes while floating window is active, refresh native config/symbols too.
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    if (!floatingActive) return;
+    FloatingWidget.setSymbols({ symbols, marketProvider }).catch(console.error);
+    const currentConfig = getFloatingConfig();
+    FloatingWidget.updateConfig({
+      fontSize: currentConfig.fontSize,
+      opacity: currentConfig.opacity,
+      showSymbol: currentConfig.showSymbol,
+      itemsPerPage: currentConfig.itemsPerPage,
+      marketProvider
+    }).catch(console.error);
+  }, [floatingActive, symbols, marketProvider]);
+
   useEffect(() => {
     floatingActiveRef.current = floatingActive;
   }, [floatingActive]);
@@ -247,6 +265,12 @@ function HomePage() {
     items.splice(result.destination.index, 0, reorderedItem);
     setSymbols(items);
     saveSymbols(items);
+  };
+
+  const updateGlobalSetting = (key, value) => {
+    const next = { ...globalSettings, [key]: value };
+    setGlobalSettings(next);
+    saveGlobalSettings(next);
   };
 
   // Drag handling logic is now explicit via Edit Mode and Handle
@@ -313,7 +337,7 @@ function HomePage() {
   };
 
   useEffect(() => {
-    if (!showSettings) {
+    if (!showGlobalSettings) {
       setMarketProviderMenuOpen(false);
       return;
     }
@@ -324,7 +348,7 @@ function HomePage() {
     };
     document.addEventListener('pointerdown', onPointerDown);
     return () => document.removeEventListener('pointerdown', onPointerDown);
-  }, [marketProviderMenuOpen, showSettings]);
+  }, [marketProviderMenuOpen, showGlobalSettings]);
 
   // Auto-start floating widget if persisted
   useEffect(() => {
@@ -340,7 +364,7 @@ function HomePage() {
   }, []);
 
   return (
-    <div className="app-container" onClick={() => {
+    <div className={`app-container ${globalSettings.homeCompactMode ? 'home-compact' : ''}`} onClick={() => {
       // Only exit edit mode if clicking background, not when dragging
       // This was a bit aggressive before
     }}>
@@ -353,7 +377,7 @@ function HomePage() {
           ) : (
             <>
               <button className="btn btn-secondary" onClick={() => setIsEditMode(true)}>编辑</button>
-              <button className="btn btn-secondary btn-icon" onClick={() => setShowSettings(true)}>⚙</button>
+              <button className="btn btn-secondary btn-icon" onClick={() => setShowGlobalSettings(true)}>⚙</button>
             </>
           )}
         </div>
@@ -449,6 +473,7 @@ function HomePage() {
           {(provided) => (
             <div
               className={`ticker-grid ${isEditMode ? 'edit-mode' : ''}`}
+              style={{ '--ticker-min-width': `${globalSettings.homeTickerMinWidth || 160}px` }}
               {...provided.droppableProps}
               ref={provided.innerRef}
             >
@@ -506,9 +531,11 @@ function HomePage() {
                           <div className="symbol">{symbol}</div>
                           <div className="price-row">
                             <div className="price">${price}</div>
-                            <div className={`change ${isPositive ? 'up' : 'down'}`}>
-                              {isPositive ? '+' : ''}{change}%
-                            </div>
+                            {globalSettings.homeShowChangePercent && (
+                              <div className={`change ${isPositive ? 'up' : 'down'}`}>
+                                {isPositive ? '+' : ''}{change}%
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -535,7 +562,7 @@ function HomePage() {
               ✕ 关闭悬浮窗
             </button>
           )}
-          <button className="btn btn-secondary" onClick={() => setShowSettings(true)}>
+          <button className="btn btn-secondary" onClick={() => setShowFloatingSettings(true)}>
             ⚙ 设置
           </button>
         </div>
@@ -543,10 +570,10 @@ function HomePage() {
 
       {/* Modals */}
 
-      {showSettings && (
-        <div className="modal-overlay" onClick={() => setShowSettings(false)}>
+      {showGlobalSettings && (
+        <div className="modal-overlay" onClick={() => setShowGlobalSettings(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
-            <h2>悬浮窗设置</h2>
+            <h2>设置</h2>
             <div className="settings-group">
               <label>行情数据源</label>
               <div className="settings-provider-select">
@@ -596,6 +623,192 @@ function HomePage() {
                 切换数据源会清空当前图形与预警配置（避免不同交易所/时间轴不一致导致误报）。
               </div>
             </div>
+
+            <div className="settings-section">
+              <div className="settings-section-title">首页布局</div>
+              <div className="settings-group" style={{ marginBottom: 12 }}>
+                <label>紧凑模式
+                  <input
+                    type="checkbox"
+                    checked={!!globalSettings.homeCompactMode}
+                    onChange={e => updateGlobalSetting('homeCompactMode', e.target.checked)}
+                  />
+                </label>
+              </div>
+              <div className="settings-group" style={{ marginBottom: 12 }}>
+                <label>卡片最小宽度: {globalSettings.homeTickerMinWidth || 160}px</label>
+                <input
+                  type="range"
+                  min="120"
+                  max="220"
+                  value={globalSettings.homeTickerMinWidth || 160}
+                  onChange={e => updateGlobalSetting('homeTickerMinWidth', parseInt(e.target.value))}
+                />
+              </div>
+              <div className="settings-group" style={{ marginBottom: 0 }}>
+                <label>显示涨跌幅
+                  <input
+                    type="checkbox"
+                    checked={globalSettings.homeShowChangePercent !== false}
+                    onChange={e => updateGlobalSetting('homeShowChangePercent', e.target.checked)}
+                  />
+                </label>
+              </div>
+            </div>
+            <div className="settings-section">
+              <div className="settings-section-title">账号登录</div>
+              <div className="settings-placeholder">占位：目前只做本地保存，不会真正登录。</div>
+              <div className="settings-group" style={{ marginBottom: 12 }}>
+                <label style={{ justifyContent: 'flex-start', gap: 10 }}>
+                  <span style={{ minWidth: 84 }}>邮箱/账号</span>
+                  <input
+                    type="text"
+                    value={globalSettings.accountEmail || ''}
+                    onChange={e => updateGlobalSetting('accountEmail', e.target.value)}
+                    style={{ marginBottom: 0 }}
+                  />
+                </label>
+              </div>
+              <div className="settings-group" style={{ marginBottom: 0 }}>
+                <label style={{ justifyContent: 'flex-start', gap: 10 }}>
+                  <span style={{ minWidth: 84 }}>密码</span>
+                  <input
+                    type="password"
+                    value={globalSettings.accountPassword || ''}
+                    onChange={e => updateGlobalSetting('accountPassword', e.target.value)}
+                    style={{ marginBottom: 0 }}
+                  />
+                </label>
+              </div>
+            </div>
+            <div className="settings-section">
+              <div className="settings-section-title">交易所 API</div>
+              <div className="settings-placeholder">占位：目前只做本地保存（明文），后续再做加密/安全存储。</div>
+              <div className="settings-group" style={{ marginBottom: 12 }}>
+                <label style={{ justifyContent: 'flex-start', gap: 10 }}>
+                  <span style={{ minWidth: 84 }}>BN Key</span>
+                  <input
+                    type="text"
+                    value={globalSettings.binanceApiKey || ''}
+                    onChange={e => updateGlobalSetting('binanceApiKey', e.target.value)}
+                    style={{ marginBottom: 0 }}
+                  />
+                </label>
+              </div>
+              <div className="settings-group" style={{ marginBottom: 12 }}>
+                <label style={{ justifyContent: 'flex-start', gap: 10 }}>
+                  <span style={{ minWidth: 84 }}>BN Secret</span>
+                  <input
+                    type="password"
+                    value={globalSettings.binanceApiSecret || ''}
+                    onChange={e => updateGlobalSetting('binanceApiSecret', e.target.value)}
+                    style={{ marginBottom: 0 }}
+                  />
+                </label>
+              </div>
+              <div className="settings-group" style={{ marginBottom: 12 }}>
+                <label style={{ justifyContent: 'flex-start', gap: 10 }}>
+                  <span style={{ minWidth: 84 }}>HL 地址</span>
+                  <input
+                    type="text"
+                    value={globalSettings.hyperliquidWalletAddress || ''}
+                    onChange={e => updateGlobalSetting('hyperliquidWalletAddress', e.target.value)}
+                    style={{ marginBottom: 0 }}
+                  />
+                </label>
+              </div>
+              <div className="settings-group" style={{ marginBottom: 0 }}>
+                <label style={{ justifyContent: 'flex-start', gap: 10 }}>
+                  <span style={{ minWidth: 84 }}>HL 私钥</span>
+                  <input
+                    type="password"
+                    value={globalSettings.hyperliquidPrivateKey || ''}
+                    onChange={e => updateGlobalSetting('hyperliquidPrivateKey', e.target.value)}
+                    style={{ marginBottom: 0 }}
+                  />
+                </label>
+              </div>
+            </div>
+            <div className="settings-section">
+              <div className="settings-section-title">钱包</div>
+              <div className="settings-placeholder">占位：后续会迁移到系统安全存储。</div>
+              <div className="settings-group" style={{ marginBottom: 12 }}>
+                <label style={{ justifyContent: 'flex-start', gap: 10 }}>
+                  <span style={{ minWidth: 84 }}>地址</span>
+                  <input
+                    type="text"
+                    value={globalSettings.hyperliquidWalletAddress || ''}
+                    onChange={e => updateGlobalSetting('hyperliquidWalletAddress', e.target.value)}
+                    style={{ marginBottom: 0 }}
+                  />
+                </label>
+              </div>
+              <div className="settings-group" style={{ marginBottom: 0 }}>
+                <label style={{ justifyContent: 'flex-start', gap: 10 }}>
+                  <span style={{ minWidth: 84 }}>私钥</span>
+                  <input
+                    type="password"
+                    value={globalSettings.hyperliquidPrivateKey || ''}
+                    onChange={e => updateGlobalSetting('hyperliquidPrivateKey', e.target.value)}
+                    style={{ marginBottom: 0 }}
+                  />
+                </label>
+              </div>
+            </div>
+            <div className="settings-section">
+              <div className="settings-section-title">Telegram</div>
+              <div className="settings-placeholder">占位：目前只做本地保存，不会真正接入。</div>
+              <div className="settings-group" style={{ marginBottom: 12 }}>
+                <label style={{ justifyContent: 'flex-start', gap: 10 }}>
+                  <span style={{ minWidth: 84 }}>API ID</span>
+                  <input
+                    type="text"
+                    value={globalSettings.telegramApiId || ''}
+                    onChange={e => updateGlobalSetting('telegramApiId', e.target.value)}
+                    style={{ marginBottom: 0 }}
+                  />
+                </label>
+              </div>
+              <div className="settings-group" style={{ marginBottom: 12 }}>
+                <label style={{ justifyContent: 'flex-start', gap: 10 }}>
+                  <span style={{ minWidth: 84 }}>API HASH</span>
+                  <input
+                    type="password"
+                    value={globalSettings.telegramApiHash || ''}
+                    onChange={e => updateGlobalSetting('telegramApiHash', e.target.value)}
+                    style={{ marginBottom: 0 }}
+                  />
+                </label>
+              </div>
+              <div className="settings-group" style={{ marginBottom: 0 }}>
+                <label style={{ justifyContent: 'flex-start', gap: 10 }}>
+                  <span style={{ minWidth: 84 }}>手机号</span>
+                  <input
+                    type="text"
+                    value={globalSettings.telegramPhone || ''}
+                    onChange={e => updateGlobalSetting('telegramPhone', e.target.value)}
+                    style={{ marginBottom: 0 }}
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="modal-actions">
+              <button className="btn btn-primary" onClick={() => setShowGlobalSettings(false)}>完成</button>
+              {DIAG_ENABLED && Capacitor.isNativePlatform() && (
+                <button className="btn btn-secondary" onClick={() => { setShowGlobalSettings(false); openDiagnostics(); }}>
+                  诊断
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showFloatingSettings && (
+        <div className="modal-overlay" onClick={() => setShowFloatingSettings(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <h2>悬浮窗设置</h2>
             <div className="settings-group">
               <label>显示币种名称
                 <input type="checkbox" checked={config.showSymbol} onChange={e => updateConfig('showSymbol', e.target.checked)} />
@@ -614,9 +827,9 @@ function HomePage() {
               <input type="range" min="1" max="5" value={config.itemsPerPage} onChange={e => updateConfig('itemsPerPage', parseInt(e.target.value))} />
             </div>
             <div className="modal-actions">
-              <button className="btn btn-primary" onClick={() => setShowSettings(false)}>完成</button>
+              <button className="btn btn-primary" onClick={() => setShowFloatingSettings(false)}>完成</button>
               {DIAG_ENABLED && Capacitor.isNativePlatform() && (
-                <button className="btn btn-secondary" onClick={() => { setShowSettings(false); openDiagnostics(); }}>
+                <button className="btn btn-secondary" onClick={() => { setShowFloatingSettings(false); openDiagnostics(); }}>
                   诊断
                 </button>
               )}

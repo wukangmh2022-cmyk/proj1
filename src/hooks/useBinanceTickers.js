@@ -5,6 +5,9 @@ import { perfLog } from '../utils/perfLogger';
 
 const BINANCE_SPOT_WS = 'wss://stream.binance.com:9443/stream';
 const BINANCE_FUTURES_WS = 'wss://fstream.binance.com/stream';
+// Browser CORS: use Binance Vision mirror for REST fallback (same path, CORS-friendly).
+const BINANCE_SPOT_REST_BASE = 'https://data-api.binance.vision/api/v3';
+const BINANCE_FUTURES_REST_BASE = 'https://data-api.binance.vision/fapi/v1';
 const DIAG_ENABLED = 1;
 
 /**
@@ -253,7 +256,7 @@ export const useBinanceTickers = (symbols = []) => {
                 // Spot
                 await Promise.all(spotSymbols.map(async (s) => {
                     try {
-                        const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${s}`);
+                        const res = await fetch(`${BINANCE_SPOT_REST_BASE}/ticker/price?symbol=${s}`);
                         const json = await res.json();
                         const price = parseFloat(json.price);
                         if (!Number.isNaN(price)) updates[s] = { price, change: 0, changePercent: 0 };
@@ -263,7 +266,7 @@ export const useBinanceTickers = (symbols = []) => {
                 await Promise.all(futuresSymbols.map(async (s) => {
                     try {
                         const base = getBaseSymbol(s);
-                        const res = await fetch(`https://fapi.binance.com/fapi/v1/ticker/price?symbol=${base}`);
+                        const res = await fetch(`${BINANCE_FUTURES_REST_BASE}/ticker/price?symbol=${base}`);
                         const json = await res.json();
                         const price = parseFloat(json.price);
                         if (!Number.isNaN(price)) updates[s] = { price, change: 0, changePercent: 0 };
@@ -318,8 +321,8 @@ export const useBinanceTickers = (symbols = []) => {
                 const isPerp = isPerpetual(s);
                 const base = getBaseSymbol(s);
                 const url = isPerp
-                    ? `https://fapi.binance.com/fapi/v1/ticker/price?symbol=${base}`
-                    : `https://api.binance.com/api/v3/ticker/price?symbol=${s}`;
+                    ? `${BINANCE_FUTURES_REST_BASE}/ticker/price?symbol=${base}`
+                    : `${BINANCE_SPOT_REST_BASE}/ticker/price?symbol=${s}`;
                 try {
                     const res = await fetch(url);
                     const json = await res.json();

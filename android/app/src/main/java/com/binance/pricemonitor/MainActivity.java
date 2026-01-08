@@ -15,7 +15,9 @@ public class MainActivity extends BridgeActivity {
     private final android.os.Handler uiHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     private boolean waitingForWebViewDraw = false;
     private Runnable resumeReloadRunnable = null;
+    private Runnable hardRestartRunnable = null;
     private static final long RESUME_WATCHDOG_MS = 2000;
+    private static final long HARD_RESTART_WATCHDOG_MS = 5000;
     private static final long MIN_BG_ARM_MS = 10_000;
     private android.view.ViewTreeObserver.OnPreDrawListener webViewPreDrawListener = null;
     private Runnable forceHideOverlayRunnable = null;
@@ -93,6 +95,7 @@ public class MainActivity extends BridgeActivity {
         Log.d(TAG, "onDestroy at " + now);
         DiagnosticsLog.append(getApplicationContext(), "[native] MainActivity onDestroy at " + now);
         if (resumeReloadRunnable != null) uiHandler.removeCallbacks(resumeReloadRunnable);
+        if (hardRestartRunnable != null) uiHandler.removeCallbacks(hardRestartRunnable);
         if (forceHideOverlayRunnable != null) uiHandler.removeCallbacks(forceHideOverlayRunnable);
     }
 
@@ -168,7 +171,8 @@ public class MainActivity extends BridgeActivity {
         // Safety: never let spinner stick forever in normal cases.
         if (forceHideOverlayRunnable != null) uiHandler.removeCallbacks(forceHideOverlayRunnable);
         forceHideOverlayRunnable = this::hideOverlay;
-        uiHandler.postDelayed(forceHideOverlayRunnable, 5000);
+        // Keep overlay visible long enough for recovery actions (recreate / hard restart) to run.
+        uiHandler.postDelayed(forceHideOverlayRunnable, 20_000);
     }
 
     private void hideOverlay() {
@@ -179,6 +183,7 @@ public class MainActivity extends BridgeActivity {
         hideOverlay();
         waitingForWebViewDraw = false;
         if (resumeReloadRunnable != null) uiHandler.removeCallbacks(resumeReloadRunnable);
+        if (hardRestartRunnable != null) uiHandler.removeCallbacks(hardRestartRunnable);
         if (forceHideOverlayRunnable != null) uiHandler.removeCallbacks(forceHideOverlayRunnable);
     }
 
@@ -198,6 +203,54 @@ public class MainActivity extends BridgeActivity {
         } catch (Exception ignored) {
             return true;
         }
+    }
+
+    private boolean canHardRestartNow() {
+        try {
+            android.content.SharedPreferences sp = getSharedPreferences("resume_hard_restart", MODE_PRIVATE);
+            long now = android.os.SystemClock.uptimeMillis();
+            long lastAt = sp.getLong("at", 0);
+            int count = sp.getInt("count", 0);
+            // Hard restart is disruptive; allow at most 1 per 2 minutes, and 2 per 10 minutes.
+            if (now - lastAt < 120_000) return false;
+            if (now - lastAt < 600_000 && count >= 2) return false;
+            sp.edit().putLong("at", now).putInt("count", now - lastAt < 600_000 ? (count + 1) : 1).apply();
+            return true;
+        } catch (Exception ignored) {
+            return true;
+        }
+    }
+
+    private void hardRestartApp() {
+        long now = System.currentTimeMillis();
+        Log.d(TAG, "hard restart: restarting task at " + now);
+        DiagnosticsLog.append(getApplicationContext(), "[native] hard restart: restarting task at " + now);
+        try {
+            // Schedule a restart via AlarmManager, then kill the process to fully reset WebView/JS/native singletons.
+            // This avoids killing the freshly-started Activity in the same process.
+            android.content.Intent restartIntent = new android.content.Intent(this, MainActivity.class);
+            restartIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK | android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK);
+
+            android.app.PendingIntent pendingIntent = android.app.PendingIntent.getActivity(
+                    this,
+                    0,
+                    restartIntent,
+                    android.app.PendingIntent.FLAG_CANCEL_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE
+            );
+
+            android.app.AlarmManager am = (android.app.AlarmManager) getSystemService(ALARM_SERVICE);
+            long at = android.os.SystemClock.elapsedRealtime() + 250;
+            if (am != null) {
+                am.setExact(android.app.AlarmManager.ELAPSED_REALTIME, at, pendingIntent);
+            }
+
+            finishAffinity();
+            uiHandler.postDelayed(() -> {
+                try {
+                    android.os.Process.killProcess(android.os.Process.myPid());
+                } catch (Exception ignored) {}
+            }, 80);
+        } catch (Exception ignored) {}
     }
 
     private void armResumeReloadWatchdog() {
@@ -221,6 +274,22 @@ public class MainActivity extends BridgeActivity {
             } catch (Exception ignored) {}
         };
         uiHandler.postDelayed(resumeReloadRunnable, RESUME_WATCHDOG_MS);
+
+        // Second-tier recovery: if still stuck after a longer window, restart the whole task/process.
+        if (hardRestartRunnable != null) uiHandler.removeCallbacks(hardRestartRunnable);
+        hardRestartRunnable = () -> {
+            if (!waitingForWebViewDraw) return;
+            long now = System.currentTimeMillis();
+            Log.d(TAG, "hard watchdog: still stuck after " + HARD_RESTART_WATCHDOG_MS + "ms at " + now);
+            DiagnosticsLog.append(getApplicationContext(), "[native] hard watchdog: still stuck after " + HARD_RESTART_WATCHDOG_MS + "ms at " + now);
+            if (!canHardRestartNow()) {
+                Log.d(TAG, "hard watchdog: restart suppressed at " + now);
+                DiagnosticsLog.append(getApplicationContext(), "[native] hard watchdog: restart suppressed at " + now);
+                return;
+            }
+            hardRestartApp();
+        };
+        uiHandler.postDelayed(hardRestartRunnable, HARD_RESTART_WATCHDOG_MS);
     }
 
     private void setNativeWatchdogFlagInJs() {

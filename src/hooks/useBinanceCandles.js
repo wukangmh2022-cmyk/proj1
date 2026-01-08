@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { SMA, EMA } from 'technicalindicators';
 
-const BINANCE_SPOT_REST = 'https://api.binance.com/api/v3/klines';
-const BINANCE_FUTURES_REST = 'https://fapi.binance.com/fapi/v1/klines';
+// Browser CORS: use Binance Vision mirror for REST history (same path, CORS-friendly).
+const BINANCE_SPOT_REST = 'https://data-api.binance.vision/api/v3/klines';
+const BINANCE_FUTURES_REST = 'https://data-api.binance.vision/fapi/v1/klines';
 const BINANCE_SPOT_WS = 'wss://stream.binance.com:9443/ws';
 const BINANCE_FUTURES_WS = 'wss://fstream.binance.com/ws';
 

@@ -138,7 +138,7 @@ body {
 /* Ticker Grid */
 .ticker-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(var(--ticker-min-width, 160px), 1fr));
   gap: 12px;
   margin-top: 10px;
 }
@@ -158,6 +158,19 @@ body {
   cursor: pointer;
   position: relative;
   overflow: hidden;
+}
+
+.home-compact .ticker-card {
+  padding: 10px;
+  border-radius: 14px;
+}
+
+.home-compact .ticker-grid {
+  gap: 10px;
+}
+
+.home-compact .ticker-card .price {
+  font-size: 1rem;
 }
 
 /* Only apply transition when not in edit mode */
@@ -358,6 +371,8 @@ body {
   padding: 24px;
   width: 90%;
   max-width: 400px;
+  max-height: 85vh;
+  overflow-y: auto;
   border: 1px solid var(--border-color);
   animation: slideUp 0.3s ease;
 }
@@ -502,6 +517,24 @@ body {
   width: 20px;
   height: 20px;
   accent-color: var(--accent-gold);
+}
+
+.settings-section {
+  margin-top: 10px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.settings-section-title {
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.settings-placeholder {
+  color: #a0a0a0;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 /* Floating Controls */

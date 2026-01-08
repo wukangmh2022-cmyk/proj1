@@ -258,14 +258,29 @@ export default function ChartPage() {
             });
             return;
         }
-        if (type !== 'VEGAS') return;
-        setIndicators(prev => ({
-            ...prev,
-            ma1: { ...prev.ma1, period: 12, visible: true },
-            ma2: { ...prev.ma2, period: 144, visible: true },
-            ma3: { ...prev.ma3, period: 169, visible: true },
-            ma4: { ...prev.ma4, period: prev.ma4?.period || 200, visible: false }
-        }));
+        if (type === 'VEGAS') {
+            setIndicators(prev => ({
+                ...prev,
+                ma1: { ...prev.ma1, period: 12, visible: true },
+                ma2: { ...prev.ma2, period: 144, visible: true },
+                ma3: { ...prev.ma3, period: 169, visible: true },
+                ma4: { ...prev.ma4, period: prev.ma4?.period || 200, visible: false }
+            }));
+            return;
+        }
+
+        // MA/EMA/SMA: if user selects from NONE -> {MA/EMA/SMA}, auto-enable MA lines
+        // so the indicator shows immediately without needing to toggle the "eye".
+        setIndicators(prev => {
+            const next = { ...prev };
+            const anyVisible = maKeys.some(k => next[k]?.visible !== false);
+            if (!anyVisible) {
+                maKeys.forEach(k => {
+                    if (next[k]) next[k] = { ...next[k], visible: true };
+                });
+            }
+            return next;
+        });
     };
 
     const openIndicatorMenu = (rect, focus) => {
@@ -1449,7 +1464,8 @@ export default function ChartPage() {
         };
 
         const fetchBinanceCandles = async ({ endTimeMs, limit }) => {
-            const apiBase = isPerpetual ? 'https://fapi.binance.com/fapi/v1' : 'https://api.binance.com/api/v3';
+            // Browser CORS: use Binance Vision mirror for REST history (same path, CORS-friendly).
+            const apiBase = isPerpetual ? 'https://data-api.binance.vision/fapi/v1' : 'https://data-api.binance.vision/api/v3';
             const url = endTimeMs
                 ? `${apiBase}/klines?symbol=${baseSymbol}&interval=${interval}&limit=${limit}&endTime=${endTimeMs}`
                 : `${apiBase}/klines?symbol=${baseSymbol}&interval=${interval}&limit=${limit}`;
