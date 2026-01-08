@@ -13,6 +13,21 @@ const MAIN_INDICATOR_TYPES = ['NONE', 'MA', 'EMA', 'SMA', 'VEGAS'];
 const FIB_RATIOS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.382, 1.618, 2.618, 3.618];
 const LABEL_PREFIX = { hline: 'h', trendline: 't', rect: 'r', channel: 'c', fib: 'f' };
 
+const getPricePrecision = (price) => {
+    const p = Math.abs(Number(price));
+    if (!isFinite(p) || p === 0) return 2;
+    if (p >= 100) return 2;
+    if (p >= 1) return 3;
+    if (p >= 0.1) return 4;
+    if (p >= 0.01) return 5;
+    return 6;
+};
+
+const getPriceFormatForPrice = (price) => {
+    const precision = getPricePrecision(price);
+    return { type: 'price', precision, minMove: Math.pow(10, -precision) };
+};
+
 // Helper to parse interval to seconds
 const parseInterval = (int) => {
     if (!int) return 60;
@@ -118,6 +133,8 @@ export default function ChartPage() {
     const [isLoading, setIsLoading] = useState(true);
     const [selectedId, setSelectedId] = useState(null);
     const [isLandscape, setIsLandscape] = useState(false);
+    const [drawingsVisible, setDrawingsVisible] = useState(true);
+    const drawingsVisibleRef = useRef(true);
     const tapCandidateRef = useRef(null); // { id, x, y }
     // Orientation toggle removed per latest request (rely on system auto-rotate)
 
@@ -133,6 +150,7 @@ export default function ChartPage() {
     const [showSymbolMenu, setShowSymbolMenu] = useState(false);
     const [symbolPrices, setSymbolPrices] = useState({});
     const inDrawMode = drawMode !== DRAW_MODES.NONE;
+    useEffect(() => { drawingsVisibleRef.current = drawingsVisible; }, [drawingsVisible]);
 
     // Use dynamic tickers for symbol menu and other UI
     // Ensure we start with all symbols
@@ -198,6 +216,17 @@ export default function ChartPage() {
 
     const maKeys = ['ma1', 'ma2', 'ma3', 'ma4'];
     const maLines = maKeys.map(key => ({ key, ...(indicators[key] || {}) })).filter(line => line.period);
+
+    const lastPriceFormatRef = useRef(null); // {precision, minMove}
+    const applyPriceFormat = useCallback((price) => {
+        if (!seriesRef.current) return;
+        if (!isFinite(price) || price === null) return;
+        const fmt = getPriceFormatForPrice(price);
+        const prev = lastPriceFormatRef.current;
+        if (prev && prev.precision === fmt.precision && prev.minMove === fmt.minMove) return;
+        seriesRef.current.applyOptions({ priceFormat: fmt });
+        lastPriceFormatRef.current = fmt;
+    }, []);
     const visibleMaLines = maLines.filter(line => line.visible !== false);
     const mainIndicatorLabel = mainIndicatorType === 'VEGAS' ? 'VEGAS' : (mainIndicatorType === 'NONE' ? '无' : mainIndicatorType);
     const getSubIndicatorLabel = () => {
@@ -1395,6 +1424,7 @@ export default function ChartPage() {
 
                 allDataRef.current = formatted;
                 seriesRef.current.setData(formatted);
+                applyPriceFormat(formatted[formatted.length - 1]?.close);
                 dataIntervalRef.current = interval; // mark data interval
                 lastLogicalRangeRef.current = chartRef.current.timeScale().getVisibleLogicalRange() || lastLogicalRangeRef.current;
                 updateIndicators(formatted);
@@ -1461,6 +1491,7 @@ export default function ChartPage() {
             if (m.k) {
                 const k = { time: m.k.t / 1000, open: +m.k.o, high: +m.k.h, low: +m.k.l, close: +m.k.c, volume: +m.k.v };
                 seriesRef.current.update(k);
+                applyPriceFormat(k.close);
                 // Sync allDataRef
                 const last = allDataRef.current[allDataRef.current.length - 1];
                 if (last && last.time === k.time) {
@@ -1518,7 +1549,7 @@ export default function ChartPage() {
             if (chartRef.current) chartRef.current.timeScale().unsubscribeVisibleLogicalRangeChange(handleScroll);
             if (stageTimer) clearTimeout(stageTimer);
         };
-    }, [symbol, interval]);
+    }, [symbol, interval, applyPriceFormat]);
 
     // Resize chart on orientation/viewport changes
     useEffect(() => {
@@ -1894,6 +1925,7 @@ export default function ChartPage() {
     };
 
     const hitTestDrawing = useCallback((x, y) => {
+        if (!drawingsVisibleRef.current) return null;
         for (const d of screenDrawings) {
             if (!d) continue;
             if (d.type === 'hline') {
@@ -2742,7 +2774,7 @@ export default function ChartPage() {
                         })()}
 
                         {/* Completed drawings */}
-                        {screenDrawings.map(d => {
+                        {drawingsVisible && screenDrawings.map(d => {
                             const color = getColor(d.type, d), sel = d.id === selectedId;
                             const handlers = {
                                 onClick: (e) => {
@@ -2859,6 +2891,54 @@ export default function ChartPage() {
                     </g>
                 </svg>
 
+                {/* Hide/Show drawings (Binance-like "eye") */}
+                {(() => {
+                    const h = containerRef.current?.clientHeight || 0;
+                    const w = containerRef.current?.clientWidth || 0;
+                    if (!h || !w) return null;
+                    const mainBottomRatio = subIndicator !== 'NONE' ? 0.55 : 0.80;
+                    const y = Math.max(8, Math.round(h * mainBottomRatio) - 22);
+                    return (
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setDrawingsVisible(v => {
+                                    const next = !v;
+                                    if (!next) {
+                                        setMenu(null);
+                                        setSelectedId(null);
+                                    } else {
+                                        requestAnimationFrame(() => requestScreenDrawingsUpdateRef.current?.());
+                                    }
+                                    return next;
+                                });
+                            }}
+                            style={{
+                                position: 'absolute',
+                                left: '50%',
+                                top: `${y}px`,
+                                transform: 'translateX(-50%)',
+                                width: 28,
+                                height: 28,
+                                borderRadius: 14,
+                                border: '1px solid rgba(255,255,255,0.12)',
+                                background: 'rgba(30, 35, 44, 0.65)',
+                                color: drawingsVisible ? '#fcd535' : 'rgba(255,255,255,0.55)',
+                                fontSize: 14,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                zIndex: 30,
+                                pointerEvents: 'auto'
+                            }}
+                            title={drawingsVisible ? '隐藏所有绘图' : '显示所有绘图'}
+                            aria-label={drawingsVisible ? '隐藏所有绘图' : '显示所有绘图'}
+                        >
+                            {drawingsVisible ? '👁' : '🙈'}
+                        </button>
+                    );
+                })()}
+
                 {/* Custom Crosshair Labels */}
                 {customCrosshair && !inDrawMode && chartRef.current && seriesRef.current && (
                     <>
@@ -2901,25 +2981,38 @@ export default function ChartPage() {
 
                             if (value === null) return null;
 
-                            return (
-                                <div style={{
-                                    position: 'absolute',
-                                    right: '2px', // Align to right axis with small padding
-                                    top: `${customCrosshair.y - 12}px`,
-                                    background: 'rgba(252,213,53,0.9)', // Unified Yellow Style
-                                    color: '#000',
-                                    borderRadius: '4px',
-                                    padding: '4px 8px',
-                                    fontSize: '11px',
-                                    fontWeight: 'bold',
-                                    pointerEvents: 'none',
-                                    zIndex: 20,
-                                    boxShadow: '0 1px 2px rgba(0,0,0,0.3)'
-                                }}>
-                                    {isSubChart ? value.toFixed(2) : value.toFixed(2)}
-                                </div>
-                            );
-                        })()}
+                                return (
+                                    <div style={{
+                                        position: 'absolute',
+                                        right: '2px', // Align to right axis with small padding
+                                        top: `${customCrosshair.y - 12}px`,
+                                        background: 'rgba(252,213,53,0.9)', // Unified Yellow Style
+                                        color: '#000',
+                                        borderRadius: '4px',
+                                        padding: '4px 8px',
+                                        fontSize: '11px',
+                                        fontWeight: 'bold',
+                                        pointerEvents: 'none',
+                                        zIndex: 20,
+                                        boxShadow: '0 1px 2px rgba(0,0,0,0.3)'
+                                    }}>
+                                    {(() => {
+                                        const current = allDataRef.current?.[allDataRef.current.length - 1]?.close;
+                                        const precision = isSubChart ? 2 : getPricePrecision(current ?? value);
+                                        const valueStr = Number(value).toFixed(precision);
+                                        if (isSubChart || !isFinite(current) || current === 0) return valueStr;
+                                        const pct = ((value - current) / current) * 100;
+                                        const pctStr = `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
+                                        return (
+                                            <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.05 }}>
+                                                <div>{valueStr}</div>
+                                                <div style={{ fontSize: '10px', fontWeight: 700, opacity: 0.9 }}>{pctStr}</div>
+                                            </div>
+                                        );
+                                    })()}
+                                    </div>
+                                );
+                            })()}
                         {/* Time label on bottom axis */}
                         {(() => {
                             const logic = chartRef.current.timeScale().coordinateToLogical(customCrosshair.x);
