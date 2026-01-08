@@ -5,9 +5,6 @@ import { perfLog } from '../utils/perfLogger';
 
 const BINANCE_SPOT_WS = 'wss://stream.binance.com:9443/stream';
 const BINANCE_FUTURES_WS = 'wss://fstream.binance.com/stream';
-// Browser CORS: use Binance Vision mirror for REST fallback (same path, CORS-friendly).
-const BINANCE_SPOT_REST_BASE = 'https://data-api.binance.vision/api/v3';
-const BINANCE_FUTURES_REST_BASE = 'https://data-api.binance.vision/fapi/v1';
 const DIAG_ENABLED = 1;
 
 /**
@@ -249,38 +246,6 @@ export const useBinanceTickers = (symbols = []) => {
         connectSpot(spotSymbols);
         connectFutures(futuresSymbols);
 
-        // One-shot REST fallback to seed prices (useful for .P before WS ticks land)
-        const seedPrices = async () => {
-            try {
-                const updates = {};
-                // Spot
-                await Promise.all(spotSymbols.map(async (s) => {
-                    try {
-                        const res = await fetch(`${BINANCE_SPOT_REST_BASE}/ticker/price?symbol=${s}`);
-                        const json = await res.json();
-                        const price = parseFloat(json.price);
-                        if (!Number.isNaN(price)) updates[s] = { price, change: 0, changePercent: 0 };
-                    } catch (_) { }
-                }));
-                // Futures
-                await Promise.all(futuresSymbols.map(async (s) => {
-                    try {
-                        const base = getBaseSymbol(s);
-                        const res = await fetch(`${BINANCE_FUTURES_REST_BASE}/ticker/price?symbol=${base}`);
-                        const json = await res.json();
-                        const price = parseFloat(json.price);
-                        if (!Number.isNaN(price)) updates[s] = { price, change: 0, changePercent: 0 };
-                    } catch (_) { }
-                }));
-                if (Object.keys(updates).length > 0) {
-                    setTickers(prev => ({ ...prev, ...updates }));
-                }
-            } catch (e) {
-                console.error('Seed price fetch failed', e);
-            }
-        };
-        seedPrices();
-
         watchdogIntervalRef.current = setInterval(() => {
             const now = Date.now();
             const timeSinceLastUpdate = now - lastUpdateRef.current;
@@ -306,42 +271,6 @@ export const useBinanceTickers = (symbols = []) => {
             }
         };
     }, [JSON.stringify(symbols), isNative]);
-
-    // Web fallback: periodically fetch missing symbols that have no price yet (covers newly added .P)
-    useEffect(() => {
-        if (isNative) return;
-        if (symbols.length === 0) return;
-        let timer = null;
-
-        const fetchMissing = async () => {
-            const missing = symbols.filter(s => !bufferRef.current[s] && !Object.prototype.hasOwnProperty.call(tickers, s));
-            if (missing.length === 0) return;
-            const updates = {};
-            await Promise.all(missing.map(async (s) => {
-                const isPerp = isPerpetual(s);
-                const base = getBaseSymbol(s);
-                const url = isPerp
-                    ? `${BINANCE_FUTURES_REST_BASE}/ticker/price?symbol=${base}`
-                    : `${BINANCE_SPOT_REST_BASE}/ticker/price?symbol=${s}`;
-                try {
-                    const res = await fetch(url);
-                    const json = await res.json();
-                    const price = parseFloat(json.price);
-                    if (!Number.isNaN(price)) {
-                        updates[s] = { price, change: 0, changePercent: 0 };
-                    }
-                } catch (_) { }
-            }));
-            if (Object.keys(updates).length > 0) {
-                setTickers(prev => ({ ...prev, ...updates }));
-            }
-        };
-
-        timer = setInterval(fetchMissing, 4000);
-        fetchMissing();
-
-        return () => { if (timer) clearInterval(timer); };
-    }, [symbols, tickers, isNative]);
 
     return tickers;
 };
