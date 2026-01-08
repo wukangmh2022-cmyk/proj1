@@ -59,3 +59,18 @@ export const getFloatingConfig = () => {
 export const saveFloatingConfig = (config) => {
     localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
 };
+
+// Market data provider (Home/Chart tickers)
+const MARKET_PROVIDER_KEY = 'market_data_provider';
+const DEFAULT_MARKET_PROVIDER = 'binance'; // 'binance' | 'hyperliquid'
+
+export const getMarketDataProvider = () => {
+    const stored = localStorage.getItem(MARKET_PROVIDER_KEY);
+    if (stored === 'binance' || stored === 'hyperliquid') return stored;
+    return DEFAULT_MARKET_PROVIDER;
+};
+
+export const setMarketDataProvider = (provider) => {
+    if (provider !== 'binance' && provider !== 'hyperliquid') return;
+    localStorage.setItem(MARKET_PROVIDER_KEY, provider);
+};

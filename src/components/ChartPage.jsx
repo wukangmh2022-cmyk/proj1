@@ -4,7 +4,8 @@ import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { createChart, CandlestickSeries, LineSeries, HistogramSeries } from 'lightweight-charts';
 import { getSymbols } from '../utils/storage';
-import { useBinanceTickers } from '../hooks/useBinanceTickers';
+import { useMarketTickers } from '../hooks/useMarketTickers';
+import { getMarketDataProvider } from '../utils/storage';
 import { perfLog } from '../utils/perfLogger';
 import '../App.css';
 
@@ -155,7 +156,8 @@ export default function ChartPage() {
     // Use dynamic tickers for symbol menu and other UI
     // Ensure we start with all symbols
     const [allSymbols] = useState(() => getSymbols());
-    const liveTickers = useBinanceTickers(allSymbols);
+    const [marketProvider] = useState(() => getMarketDataProvider());
+    const liveTickers = useMarketTickers(marketProvider, allSymbols);
 
 
     // Enhanced Indicator State

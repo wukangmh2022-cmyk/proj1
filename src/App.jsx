@@ -1,11 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { HashRouter, Routes, Route, useNavigate, useParams } from 'react-router-dom';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
-import { useBinanceTickers } from './hooks/useBinanceTickers';
 import { usePriceAlerts } from './hooks/usePriceAlerts';
 import FloatingWidget from './plugins/FloatingWidget';
 import { Capacitor } from '@capacitor/core';
-import { getSymbols, addSymbol, removeSymbol, saveSymbols, getFloatingConfig, saveFloatingConfig } from './utils/storage';
+import { getSymbols, addSymbol, removeSymbol, saveSymbols, getFloatingConfig, saveFloatingConfig, getMarketDataProvider, setMarketDataProvider } from './utils/storage';
 import { getAlerts } from './utils/alert_storage';
 import { serializeDrawingAlert } from './utils/drawing_alert_utils';
 import ChartPage from './components/ChartPage';
@@ -15,6 +14,7 @@ import { perfLog } from './utils/perfLogger';
 import Diagnostics from './plugins/Diagnostics';
 
 import { App as CapacitorApp } from '@capacitor/app';
+import { useMarketTickers } from './hooks/useMarketTickers';
 
 const DIAG_ENABLED = 1;
 
@@ -46,6 +46,7 @@ function HomePage() {
   const [floatingActive, setFloatingActive] = useState(false);
   const [config, setConfig] = useState(getFloatingConfig());
   const floatingActiveRef = useRef(false);
+  const [marketProvider, setMarketProviderState] = useState(getMarketDataProvider());
 
   const [isEditMode, setIsEditMode] = useState(false);
   const longPressTimerRef = useRef(null);
@@ -202,7 +203,7 @@ function HomePage() {
   }, [floatingActive]);
 
   // Data source: native on Android (service started above), WebSocket on web
-  const tickers = useBinanceTickers(symbols);
+  const tickers = useMarketTickers(marketProvider, symbols);
   usePriceAlerts(tickers);
 
 
@@ -529,6 +530,31 @@ function HomePage() {
         <div className="modal-overlay" onClick={() => setShowSettings(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <h2>悬浮窗设置</h2>
+            <div className="settings-group">
+              <label>行情数据源</label>
+              <select
+                value={marketProvider}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setMarketProviderState(v);
+                  setMarketDataProvider(v);
+                }}
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  borderRadius: '10px',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  background: '#161b22',
+                  color: '#fff'
+                }}
+              >
+                <option value="binance">Binance</option>
+                <option value="hyperliquid">Hyperliquid</option>
+              </select>
+              <div style={{ marginTop: 6, fontSize: 12, color: '#888' }}>
+                仅影响主界面/图表的行情展示；悬浮窗/预警仍由原生服务处理。
+              </div>
+            </div>
             <div className="settings-group">
               <label>显示币种名称
                 <input type="checkbox" checked={config.showSymbol} onChange={e => updateConfig('showSymbol', e.target.checked)} />
