@@ -2898,6 +2898,7 @@ export default function ChartPage() {
                     if (!h || !w) return null;
                     const mainBottomRatio = subIndicator !== 'NONE' ? 0.55 : 0.80;
                     const y = Math.max(8, Math.round(h * mainBottomRatio) - 22);
+                    const iconColor = drawingsVisible ? '#fcd535' : 'rgba(255,255,255,0.55)';
                     return (
                         <button
                             onClick={(e) => {
@@ -2918,29 +2919,31 @@ export default function ChartPage() {
                                 left: '50%',
                                 top: `${y}px`,
                                 transform: 'translateX(-50%)',
-                                width: 28,
-                                height: 28,
-                                borderRadius: 14,
-                                border: '1px solid rgba(255,255,255,0.12)',
-                                background: 'rgba(30, 35, 44, 0.65)',
-                                color: drawingsVisible ? '#fcd535' : 'rgba(255,255,255,0.55)',
-                                fontSize: 14,
+                                width: 30,
+                                height: 30,
+                                borderRadius: 15,
+                                border: 'none',
+                                background: 'transparent',
+                                color: iconColor,
+                                padding: 0,
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
                                 zIndex: 30,
-                                pointerEvents: 'auto'
+                                pointerEvents: 'auto',
+                                outline: 'none',
+                                WebkitTapHighlightColor: 'transparent'
                             }}
                             title={drawingsVisible ? '隐藏所有绘图' : '显示所有绘图'}
                             aria-label={drawingsVisible ? '隐藏所有绘图' : '显示所有绘图'}
                         >
                             {drawingsVisible ? (
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={iconColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: 'block' }}>
                                     <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
                                     <circle cx="12" cy="12" r="3" />
                                 </svg>
                             ) : (
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={iconColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: 'block' }}>
                                     <path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-6.5 0-10-7-10-7a20.5 20.5 0 0 1 5.06-5.94" />
                                     <path d="M9.9 4.24A10.94 10.94 0 0 1 12 5c6.5 0 10 7 10 7a20.6 20.6 0 0 1-3.22 4.32" />
                                     <path d="M14.12 14.12a3 3 0 0 1-4.24-4.24" />
