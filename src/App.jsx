@@ -18,6 +18,23 @@ import { App as CapacitorApp } from '@capacitor/app';
 
 const DIAG_ENABLED = 1;
 
+const getPricePrecision = (price) => {
+  const p = Math.abs(Number(price));
+  if (!isFinite(p) || p === 0) return 2;
+  if (p >= 100) return 2;
+  if (p >= 1) return 3;
+  if (p >= 0.1) return 4;
+  if (p >= 0.01) return 5;
+  return 6;
+};
+
+const formatQuotePrice = (price) => {
+  const n = Number(price);
+  if (!isFinite(n)) return '--';
+  const precision = getPricePrecision(n);
+  return n.toLocaleString(undefined, { minimumFractionDigits: precision, maximumFractionDigits: precision });
+};
+
 function HomePage() {
   const navigate = useNavigate();
   const [symbols, setSymbols] = useState(getSymbols());
@@ -417,11 +434,11 @@ function HomePage() {
               {...provided.droppableProps}
               ref={provided.innerRef}
             >
-              {symbols.map((symbol, index) => {
-                const data = tickers[symbol];
-                const price = data ? data.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--';
-                const change = data ? data.changePercent.toFixed(2) : '0.00';
-                const isPositive = data ? data.changePercent >= 0 : true;
+	              {symbols.map((symbol, index) => {
+	                const data = tickers[symbol];
+	                const price = data ? formatQuotePrice(data.price) : '--';
+	                const change = data ? data.changePercent.toFixed(2) : '0.00';
+	                const isPositive = data ? data.changePercent >= 0 : true;
 
                 return (
                   <Draggable key={symbol} draggableId={symbol} index={index} isDragDisabled={!isEditMode}>
