@@ -4,11 +4,14 @@ on:
   push:
     branches:
       - main
+      - stable
     tags:
       - 'v*'
   pull_request:
     branches:
       - main
+      - stable
+  workflow_dispatch:
 
 jobs:
 
