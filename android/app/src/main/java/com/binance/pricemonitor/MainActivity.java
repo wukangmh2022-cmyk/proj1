@@ -16,8 +16,8 @@ public class MainActivity extends BridgeActivity {
     private boolean waitingForWebViewDraw = false;
     private Runnable resumeReloadRunnable = null;
     private Runnable hardRestartRunnable = null;
-    private static final long RESUME_WATCHDOG_MS = 2000;
-    private static final long HARD_RESTART_WATCHDOG_MS = 5000;
+    private static final long RESUME_WATCHDOG_MS = 2500;
+    private static final long HARD_RESTART_WATCHDOG_MS = 6000;
     private static final long MIN_BG_ARM_MS = 10_000;
     private android.view.ViewTreeObserver.OnPreDrawListener webViewPreDrawListener = null;
     private Runnable forceHideOverlayRunnable = null;
@@ -190,46 +190,26 @@ public class MainActivity extends BridgeActivity {
     }
 
     private boolean canRecoverNow() {
-        try {
-            android.content.SharedPreferences sp = getSharedPreferences("resume_watchdog", MODE_PRIVATE);
-            long now = android.os.SystemClock.uptimeMillis();
-            long lastAt = sp.getLong("at", 0);
-            int count = sp.getInt("count", 0);
-            if (now - lastAt < 120_000) {
-                if (count >= 2) return false;
-                sp.edit().putLong("at", now).putInt("count", count + 1).apply();
-                return true;
-            }
-            sp.edit().putLong("at", now).putInt("count", 1).apply();
-            return true;
-        } catch (Exception ignored) {
-            return true;
-        }
+        return true;
     }
 
     private void armResumeReloadWatchdog() {
         if (resumeReloadRunnable != null) uiHandler.removeCallbacks(resumeReloadRunnable);
         resumeReloadRunnable = () -> {
             if (!waitingForWebViewDraw) return;
-            if (!canRecoverNow()) {
-                long now = System.currentTimeMillis();
-                Log.d(TAG, "resume watchdog: recover suppressed at " + now);
-                DiagnosticsLog.append(getApplicationContext(), "[native] resume watchdog: recover suppressed at " + now);
-                return;
-            }
+            // First tier: immediate hard restart if stuck > 2.5s
+            // recreate() is often not enough for deep render freezer.
             long now = System.currentTimeMillis();
-            Log.d(TAG, "resume watchdog: forcing activity recreate at " + now);
-            DiagnosticsLog.append(getApplicationContext(), "[native] resume watchdog: forcing activity recreate at " + now);
+            Log.d(TAG, "resume watchdog: forcing hard restart at " + now);
+            DiagnosticsLog.append(getApplicationContext(), "[native] resume watchdog: forcing hard restart at " + now);
             try {
-                // recreate() is more aggressive than WebView.reload and can recover faster when renderer is wedged.
-                // Best-effort hide overlay to avoid leaving a blocking surface during transition.
                 hideOverlay();
-                recreate();
+                hardRestartApp();
             } catch (Exception ignored) {}
         };
         uiHandler.postDelayed(resumeReloadRunnable, RESUME_WATCHDOG_MS);
 
-        // Second-tier recovery: if still stuck after a longer window, restart the whole task/process.
+        // Second-tier recovery: redundancy
         if (hardRestartRunnable != null) uiHandler.removeCallbacks(hardRestartRunnable);
         hardRestartRunnable = () -> {
             if (!waitingForWebViewDraw) return;
@@ -247,19 +227,7 @@ public class MainActivity extends BridgeActivity {
     }
 
     private boolean canHardRestartNow() {
-        try {
-            android.content.SharedPreferences sp = getSharedPreferences("resume_hard_restart", MODE_PRIVATE);
-            long now = android.os.SystemClock.uptimeMillis();
-            long lastAt = sp.getLong("at", 0);
-            int count = sp.getInt("count", 0);
-            // Hard restart is disruptive; allow at most 1 per 2 minutes, and 2 per 10 minutes.
-            if (now - lastAt < 120_000) return false;
-            if (now - lastAt < 600_000 && count >= 2) return false;
-            sp.edit().putLong("at", now).putInt("count", now - lastAt < 600_000 ? (count + 1) : 1).apply();
-            return true;
-        } catch (Exception ignored) {
-            return true;
-        }
+        return true;
     }
 
     private void hardRestartApp() {
@@ -267,8 +235,7 @@ public class MainActivity extends BridgeActivity {
         Log.d(TAG, "hard restart: restarting task at " + now);
         DiagnosticsLog.append(getApplicationContext(), "[native] hard restart: restarting task at " + now);
         try {
-            // Schedule a restart via AlarmManager, then kill the process to fully reset WebView/JS/native singletons.
-            // This avoids killing the freshly-started Activity in the same process.
+            // Schedule a restart via AlarmManager
             android.content.Intent restartIntent = new android.content.Intent(this, MainActivity.class);
             restartIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK | android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK);
 
@@ -280,18 +247,27 @@ public class MainActivity extends BridgeActivity {
             );
 
             android.app.AlarmManager am = (android.app.AlarmManager) getSystemService(ALARM_SERVICE);
-            long at = android.os.SystemClock.elapsedRealtime() + 250;
+            long at = android.os.SystemClock.elapsedRealtime() + 200;
             if (am != null) {
-                am.setExact(android.app.AlarmManager.ELAPSED_REALTIME, at, pendingIntent);
+                // Use 'set' instead of 'setExact' to avoid SCHEDULE_EXACT_ALARM permission crash on Android 12+
+                am.set(android.app.AlarmManager.ELAPSED_REALTIME, at, pendingIntent);
             }
-
-            finishAffinity();
-            uiHandler.postDelayed(() -> {
-                try {
-                    android.os.Process.killProcess(android.os.Process.myPid());
-                } catch (Exception ignored) {}
-            }, 80);
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            Log.e(TAG, "hard restart alarm failed", e);
+            DiagnosticsLog.append(getApplicationContext(), "[native] hard restart alarm failed: " + e.getMessage());
+        } finally {
+            // Always kill the process if we reached this point, even if alarm failed.
+            // Better to crash/close than to stay frozen.
+            try {
+                finishAffinity();
+                uiHandler.postDelayed(() -> {
+                    try {
+                        android.os.Process.killProcess(android.os.Process.myPid());
+                        System.exit(0);
+                    } catch (Exception ignored) {}
+                }, 100);
+            } catch (Exception ignored) {}
+        }
     }
 
     private void setNativeWatchdogFlagInJs() {
