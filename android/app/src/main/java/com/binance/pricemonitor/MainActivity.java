@@ -23,11 +23,19 @@ public class MainActivity extends BridgeActivity {
     private Runnable forceHideOverlayRunnable = null;
     private long lastPausedAtUptime = 0L;
 
+    private String pendingSymbol = null;
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         long now = System.currentTimeMillis();
         Log.d(TAG, "onCreate at " + now);
         DiagnosticsLog.append(getApplicationContext(), "[native] MainActivity onCreate at " + now);
+
+        // Check for symbol deep link from HomeActivity
+        if (getIntent() != null && getIntent().hasExtra("symbol")) {
+            pendingSymbol = getIntent().getStringExtra("symbol");
+        }
+
         registerPlugin(FloatingWidgetPlugin.class);
         registerPlugin(DiagnosticsPlugin.class);
         // Switch off the Launch (SplashScreen) theme as early as possible to avoid gray/blank window on resume.
@@ -187,6 +195,13 @@ public class MainActivity extends BridgeActivity {
         if (resumeReloadRunnable != null) uiHandler.removeCallbacks(resumeReloadRunnable);
         if (hardRestartRunnable != null) uiHandler.removeCallbacks(hardRestartRunnable);
         if (forceHideOverlayRunnable != null) uiHandler.removeCallbacks(forceHideOverlayRunnable);
+        
+        // Navigate to pending symbol if needed
+        if (pendingSymbol != null && getBridge() != null && getBridge().getWebView() != null) {
+            String script = "window.location.hash = '/chart/" + pendingSymbol + "';";
+            getBridge().getWebView().evaluateJavascript(script, null);
+            pendingSymbol = null; // Clear to avoid repeated nav
+        }
     }
 
     private boolean canRecoverNow() {
@@ -232,42 +247,22 @@ public class MainActivity extends BridgeActivity {
 
     private void hardRestartApp() {
         long now = System.currentTimeMillis();
-        Log.d(TAG, "hard restart: restarting task at " + now);
-        DiagnosticsLog.append(getApplicationContext(), "[native] hard restart: restarting task at " + now);
+        Log.d(TAG, "hard restart: killing chart process at " + now);
+        DiagnosticsLog.append(getApplicationContext(), "[native] hard restart: killing chart process at " + now);
+        
+        // Since we are now in the child :chart process, 
+        // "Hard recovery" simply means killing this process so user falls back to the HomeActivity.
+        // It's a "Crash to Desktop" behavior but effectively "Close to Home".
+        // This is safe and robust.
+        
         try {
-            // Schedule a restart via AlarmManager
-            android.content.Intent restartIntent = new android.content.Intent(this, MainActivity.class);
-            restartIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK | android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK);
-
-            android.app.PendingIntent pendingIntent = android.app.PendingIntent.getActivity(
-                    this,
-                    0,
-                    restartIntent,
-                    android.app.PendingIntent.FLAG_CANCEL_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE
-            );
-
-            android.app.AlarmManager am = (android.app.AlarmManager) getSystemService(ALARM_SERVICE);
-            long at = android.os.SystemClock.elapsedRealtime() + 200;
-            if (am != null) {
-                // Use 'set' instead of 'setExact' to avoid SCHEDULE_EXACT_ALARM permission crash on Android 12+
-                am.set(android.app.AlarmManager.ELAPSED_REALTIME, at, pendingIntent);
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "hard restart alarm failed", e);
-            DiagnosticsLog.append(getApplicationContext(), "[native] hard restart alarm failed: " + e.getMessage());
-        } finally {
-            // Always kill the process if we reached this point, even if alarm failed.
-            // Better to crash/close than to stay frozen.
-            try {
-                finishAffinity();
-                uiHandler.postDelayed(() -> {
-                    try {
-                        android.os.Process.killProcess(android.os.Process.myPid());
-                        System.exit(0);
-                    } catch (Exception ignored) {}
-                }, 100);
-            } catch (Exception ignored) {}
-        }
+            finishAffinity(); // Close this Activity and any parents in this task
+            // Ensure process death to clear WebView deadlocks
+            uiHandler.postDelayed(() -> {
+                android.os.Process.killProcess(android.os.Process.myPid());
+                System.exit(0);
+            }, 100);
+        } catch (Exception ignored) {}
     }
 
     private void setNativeWatchdogFlagInJs() {

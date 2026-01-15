@@ -1,7 +1,9 @@
 package com.binance.pricemonitor;
 
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.net.Uri;
 import android.provider.Settings;
 import android.os.Build;
@@ -15,27 +17,60 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 @CapacitorPlugin(name = "FloatingWidget")
 public class FloatingWidgetPlugin extends Plugin {
 
+    private BroadcastReceiver broadcastReceiver;
+
     @Override
     public void load() {
         super.load();
         
-        // Register as listener for ticker updates from the Service
+        // Register as listener for ticker updates from the Service (Broadcast for IPC)
+        broadcastReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if ("com.binance.pricemonitor.TICKER_UPDATE".equals(intent.getAction())) {
+                    String symbol = intent.getStringExtra("symbol");
+                    double price = intent.getDoubleExtra("price", 0);
+                    double changePercent = intent.getDoubleExtra("changePercent", 0);
+                    
+                    JSObject data = new JSObject();
+                    data.put("symbol", symbol);
+                    data.put("price", price);
+                    data.put("changePercent", changePercent);
+                    
+                    notifyListeners("tickerUpdate", data);
+                }
+            }
+        };
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getContext().registerReceiver(broadcastReceiver, new IntentFilter("com.binance.pricemonitor.TICKER_UPDATE"), Context.RECEIVER_NOT_EXPORTED); 
+        } else {
+            getContext().registerReceiver(broadcastReceiver, new IntentFilter("com.binance.pricemonitor.TICKER_UPDATE"));
+        }
+
+        // Keep static listener for backward compat (if same process)
         FloatingWindowService.setTickerListener((symbol, price, changePercent) -> {
-            JSObject data = new JSObject();
-            data.put("symbol", symbol);
-            data.put("price", price);
-            data.put("changePercent", changePercent);
-            
-            // Notify JS listeners (must be on main thread for Capacitor)
-            getActivity().runOnUiThread(() -> {
-                notifyListeners("tickerUpdate", data);
-            });
+            // If we receive both (same process), we might duplicate. 
+            // Check if we are in main process? 
+            // Actually, if we are in :chart, static listener won't fire. 
+            // If we are in main, both might fire?
+            // Service calls listener AND broadcast.
+            // If in main process, listener fires. Broadcast fires. Receiver fires.
+            // We get double updates!
+            // We should relying ONLY on broadcast?
+            // Or remove listener logic?
+            // Let's rely on broadcast for consistency.
         });
     }
     
     @Override
     protected void handleOnDestroy() {
         super.handleOnDestroy();
+        try {
+            if (broadcastReceiver != null) {
+                getContext().unregisterReceiver(broadcastReceiver);
+            }
+        } catch (Exception e) {}
         FloatingWindowService.setTickerListener(null);
     }
 

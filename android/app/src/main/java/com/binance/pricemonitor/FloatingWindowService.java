@@ -275,7 +275,7 @@ public class FloatingWindowService extends Service {
                 for (java.util.Map.Entry<String, double[]> entry : rawPriceDataMap.entrySet()) {
                     String symbol = entry.getKey();
                     double[] vals = entry.getValue();
-                    tickerListener.onTickerUpdate(symbol, vals[0], vals[1]);
+                    notifyTickerUpdate(symbol, vals[0], vals[1]);
                 }
             }
             return START_STICKY;
@@ -402,10 +402,8 @@ public class FloatingWindowService extends Service {
                 // Store raw data for replay
                 rawPriceDataMap.put(symbol, new double[]{closePrice, changePercent});
                 
-                // Notify static listener (Plugin) about ticker update
-                if (tickerListener != null) {
-                    tickerListener.onTickerUpdate(symbol, closePrice, changePercent);
-                }
+                // Notify static listener (Plugin) and Broadcast
+                notifyTickerUpdate(symbol, closePrice, changePercent);
                 
                 // Check simple price alerts
                 Double prev = lastTickerPriceBySymbol.put(symbol, closePrice);
@@ -1177,10 +1175,8 @@ public class FloatingWindowService extends Service {
             } catch (Exception ignored) {}
         }
         
-        // Notify plugin to update JS (mark as inactive)
-        if (tickerListener != null) {
-            // Could add a separate listener for alert triggers
-        }
+        // Notify plugin and Broadcast
+        notifyTickerUpdate(symbol, currentPrice, 0);
     }
 
     private int getToneType(int soundId) {
@@ -1350,5 +1346,16 @@ public class FloatingWindowService extends Service {
         } else {
             startForeground(1, notification);
         }
+    }
+    private void notifyTickerUpdate(String symbol, double price, double changePercent) {
+        if (tickerListener != null) {
+            tickerListener.onTickerUpdate(symbol, price, changePercent);
+        }
+        Intent intent = new Intent("com.binance.pricemonitor.TICKER_UPDATE");
+        intent.setPackage(getPackageName());
+        intent.putExtra("symbol", symbol);
+        intent.putExtra("price", price);
+        intent.putExtra("changePercent", changePercent);
+        sendBroadcast(intent);
     }
 }
