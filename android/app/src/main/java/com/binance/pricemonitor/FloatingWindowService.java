@@ -62,10 +62,6 @@ public class FloatingWindowService extends Service {
     private okhttp3.WebSocket futuresWebSocket;
     private okhttp3.OkHttpClient client = new okhttp3.OkHttpClient();
     private com.google.gson.Gson gson = new com.google.gson.Gson();
-    
-    // Add symbol variable to avoid compilation error in triggerAlert
-    private String symbol;
-
     // Sound
     private android.media.ToneGenerator toneGenerator;
 
