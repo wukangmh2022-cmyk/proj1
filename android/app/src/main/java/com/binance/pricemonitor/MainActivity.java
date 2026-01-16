@@ -198,7 +198,7 @@ public class MainActivity extends BridgeActivity {
         
         // Navigate to pending symbol if needed
         if (pendingSymbol != null && getBridge() != null && getBridge().getWebView() != null) {
-            String script = "window.location.hash = '/chart/" + pendingSymbol + "';";
+            String script = "window.location.replace('#/chart/" + pendingSymbol + "');";
             getBridge().getWebView().evaluateJavascript(script, null);
             pendingSymbol = null; // Clear to avoid repeated nav
         }

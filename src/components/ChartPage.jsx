@@ -128,6 +128,19 @@ export default function ChartPage() {
         if (changed) setDrawings(updated);
         labelsInitializedRef.current = true;
     }, [drawings]);
+
+    // Handle Hardware Back Button in Native Mode
+    useEffect(() => {
+        if (!Capacitor.isNativePlatform()) return;
+        const handleBack = async () => {
+            // In the separate :chart process, 'exitApp' finishes the MainActivity, 
+            // taking the user back to the Native Home Activity.
+            CapacitorApp.exitApp();
+        };
+        const listener = CapacitorApp.addListener('backButton', handleBack);
+        return () => { listener.then(r => r.remove()); };
+    }, []);
+
     const [screenDrawings, setScreenDrawings] = useState([]);
     const [loadingStage, setLoadingStage] = useState('[init]');
     const [isLoading, setIsLoading] = useState(true);
@@ -1601,7 +1614,7 @@ export default function ChartPage() {
         return (l - 1) + (time - t1) / (t2 - t1);
     };
 
-        const timeToScreen = useCallback((time, price) => {
+    const timeToScreen = useCallback((time, price) => {
         if (!chartRef.current || !seriesRef.current) return null;
         const ts = chartRef.current.timeScale();
         let x = ts.timeToCoordinate(time);
@@ -2035,25 +2048,25 @@ export default function ChartPage() {
                     const minY = Math.min(fy1, fy2);
                     const maxY = Math.max(fy1, fy2);
 
-                            return (<g key={i}>
-                                {/* Hit Area aligned to line */}
-                                <line
-                                    x1={fx1}
-                                    y1={fy1}
-                                    x2={fx2}
-                                    y2={fy2}
-                                    stroke="transparent"
-                                    strokeWidth="20"
-                                    cursor="pointer"
-                                    pointerEvents="all"
-                                    onPointerDown={(e) => {
-                                        if (selectedId !== d.id) return; // only drag when already selected
-                                        e.stopPropagation();
-                                        logInteract('fib pointerDown', d.id, e.pointerType);
-                                        handleDragStart(e, d.id, -1);
-                                    }}
-                                    {...handlers}
-                                />
+                    return (<g key={i}>
+                        {/* Hit Area aligned to line */}
+                        <line
+                            x1={fx1}
+                            y1={fy1}
+                            x2={fx2}
+                            y2={fy2}
+                            stroke="transparent"
+                            strokeWidth="20"
+                            cursor="pointer"
+                            pointerEvents="all"
+                            onPointerDown={(e) => {
+                                if (selectedId !== d.id) return; // only drag when already selected
+                                e.stopPropagation();
+                                logInteract('fib pointerDown', d.id, e.pointerType);
+                                handleDragStart(e, d.id, -1);
+                            }}
+                            {...handlers}
+                        />
                         {/* Visual */}
                         <line x1={fx1} y1={fy1} x2={fx2} y2={fy2} stroke={levelColor} strokeWidth={d.width || 2} opacity={sel ? 1 : 0.8} pointerEvents="none" />
                         <text x={fx2 + 5} y={fy2} fill={levelColor} fontSize="9" pointerEvents="auto" onClick={(e) => { e.stopPropagation(); setSelectedId(d.id); }}>{r}</text>
@@ -2801,11 +2814,11 @@ export default function ChartPage() {
                             if (d.type === 'hline') return (
                                 <g key={d.id}>
                                     {/* Hit Area */}
-                                <line
-                                    x1={0}
-                                    y1={d.screenY}
-                                    x2="100%"
-                                    y2={d.screenY}
+                                    <line
+                                        x1={0}
+                                        y1={d.screenY}
+                                        x2="100%"
+                                        y2={d.screenY}
                                         stroke="transparent"
                                         strokeWidth="20"
                                         cursor="pointer"
@@ -2816,7 +2829,7 @@ export default function ChartPage() {
                                             handleDragStart(e, d.id, -1);
                                         }}
                                         {...handlers}
-                                />
+                                    />
                                     {/* Visible */}
                                     <line x1={0} y1={d.screenY} x2="100%" y2={d.screenY} stroke={color} strokeWidth={sel ? (d.width || 1) + 1 : (d.width || 1)} pointerEvents="none" />
                                     <text x={5} y={d.screenY - 5} fill={color} fontSize="10" pointerEvents="auto" onClick={(e) => { e.stopPropagation(); setSelectedId(d.id); }}>{d.label || d.id}</text>
@@ -2830,18 +2843,18 @@ export default function ChartPage() {
                                         {/* Hit Area */}
                                         <line
                                             x1={p1.x}
-                                        y1={p1.y}
-                                        x2={p2.x}
-                                        y2={p2.y}
-                                        stroke="transparent"
-                                        strokeWidth="15"
-                                        cursor="pointer"
-                                        pointerEvents="all"
-                                        onPointerDown={(e) => {
-                                            if (selectedId !== d.id) return; // only drag when selected
-                                            e.stopPropagation();
-                                            logInteract('trendline pointerDown', d.id, e.pointerType);
-                                            handleDragStart(e, d.id, -1);
+                                            y1={p1.y}
+                                            x2={p2.x}
+                                            y2={p2.y}
+                                            stroke="transparent"
+                                            strokeWidth="15"
+                                            cursor="pointer"
+                                            pointerEvents="all"
+                                            onPointerDown={(e) => {
+                                                if (selectedId !== d.id) return; // only drag when selected
+                                                e.stopPropagation();
+                                                logInteract('trendline pointerDown', d.id, e.pointerType);
+                                                handleDragStart(e, d.id, -1);
                                             }}
                                             {...handlers}
                                         />
@@ -2861,24 +2874,24 @@ export default function ChartPage() {
                                 const h = Math.abs(p2.y - p1.y);
                                 return (
                                     <g key={d.id}>
-                <rect
-                    x={x}
-                    y={y}
-                    width={w}
-                    height={h}
-                    fill={`${color}20`}
-                    stroke={color}
-                    strokeWidth={sel ? (d.width || 1) + 1 : (d.width || 1)}
-                    pointerEvents="all"
-                    cursor="grab"
-                    onPointerDown={(e) => {
-                        if (selectedId !== d.id) return; // only drag when selected
-                        e.stopPropagation();
-                        logInteract('rect pointerDown', d.id, e.pointerType);
-                        handleDragStart(e, d.id, -1);
-                    }}
-                    {...handlers}
-                />
+                                        <rect
+                                            x={x}
+                                            y={y}
+                                            width={w}
+                                            height={h}
+                                            fill={`${color}20`}
+                                            stroke={color}
+                                            strokeWidth={sel ? (d.width || 1) + 1 : (d.width || 1)}
+                                            pointerEvents="all"
+                                            cursor="grab"
+                                            onPointerDown={(e) => {
+                                                if (selectedId !== d.id) return; // only drag when selected
+                                                e.stopPropagation();
+                                                logInteract('rect pointerDown', d.id, e.pointerType);
+                                                handleDragStart(e, d.id, -1);
+                                            }}
+                                            {...handlers}
+                                        />
                                         {sel && <><circle cx={p1.x} cy={p1.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 0)} /><circle cx={p2.x} cy={p2.y} r="7" fill={color} stroke="#fff" strokeWidth="2" cursor="grab" pointerEvents="all" onPointerDown={(e) => handleDragStart(e, d.id, 1)} /></>}
                                         <text x={x + 5} y={y - 5} fill={color} fontSize="10" pointerEvents="auto" onClick={(e) => { e.stopPropagation(); setSelectedId(d.id); }}>{d.label || d.id}</text>
                                     </g>
@@ -2996,21 +3009,21 @@ export default function ChartPage() {
 
                             if (value === null) return null;
 
-                                return (
-                                    <div style={{
-                                        position: 'absolute',
-                                        right: '2px', // Align to right axis with small padding
-                                        top: `${customCrosshair.y - 12}px`,
-                                        background: 'rgba(252,213,53,0.9)', // Unified Yellow Style
-                                        color: '#000',
-                                        borderRadius: '4px',
-                                        padding: '4px 8px',
-                                        fontSize: '11px',
-                                        fontWeight: 'bold',
-                                        pointerEvents: 'none',
-                                        zIndex: 20,
-                                        boxShadow: '0 1px 2px rgba(0,0,0,0.3)'
-                                    }}>
+                            return (
+                                <div style={{
+                                    position: 'absolute',
+                                    right: '2px', // Align to right axis with small padding
+                                    top: `${customCrosshair.y - 12}px`,
+                                    background: 'rgba(252,213,53,0.9)', // Unified Yellow Style
+                                    color: '#000',
+                                    borderRadius: '4px',
+                                    padding: '4px 8px',
+                                    fontSize: '11px',
+                                    fontWeight: 'bold',
+                                    pointerEvents: 'none',
+                                    zIndex: 20,
+                                    boxShadow: '0 1px 2px rgba(0,0,0,0.3)'
+                                }}>
                                     {(() => {
                                         const current = allDataRef.current?.[allDataRef.current.length - 1]?.close;
                                         const precision = isSubChart ? 2 : getPricePrecision(current ?? value);
@@ -3025,9 +3038,9 @@ export default function ChartPage() {
                                             </div>
                                         );
                                     })()}
-                                    </div>
-                                );
-                            })()}
+                                </div>
+                            );
+                        })()}
                         {/* Time label on bottom axis */}
                         {(() => {
                             const logic = chartRef.current.timeScale().coordinateToLogical(customCrosshair.x);

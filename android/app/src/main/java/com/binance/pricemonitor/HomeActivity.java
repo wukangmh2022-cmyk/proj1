@@ -52,6 +52,12 @@ public class HomeActivity extends AppCompatActivity implements FloatingWindowSer
         intent.setAction(FloatingWindowService.ACTION_SET_SYMBOLS);
         intent.putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST, new ArrayList<>(symbols));
         startService(intent);
+        
+        findViewById(R.id.btnSettings).setOnClickListener(v -> {
+            // Open React App (Home Page) for Settings
+            Intent settingsIntent = new Intent(HomeActivity.this, MainActivity.class);
+            startActivity(settingsIntent);
+        });
     }
 
     @Override

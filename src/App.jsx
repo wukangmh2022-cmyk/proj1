@@ -115,75 +115,7 @@ function HomePage() {
     };
   }, []);
 
-  const normalizeAlertsForNative = (alerts) => {
-    return alerts.map(a => {
-      const normalizedCondition = Array.isArray(a.condition)
-        ? a.condition[0]
-        : (Array.isArray(a.conditions) ? a.conditions[0] : a.condition);
-      const normalizedConditions = Array.isArray(a.conditions)
-        ? a.conditions
-        : (Array.isArray(a.condition) ? a.condition : (a.condition ? [a.condition] : null));
-      const normalizedTargetValue = Array.isArray(a.targetValue) ? a.targetValue[0] : a.targetValue;
-      const normalizedTargetValues = Array.isArray(a.targetValues)
-        ? a.targetValues
-        : (Array.isArray(a.targetValue) ? a.targetValue : null);
-      const baseAlert = {
-        ...a,
-        condition: normalizedCondition,
-        conditions: normalizedConditions,
-        targetValue: normalizedTargetValue,
-        targetValues: normalizedTargetValues
-      };
 
-      if (baseAlert.targetType === 'drawing' && baseAlert.target === 0) {
-        try {
-          const drawingsStr = localStorage.getItem(`chart_drawings_${baseAlert.symbol}`);
-          if (drawingsStr) {
-            const drawings = JSON.parse(drawingsStr);
-            const d = drawings.find(x => x.id === baseAlert.targetValue);
-            if (d) {
-              const serialized = serializeDrawingAlert(d);
-              if (serialized) {
-                // Merge Algo and Params into the Alert object for Native Service
-                return {
-                  ...baseAlert,
-                  algo: serialized.algo,
-                  params: serialized.params
-                };
-              }
-            }
-          }
-        } catch (e) { console.error('Enrich Drawing Alert Error', e); }
-      }
-      return baseAlert;
-    });
-  };
-
-  // Start native data service and sync alerts on mount (for Android)
-  useEffect(() => {
-    perfLog('[perf] HomePage useEffect startData/syncAlerts at', Date.now(), 'isNative=', Capacitor.isNativePlatform());
-    if (Capacitor.isNativePlatform()) {
-      // Defer native/plugin work until after first paint to reduce cold-start and reload latency.
-      let cancelled = false;
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          if (cancelled) return;
-          FloatingWidget.startData({ symbols }).catch(console.error);
-          // Initial alert sync (can be heavy if drawings are present)
-          setTimeout(() => {
-            if (cancelled) return;
-            try {
-              const allAlerts = normalizeAlertsForNative(getAlerts());
-              FloatingWidget.syncAlerts({ alerts: allAlerts }).catch(console.error);
-            } catch (e) {
-              console.error(e);
-            }
-          }, 0);
-        });
-      });
-      return () => { cancelled = true; };
-    }
-  }, [symbols]); // Re-start/sync when symbols change
 
   // Sync alerts to native whenever alert modal closes (might have changed)
   useEffect(() => {
@@ -346,40 +278,40 @@ function HomePage() {
         <div style={{ padding: '16px', background: '#0d1117', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
           <div style={{ width: '100%', maxWidth: '520px', margin: '0 auto', position: 'relative' }}>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <input
-              type="text"
-              placeholder="添加交易对 (如 BTC, ETHUSDT)"
-              value={newSymbol}
-              onChange={e => handleSearchInput(e.target.value)}
-              onKeyPress={e => { if (e.key === 'Enter') handleAddSymbol(); }}
-              style={{
-                flex: 1,
-                padding: '12px 16px',
-                background: '#161b22',
-                border: '1px solid rgba(255,255,255,0.2)',
-                borderRadius: '8px',
-                color: '#fff',
-                fontSize: '14px',
-                outline: 'none'
-              }}
-            />
-            <button
-              onClick={() => handleAddSymbol()}
-	              style={{
-	                padding: '12px 24px',
-	                background: '#fcd535',
-	                border: 'none',
-	                borderRadius: '8px',
-	                color: '#000',
-	                fontSize: '14px',
-	                fontWeight: 'bold',
-	                cursor: 'pointer',
-	                whiteSpace: 'nowrap',
-	                flexShrink: 0
-	              }}
-            >
-              添加
-            </button>
+              <input
+                type="text"
+                placeholder="添加交易对 (如 BTC, ETHUSDT)"
+                value={newSymbol}
+                onChange={e => handleSearchInput(e.target.value)}
+                onKeyPress={e => { if (e.key === 'Enter') handleAddSymbol(); }}
+                style={{
+                  flex: 1,
+                  padding: '12px 16px',
+                  background: '#161b22',
+                  border: '1px solid rgba(255,255,255,0.2)',
+                  borderRadius: '8px',
+                  color: '#fff',
+                  fontSize: '14px',
+                  outline: 'none'
+                }}
+              />
+              <button
+                onClick={() => handleAddSymbol()}
+                style={{
+                  padding: '12px 24px',
+                  background: '#fcd535',
+                  border: 'none',
+                  borderRadius: '8px',
+                  color: '#000',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0
+                }}
+              >
+                添加
+              </button>
             </div>
 
             {/* Suggestions Dropdown */}
@@ -434,11 +366,11 @@ function HomePage() {
               {...provided.droppableProps}
               ref={provided.innerRef}
             >
-	              {symbols.map((symbol, index) => {
-	                const data = tickers[symbol];
-	                const price = data ? formatQuotePrice(data.price) : '--';
-	                const change = data ? data.changePercent.toFixed(2) : '0.00';
-	                const isPositive = data ? data.changePercent >= 0 : true;
+              {symbols.map((symbol, index) => {
+                const data = tickers[symbol];
+                const price = data ? formatQuotePrice(data.price) : '--';
+                const change = data ? data.changePercent.toFixed(2) : '0.00';
+                const isPositive = data ? data.changePercent >= 0 : true;
 
                 return (
                   <Draggable key={symbol} draggableId={symbol} index={index} isDragDisabled={!isEditMode}>
@@ -663,8 +595,8 @@ function DiagnosticsPage() {
         <div className="header-actions">
           <button className="btn btn-secondary" onClick={load}>刷新</button>
           <button className="btn btn-danger" onClick={async () => {
-            try { await Diagnostics.clearLogs(); } catch {}
-            try { localStorage.removeItem('amaze_diag_js'); } catch {}
+            try { await Diagnostics.clearLogs(); } catch { }
+            try { localStorage.removeItem('amaze_diag_js'); } catch { }
             load();
           }}>清空</button>
         </div>
@@ -684,6 +616,81 @@ function DiagnosticsPage() {
 }
 
 function App() {
+  // Global Service Initialization
+  // This ensures that even if we are in :chart process (where HomePage doesn't mount),
+  // the plugin connects to the service and starts receiving data.
+
+  const [symbols] = useState(getSymbols());
+
+  const normalizeAlertsForNative = (alerts) => {
+    return alerts.map(a => {
+      const normalizedCondition = Array.isArray(a.condition)
+        ? a.condition[0]
+        : (Array.isArray(a.conditions) ? a.conditions[0] : a.condition);
+      const normalizedConditions = Array.isArray(a.conditions)
+        ? a.conditions
+        : (Array.isArray(a.condition) ? a.condition : (a.condition ? [a.condition] : null));
+      const normalizedTargetValue = Array.isArray(a.targetValue) ? a.targetValue[0] : a.targetValue;
+      const normalizedTargetValues = Array.isArray(a.targetValues)
+        ? a.targetValues
+        : (Array.isArray(a.targetValue) ? a.targetValue : null);
+      const baseAlert = {
+        ...a,
+        condition: normalizedCondition,
+        conditions: normalizedConditions,
+        targetValue: normalizedTargetValue,
+        targetValues: normalizedTargetValues
+      };
+
+      if (baseAlert.targetType === 'drawing' && baseAlert.target === 0) {
+        try {
+          const drawingsStr = localStorage.getItem(`chart_drawings_${baseAlert.symbol}`);
+          if (drawingsStr) {
+            const drawings = JSON.parse(drawingsStr);
+            const d = drawings.find(x => x.id === baseAlert.targetValue);
+            if (d) {
+              const serialized = serializeDrawingAlert(d);
+              if (serialized) {
+                // Merge Algo and Params into the Alert object for Native Service
+                return {
+                  ...baseAlert,
+                  algo: serialized.algo,
+                  params: serialized.params
+                };
+              }
+            }
+          }
+        } catch (e) { console.error('Enrich Drawing Alert Error', e); }
+      }
+      return baseAlert;
+    });
+  };
+
+  useEffect(() => {
+    perfLog('[perf] App useEffect startData/syncAlerts at', Date.now(), 'isNative=', Capacitor.isNativePlatform());
+    if (Capacitor.isNativePlatform()) {
+      // Defer native/plugin work until after first paint to reduce cold-start and reload latency.
+      let cancelled = false;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (cancelled) return;
+          FloatingWidget.startData({ symbols }).catch(console.error);
+          // Initial alert sync (can be heavy if drawings are present)
+          setTimeout(() => {
+            if (cancelled) return;
+            try {
+              const allAlerts = normalizeAlertsForNative(getAlerts());
+              FloatingWidget.syncAlerts({ alerts: allAlerts }).catch(console.error);
+            } catch (e) {
+              console.error(e);
+            }
+          }, 0);
+        });
+      });
+      return () => { cancelled = true; };
+    }
+  }, [symbols]);
+
   return (
     <HashRouter>
       <Routes>
