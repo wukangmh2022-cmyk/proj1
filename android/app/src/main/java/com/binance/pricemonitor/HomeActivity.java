@@ -47,8 +47,11 @@ public class HomeActivity extends AppCompatActivity implements FloatingWindowSer
         adapter = new SymbolAdapter(symbols);
         recyclerView.setAdapter(adapter);
 
-        // Start the service if not running, to ensure we get data
-        startService(new Intent(this, FloatingWindowService.class));
+        // Start the service and ensure symbols are set so data syncing begins
+        Intent intent = new Intent(this, FloatingWindowService.class);
+        intent.setAction(FloatingWindowService.ACTION_SET_SYMBOLS);
+        intent.putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST, new ArrayList<>(symbols));
+        startService(intent);
     }
 
     @Override
