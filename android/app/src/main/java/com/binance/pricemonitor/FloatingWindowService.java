@@ -1176,7 +1176,7 @@ public class FloatingWindowService extends Service {
         }
         
         // Notify plugin and Broadcast
-        notifyTickerUpdate(symbol, currentPrice, 0);
+        notifyTickerUpdate(alert.symbol, currentPrice, 0);
     }
 
     private int getToneType(int soundId) {
