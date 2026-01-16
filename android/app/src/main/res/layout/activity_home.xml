@@ -2,41 +2,140 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#0D1117"
+    android:background="#0d1117"
     android:orientation="vertical">
 
-    <!-- Header -->
+    <!-- Header (matches WebView .header style) -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:background="#161B22"
+        android:layout_height="wrap_content"
+        android:background="@drawable/card_background"
         android:gravity="center_vertical"
-        android:paddingHorizontal="16dp"
+        android:padding="12dp"
+        android:layout_marginHorizontal="16dp"
+        android:layout_marginTop="16dp"
         android:orientation="horizontal">
 
+        <!-- Title with gradient text effect (simulated with gold color) -->
         <TextView
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="实时监控 (Native)"
-            android:textColor="#FFFFFF"
-            android:textSize="20sp"
+            android:text="实时"
+            android:textColor="#fcd535"
+            android:textSize="18sp"
             android:textStyle="bold" />
 
-        <ImageButton
-            android:id="@+id/btnSettings"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:background="?selectableItemBackgroundBorderless"
-            android:src="@android:drawable/ic_menu_preferences"
-            android:tint="#888888"
-            android:contentDescription="Settings" />
-            
+        <!-- Header Actions -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <!-- Edit Button -->
+            <Button
+                android:id="@+id/btnEdit"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:background="@drawable/btn_secondary"
+                android:text="编辑"
+                android:textColor="#f0f6fc"
+                android:textSize="13sp"
+                android:paddingHorizontal="12dp"
+                android:layout_marginEnd="8dp" />
+
+            <!-- Settings Button -->
+            <ImageButton
+                android:id="@+id/btnSettings"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:background="@drawable/btn_secondary"
+                android:src="@android:drawable/ic_menu_preferences"
+                android:tint="#f0f6fc"
+                android:contentDescription="Settings" />
+        </LinearLayout>
     </LinearLayout>
 
+    <!-- Add Symbol Input Row -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="12dp">
+
+        <EditText
+            android:id="@+id/inputSymbol"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_weight="1"
+            android:background="@drawable/input_background"
+            android:hint="添加交易对 (如 BTC)"
+            android:textColorHint="#8b949e"
+            android:textColor="#f0f6fc"
+            android:textSize="14sp"
+            android:paddingHorizontal="16dp"
+            android:inputType="textCapCharacters"
+            android:imeOptions="actionDone"
+            android:maxLines="1" />
+
+        <Button
+            android:id="@+id/btnAdd"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/btn_primary"
+            android:text="添加"
+            android:textColor="#000000"
+            android:textStyle="bold"
+            android:textSize="14sp"
+            android:paddingHorizontal="20dp" />
+    </LinearLayout>
+
+    <!-- Symbol List -->
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/recyclerView"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:padding="8dp" />
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:paddingBottom="100dp" />
+
+    <!-- Floating Controls (matches WebView .floating-controls) -->
+    <LinearLayout
+        android:id="@+id/floatingControls"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@drawable/card_background"
+        android:orientation="horizontal"
+        android:padding="12dp"
+        android:layout_marginHorizontal="16dp"
+        android:layout_marginBottom="16dp"
+        android:gravity="center">
+
+        <Button
+            android:id="@+id/btnFloatingToggle"
+            android:layout_width="0dp"
+            android:layout_height="44dp"
+            android:layout_weight="1"
+            android:background="@drawable/btn_primary"
+            android:text="🔲 开启悬浮窗"
+            android:textColor="#000000"
+            android:textStyle="bold"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/btnOpenSettings"
+            android:layout_width="0dp"
+            android:layout_height="44dp"
+            android:layout_weight="1"
+            android:layout_marginStart="10dp"
+            android:background="@drawable/btn_secondary"
+            android:text="⚙ 设置"
+            android:textColor="#f0f6fc"
+            android:textSize="14sp" />
+    </LinearLayout>
+
 </LinearLayout>

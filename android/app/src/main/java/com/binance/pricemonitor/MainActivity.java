@@ -24,6 +24,7 @@ public class MainActivity extends BridgeActivity {
     private long lastPausedAtUptime = 0L;
 
     private String pendingSymbol = null;
+    private boolean pendingOpenAlert = false;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -35,6 +36,9 @@ public class MainActivity extends BridgeActivity {
         if (getIntent() != null && getIntent().hasExtra("symbol")) {
             pendingSymbol = getIntent().getStringExtra("symbol");
         }
+        
+        // Check if we should open alert modal
+        pendingOpenAlert = getIntent() != null && getIntent().getBooleanExtra("openAlert", false);
 
         registerPlugin(FloatingWidgetPlugin.class);
         registerPlugin(DiagnosticsPlugin.class);
@@ -198,9 +202,17 @@ public class MainActivity extends BridgeActivity {
         
         // Navigate to pending symbol if needed
         if (pendingSymbol != null && getBridge() != null && getBridge().getWebView() != null) {
-            String script = "window.location.replace('#/chart/" + pendingSymbol + "');";
-            getBridge().getWebView().evaluateJavascript(script, null);
-            pendingSymbol = null; // Clear to avoid repeated nav
+            if (pendingOpenAlert) {
+                // Navigate to home with symbol param for alert modal
+                // The React app will detect this and open alert modal
+                String script = "window.location.replace('#/?alertSymbol=" + pendingSymbol + "');";
+                getBridge().getWebView().evaluateJavascript(script, null);
+            } else {
+                String script = "window.location.replace('#/chart/" + pendingSymbol + "');";
+                getBridge().getWebView().evaluateJavascript(script, null);
+            }
+            pendingSymbol = null;
+            pendingOpenAlert = false;
         }
     }
 

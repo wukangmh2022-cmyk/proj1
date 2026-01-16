@@ -50,6 +50,20 @@ function HomePage() {
   const [isEditMode, setIsEditMode] = useState(false);
   const longPressTimerRef = useRef(null);
 
+  // Check for alertSymbol in URL (from Native HomeActivity)
+  useEffect(() => {
+    const hash = window.location.hash;
+    const match = hash.match(/alertSymbol=([^&]+)/);
+    if (match) {
+      const sym = decodeURIComponent(match[1]);
+      if (sym) {
+        setAlertModalSymbol(sym);
+        // Clean up URL
+        window.location.hash = '/';
+      }
+    }
+  }, []);
+
   // Back Button Handling
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
