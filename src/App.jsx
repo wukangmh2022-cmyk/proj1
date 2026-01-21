@@ -188,7 +188,8 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
 
 
   const handleAddSymbol = (symbolToAdd) => {
-    const sym = symbolToAdd || newSymbol;
+    const raw = symbolToAdd || newSymbol;
+    const sym = raw.toUpperCase().trim();
     if (sym.trim()) {
       const updated = addSymbol(sym);
       setSymbols([...updated]);

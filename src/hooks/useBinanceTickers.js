@@ -128,6 +128,42 @@ export const useBinanceTickers = (symbols = []) => {
         };
     }, [isNative]);
 
+    // Sync symbol list + request ticker updates when native data source is ready.
+    useEffect(() => {
+        if (!isNative) return;
+        if (symbols.length === 0) return;
+
+        let cancelled = false;
+        const retryTimers = [];
+
+        const requestUpdate = (delay) => {
+            const timer = setTimeout(() => {
+                if (cancelled) return;
+                try {
+                    FloatingWidget.requestTickerUpdate();
+                } catch (e) {
+                    console.error('requestTickerUpdate failed', e);
+                }
+            }, delay);
+            retryTimers.push(timer);
+        };
+
+        try {
+            FloatingWidget.setSymbols({ symbols });
+        } catch (e) {
+            console.error('setSymbols failed', e);
+        }
+
+        requestUpdate(0);
+        requestUpdate(600);
+        requestUpdate(1600);
+
+        return () => {
+            cancelled = true;
+            retryTimers.forEach(clearTimeout);
+        };
+    }, [isNative, JSON.stringify(symbols)]);
+
     // ===== WEB MODE =====
     const connectSpot = (spotSymbols) => {
         if (isNative || spotSymbols.length === 0) return;
