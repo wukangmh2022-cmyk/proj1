@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { getAlerts, saveAlert, removeAlert, getAlertHistory } from '../utils/alert_storage';
 import FloatingWidget from '../plugins/FloatingWidget';
 import { Capacitor } from '@capacitor/core';
+import { normalizeAlertsForNative } from '../utils/alertNormalize';
 import './AlertConfigModal.css';
 
 const CustomSelect = ({ value, onChange, options, placeholder = '请选择', style = {} }) => {
@@ -273,7 +274,7 @@ const playWebSound = (id) => {
 };
 
 
-export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
+export default function AlertConfigModal({ symbol, currentPrice, onClose, variant = 'modal' }) {
     const [targetType, setTargetType] = useState('price');
     const [targetValue, setTargetValue] = useState(currentPrice || '');
     const [drawingTargets, setDrawingTargets] = useState([]);
@@ -342,6 +343,18 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
     useEffect(() => {
         loadData();
     }, [symbol]);
+
+    useEffect(() => {
+        return () => {
+            if (!Capacitor.isNativePlatform()) return;
+            try {
+                const allAlerts = normalizeAlertsForNative(getAlerts());
+                FloatingWidget.syncAlerts({ alerts: allAlerts }).catch(console.error);
+            } catch (e) {
+                console.error(e);
+            }
+        };
+    }, []);
 
     const loadData = () => {
         setMyAlerts(getAlerts(symbol));
@@ -512,9 +525,11 @@ export default function AlertConfigModal({ symbol, currentPrice, onClose }) {
     const hasDown = directions.includes('crossing_down');
     const selectedDrawingIds = normalizeDrawingTargets(drawingTargets);
 
+    const isPage = variant === 'page';
+
     return (
-        <div className="alert-overlay" onClick={onClose}>
-            <div className="alert-panel" onClick={e => e.stopPropagation()}>
+        <div className={isPage ? 'alert-page' : 'alert-overlay'} onClick={isPage ? undefined : onClose}>
+            <div className={`alert-panel ${isPage ? 'alert-panel-page' : ''}`} onClick={e => e.stopPropagation()}>
                 {/* Header */}
                 <div className="alert-header">
                     <span className="alert-symbol">🔔 {symbol}</span>
