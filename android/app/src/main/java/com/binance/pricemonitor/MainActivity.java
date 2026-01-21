@@ -6,6 +6,7 @@ import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.ProgressBar;
 import android.os.Build;
+import android.content.Intent;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
@@ -25,6 +26,9 @@ public class MainActivity extends BridgeActivity {
 
     private String pendingSymbol = null;
     private boolean pendingOpenAlert = false;
+    private boolean pendingOpenSettings = false;
+    private boolean pendingOpenEdit = false;
+    private String pendingSymbolsJson = null;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -39,6 +43,9 @@ public class MainActivity extends BridgeActivity {
         
         // Check if we should open alert modal
         pendingOpenAlert = getIntent() != null && getIntent().getBooleanExtra("openAlert", false);
+        pendingOpenSettings = getIntent() != null && getIntent().getBooleanExtra("openSettings", false);
+        pendingOpenEdit = getIntent() != null && getIntent().getBooleanExtra("openEdit", false);
+        pendingSymbolsJson = getIntent() != null ? getIntent().getStringExtra("symbolsJson") : null;
 
         registerPlugin(FloatingWidgetPlugin.class);
         registerPlugin(DiagnosticsPlugin.class);
@@ -72,6 +79,13 @@ public class MainActivity extends BridgeActivity {
         lastPausedAtUptime = 0L;
         if (pauseAt > 0) {
             bgMs = android.os.SystemClock.uptimeMillis() - pauseAt;
+        }
+        if (pauseAt > 0) {
+            Intent intent = new Intent(this, HomeActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            startActivity(intent);
+            finish();
+            return;
         }
         if (pauseAt > 0 && bgMs < MIN_BG_ARM_MS) {
             // Short background: don't flash overlay or trigger watchdog.
@@ -201,18 +215,39 @@ public class MainActivity extends BridgeActivity {
         if (forceHideOverlayRunnable != null) uiHandler.removeCallbacks(forceHideOverlayRunnable);
         
         // Navigate to pending symbol if needed
-        if (pendingSymbol != null && getBridge() != null && getBridge().getWebView() != null) {
-            if (pendingOpenAlert) {
-                // Navigate to home with symbol param for alert modal
-                // The React app will detect this and open alert modal
-                String script = "window.location.replace('#/?alertSymbol=" + pendingSymbol + "');";
-                getBridge().getWebView().evaluateJavascript(script, null);
-            } else {
-                String script = "window.location.replace('#/chart/" + pendingSymbol + "');";
-                getBridge().getWebView().evaluateJavascript(script, null);
+        if (getBridge() != null && getBridge().getWebView() != null) {
+            if (pendingSymbolsJson != null && !pendingSymbolsJson.isEmpty()) {
+                String syncScript = "try{localStorage.setItem('binance_symbols', JSON.stringify(" + pendingSymbolsJson + "));}catch(e){}";
+                getBridge().getWebView().evaluateJavascript(syncScript, null);
+                pendingSymbolsJson = null;
             }
-            pendingSymbol = null;
-            pendingOpenAlert = false;
+
+            if (pendingSymbol != null) {
+                if (pendingOpenAlert) {
+                    // Navigate to home with symbol param for alert modal
+                    // The React app will detect this and open alert modal
+                    String script = "window.location.replace('#/?alertSymbol=" + pendingSymbol + "');";
+                    getBridge().getWebView().evaluateJavascript(script, null);
+                } else {
+                    String script = "window.location.replace('#/chart/" + pendingSymbol + "');";
+                    getBridge().getWebView().evaluateJavascript(script, null);
+                }
+                pendingSymbol = null;
+                pendingOpenAlert = false;
+                pendingOpenSettings = false;
+                pendingOpenEdit = false;
+                return;
+            }
+
+            if (pendingOpenSettings) {
+                String script = "window.location.replace('#/?openSettings=1');";
+                getBridge().getWebView().evaluateJavascript(script, null);
+                pendingOpenSettings = false;
+            } else if (pendingOpenEdit) {
+                String script = "window.location.replace('#/?editMode=1');";
+                getBridge().getWebView().evaluateJavascript(script, null);
+                pendingOpenEdit = false;
+            }
         }
     }
 
