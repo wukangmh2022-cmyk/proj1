@@ -1652,13 +1652,6 @@ export default function ChartPage() {
     // Better: Define them at top level but they need allDataRef.
     // Or keep logicToScreen simple and do conversion in updateScreenDrawings.
 
-    // Back
-    useEffect(() => {
-        if (!Capacitor.isNativePlatform()) return;
-        const l = CapacitorApp.addListener('backButton', () => navigate('/'));
-        return () => { l.then(r => r.remove()); };
-    }, [navigate]);
-
     // Persist
     useEffect(() => {
         if (drawings.length) localStorage.setItem(`chart_drawings_${symbol}`, JSON.stringify(drawings));
@@ -2088,7 +2081,19 @@ export default function ChartPage() {
         <div className="chart-page" style={{ minHeight: '100vh' }}>
             <div className="chart-header" style={{ display: 'flex', flexDirection: 'column', width: '100%', gap: '0', padding: '0', background: '#161a25' }}>
                 <div style={{ position: 'relative', width: '100%', padding: '10px 0 5px 0', minHeight: '40px' }}>
-                    <button className="back-btn" onClick={() => navigate('/')} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', fontSize: '24px', background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', padding: 0, zIndex: 10 }}>←</button>
+                    <button
+                        className="back-btn"
+                        onClick={() => {
+                            if (Capacitor.isNativePlatform()) {
+                                CapacitorApp.exitApp();
+                            } else {
+                                navigate('/');
+                            }
+                        }}
+                        style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', fontSize: '24px', background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', padding: 0, zIndex: 10 }}
+                    >
+                        ←
+                    </button>
                     <h2 onClick={() => setShowSymbolMenu(true)} style={{ margin: 0, fontSize: '16px', color: '#fff', fontWeight: 'bold', textAlign: 'center', width: '100%', cursor: 'pointer', userSelect: 'none' }}>{symbol}</h2>
                 </div>
                 <div className="interval-selector"

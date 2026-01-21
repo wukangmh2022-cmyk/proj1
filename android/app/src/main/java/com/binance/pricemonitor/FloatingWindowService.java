@@ -18,17 +18,27 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.provider.Settings;
 import androidx.core.app.NotificationCompat;
 
 public class FloatingWindowService extends Service {
+    private static final String PREFS_NAME = "amaze_monitor_prefs";
+    private static final String PREFS_SYMBOLS_KEY = "binance_symbols";
+    private static final long TICKER_STALE_MS = 90_000L;
+    private static final long TICKER_WATCHDOG_INTERVAL_MS = 30_000L;
+    private static final long REST_REFRESH_INTERVAL_MS = 300_000L;
+    private static final double REST_MISMATCH_THRESHOLD = 0.005;
+
     private WindowManager windowManager;
     private View floatingView;
     private LinearLayout container;
     private LinearLayout itemsContainer;
     private WindowManager.LayoutParams params;
     private final android.os.Handler mainHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final android.os.Handler tickerHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     private final android.os.Handler klineHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     private long lastUiUpdateMs = 0L;
+    private long lastTickerMessageMs = 0L;
     private static final long UI_UPDATE_THROTTLE_MS = 200L; // cap UI redraws to ~5fps to reduce jank
     private long lastKlineMessageMs = 0L;
     private int klineRetryAttempt = 0;
@@ -69,6 +79,29 @@ public class FloatingWindowService extends Service {
     private final java.util.Map<String, Double> lastTickerPriceBySymbol = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.Map<String, Double> lastLiveCloseByKlineKey = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.Map<String, Long> soundLoopTokens = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private final Runnable tickerWatchdog = new Runnable() {
+        @Override
+        public void run() {
+            if (symbolList.isEmpty()) {
+                tickerHandler.postDelayed(this, TICKER_WATCHDOG_INTERVAL_MS);
+                return;
+            }
+            long now = android.os.SystemClock.uptimeMillis();
+            if (lastTickerMessageMs > 0 && now - lastTickerMessageMs > TICKER_STALE_MS) {
+                connectWebSockets();
+            }
+            tickerHandler.postDelayed(this, TICKER_WATCHDOG_INTERVAL_MS);
+        }
+    };
+
+    private final Runnable restRefreshRunnable = new Runnable() {
+        @Override
+        public void run() {
+            requestRestRefresh();
+            tickerHandler.postDelayed(this, REST_REFRESH_INTERVAL_MS);
+        }
+    };
 
     public static final String ACTION_CONFIG = "UPDATE_CONFIG";
     public static final String ACTION_SET_SYMBOLS = "SET_SYMBOLS";
@@ -195,6 +228,7 @@ public class FloatingWindowService extends Service {
             java.util.ArrayList<String> received = intent.getStringArrayListExtra(EXTRA_SYMBOL_LIST);
             if (received != null && !received.isEmpty()) {
                 symbolList = received;
+                persistSymbols(symbolList);
                 connectWebSockets();
             }
             return START_STICKY;
@@ -203,6 +237,9 @@ public class FloatingWindowService extends Service {
         // Show floating window
         if (ACTION_SHOW_WINDOW.equals(action)) {
             if (!windowVisible && windowManager != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+                    return START_STICKY;
+                }
                 windowManager.addView(floatingView, params);
                 windowVisible = true;
                 // Reconnect data feed if it was stopped while hidden
@@ -234,6 +271,7 @@ public class FloatingWindowService extends Service {
                     ? symbolList.get(currentIndex) : null;
                 
                 symbolList = received;
+                persistSymbols(symbolList);
                 currentIndex = 0;
                 
                 if (currentSymbol != null) {
@@ -296,6 +334,8 @@ public class FloatingWindowService extends Service {
         if (futuresWebSocket != null) { futuresWebSocket.cancel(); futuresWebSocket = null; }
 
         if (symbolList.isEmpty()) return;
+        lastTickerMessageMs = android.os.SystemClock.uptimeMillis();
+        scheduleTickerHealthChecks();
 
         java.util.List<String> spot = new java.util.ArrayList<>();
         java.util.List<String> futures = new java.util.ArrayList<>();
@@ -366,6 +406,95 @@ public class FloatingWindowService extends Service {
         } catch (Exception ignored) {}
         spotWebSocket = null;
         futuresWebSocket = null;
+        tickerHandler.removeCallbacks(tickerWatchdog);
+        tickerHandler.removeCallbacks(restRefreshRunnable);
+    }
+
+    private void scheduleTickerHealthChecks() {
+        tickerHandler.removeCallbacks(tickerWatchdog);
+        tickerHandler.removeCallbacks(restRefreshRunnable);
+        tickerHandler.postDelayed(tickerWatchdog, TICKER_WATCHDOG_INTERVAL_MS);
+        tickerHandler.postDelayed(restRefreshRunnable, REST_REFRESH_INTERVAL_MS);
+    }
+
+    private void requestRestRefresh() {
+        if (symbolList.isEmpty()) return;
+        java.util.List<String> spot = new java.util.ArrayList<>();
+        java.util.List<String> futures = new java.util.ArrayList<>();
+        for (String s : symbolList) {
+            if (s == null) continue;
+            if (s.toUpperCase().endsWith(".P")) futures.add(s);
+            else spot.add(s);
+        }
+        if (!spot.isEmpty()) {
+            requestRestRefreshForSymbols(spot, false);
+        }
+        if (!futures.isEmpty()) {
+            requestRestRefreshForSymbols(futures, true);
+        }
+    }
+
+    private void requestRestRefreshForSymbols(java.util.List<String> symbols, boolean isFutures) {
+        try {
+            java.util.List<String> payloadSymbols = new java.util.ArrayList<>();
+            for (String s : symbols) {
+                payloadSymbols.add(isFutures && s.toUpperCase().endsWith(".P") ? s.substring(0, s.length() - 2) : s);
+            }
+            String symbolsJson = gson.toJson(payloadSymbols);
+            String encoded = java.net.URLEncoder.encode(symbolsJson, "UTF-8");
+            String baseUrl = isFutures
+                    ? "https://fapi.binance.com/fapi/v1/ticker/24hr?symbols="
+                    : "https://api.binance.com/api/v3/ticker/24hr?symbols=";
+            String url = baseUrl + encoded;
+
+            okhttp3.Request request = new okhttp3.Request.Builder().url(url).build();
+            client.newCall(request).enqueue(new okhttp3.Callback() {
+                @Override
+                public void onFailure(okhttp3.Call call, java.io.IOException e) {
+                    // Ignore - WS watchdog will handle reconnects.
+                }
+
+                @Override
+                public void onResponse(okhttp3.Call call, okhttp3.Response response) throws java.io.IOException {
+                    if (!response.isSuccessful() || response.body() == null) return;
+                    String body = response.body().string();
+                    com.google.gson.JsonArray arr = com.google.gson.JsonParser.parseString(body).getAsJsonArray();
+                    boolean shouldReconnect = false;
+                    for (int i = 0; i < arr.size(); i++) {
+                        com.google.gson.JsonObject obj = arr.get(i).getAsJsonObject();
+                        String symbol = obj.get("symbol").getAsString();
+                        String key = isFutures ? symbol + ".P" : symbol;
+                        if (!symbolList.contains(key)) continue;
+                        double lastPrice = obj.get("lastPrice").getAsDouble();
+                        double changePercent = obj.get("priceChangePercent").getAsDouble();
+                        Double wsPrice = lastTickerPriceBySymbol.get(key);
+                        if (wsPrice != null && wsPrice > 0) {
+                            double diff = Math.abs(lastPrice - wsPrice) / wsPrice;
+                            if (diff >= REST_MISMATCH_THRESHOLD) {
+                                shouldReconnect = true;
+                            }
+                        }
+
+                        priceDataMap.put(key, new String[]{
+                                formatPrice(lastPrice),
+                                String.format(java.util.Locale.US, "%.2f", changePercent)
+                        });
+                        rawPriceDataMap.put(key, new double[]{lastPrice, changePercent});
+                        notifyTickerUpdate(key, lastPrice, changePercent);
+                    }
+                    if (shouldReconnect) {
+                        connectWebSockets();
+                    }
+                }
+            });
+        } catch (Exception ignored) {}
+    }
+
+    private void persistSymbols(java.util.List<String> symbols) {
+        try {
+            android.content.SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+            prefs.edit().putString(PREFS_SYMBOLS_KEY, gson.toJson(symbols)).apply();
+        } catch (Exception ignored) {}
     }
     
     // Static listener for ticker updates (used by Plugin)
@@ -383,6 +512,7 @@ public class FloatingWindowService extends Service {
         try {
             com.google.gson.JsonObject json = com.google.gson.JsonParser.parseString(text).getAsJsonObject();
             if (json.has("data")) {
+                lastTickerMessageMs = android.os.SystemClock.uptimeMillis();
                 com.google.gson.JsonObject data = json.getAsJsonObject("data");
                 String symbolRaw = data.get("s").getAsString();
                 String symbol = isFutures ? symbolRaw + ".P" : symbolRaw;

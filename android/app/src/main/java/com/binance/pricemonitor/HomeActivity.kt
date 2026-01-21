@@ -2,6 +2,8 @@ package com.binance.pricemonitor
 
 import android.content.Intent
 import android.os.Bundle
+import android.provider.Settings
+import android.net.Uri
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.animateColorAsState
@@ -14,6 +16,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -27,6 +33,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import java.text.DecimalFormat
 import java.util.concurrent.ConcurrentHashMap
 
@@ -42,17 +50,27 @@ private val AccentGold = Color(0xFFFCD535)
 private val AccentOrange = Color(0xFFFF9F43)
 private val BorderColor = Color(0xFF2D333B)
 
+private const val PREFS_NAME = "amaze_monitor_prefs"
+private const val PREFS_SYMBOLS_KEY = "binance_symbols"
+private const val PREFS_FONT_SIZE = "floating_font_size"
+private const val PREFS_OPACITY = "floating_opacity"
+private const val PREFS_SHOW_SYMBOL = "floating_show_symbol"
+private const val PREFS_ITEMS_PER_PAGE = "floating_items_per_page"
+
 class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateListener {
 
-    private val symbolsState = mutableStateListOf("BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "DOGEUSDT")
+    private val symbolsState = mutableStateListOf<String>()
     private val priceMap = ConcurrentHashMap<String, Double>()
     private val changeMap = ConcurrentHashMap<String, Double>()
     private var updateTrigger = mutableStateOf(0)
     private var floatingActive = mutableStateOf(false)
+    private val gson = Gson()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setTheme(R.style.AppTheme_NoActionBar)
+
+        symbolsState.addAll(loadSymbols())
 
         // Start service with symbols
         val intent = Intent(this, FloatingWindowService::class.java).apply {
@@ -60,6 +78,7 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
             putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST, ArrayList(symbolsState))
         }
         startService(intent)
+        applyFloatingConfig()
 
         setContent {
             HomeScreen()
@@ -68,7 +87,9 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
 
     override fun onResume() {
         super.onResume()
+        refreshSymbolsFromPrefs()
         FloatingWindowService.setTickerListener(this)
+        applyFloatingConfig()
         val intent = Intent(this, FloatingWindowService::class.java).apply {
             action = FloatingWindowService.ACTION_REQUEST_UPDATE
         }
@@ -76,16 +97,19 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
     }
 
     override fun onTickerUpdate(symbol: String, price: Double, changePercent: Double) {
-        priceMap[symbol] = price
-        changeMap[symbol] = changePercent
-        // Trigger recomposition
-        updateTrigger.value++
+        runOnUiThread {
+            priceMap[symbol] = price
+            changeMap[symbol] = changePercent
+            // Trigger recomposition
+            updateTrigger.value++
+        }
     }
 
     private fun addSymbol(text: String) {
         val sym = if (text.contains("USDT")) text.uppercase() else "${text.uppercase()}USDT"
         if (!symbolsState.contains(sym)) {
             symbolsState.add(sym)
+            persistSymbols()
             // Update service
             val intent = Intent(this, FloatingWindowService::class.java).apply {
                 action = FloatingWindowService.ACTION_SET_SYMBOLS
@@ -96,23 +120,30 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
     }
 
     private fun toggleFloating() {
-        floatingActive.value = !floatingActive.value
+        val turningOn = !floatingActive.value
+        if (turningOn && !ensureOverlayPermission()) {
+            return
+        }
+        floatingActive.value = turningOn
+        if (turningOn) {
+            applyFloatingConfig()
+        }
         val intent = Intent(this, FloatingWindowService::class.java).apply {
-            action = if (floatingActive.value) FloatingWindowService.ACTION_SHOW_WINDOW 
+            action = if (floatingActive.value) FloatingWindowService.ACTION_SHOW_WINDOW
                      else FloatingWindowService.ACTION_HIDE_WINDOW
         }
         startService(intent)
     }
 
     private fun openChart(symbol: String) {
-        val intent = Intent(this, MainActivity::class.java).apply {
+        val intent = buildMainIntent().apply {
             putExtra("symbol", symbol)
         }
         startActivity(intent)
     }
 
     private fun openAlert(symbol: String) {
-        val intent = Intent(this, MainActivity::class.java).apply {
+        val intent = buildMainIntent().apply {
             putExtra("symbol", symbol)
             putExtra("openAlert", true)
         }
@@ -120,7 +151,87 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
     }
 
     private fun openSettings() {
-        startActivity(Intent(this, MainActivity::class.java))
+        val intent = buildMainIntent().apply {
+            putExtra("openSettings", true)
+        }
+        startActivity(intent)
+    }
+
+    private fun openEdit() {
+        val intent = buildMainIntent().apply {
+            putExtra("openEdit", true)
+        }
+        startActivity(intent)
+    }
+
+    private fun buildMainIntent(): Intent {
+        return Intent(this, MainActivity::class.java).apply {
+            putExtra("symbolsJson", gson.toJson(symbolsState))
+        }
+    }
+
+    private fun loadSymbols(): List<String> {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val stored = prefs.getString(PREFS_SYMBOLS_KEY, null)
+        if (!stored.isNullOrBlank()) {
+            try {
+                val type = object : TypeToken<List<String>>() {}.type
+                val parsed: List<String>? = gson.fromJson(stored, type)
+                if (!parsed.isNullOrEmpty()) {
+                    return parsed
+                }
+            } catch (_: Exception) {}
+        }
+        return listOf("BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ZECUSDT")
+    }
+
+    private fun persistSymbols() {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        prefs.edit().putString(PREFS_SYMBOLS_KEY, gson.toJson(symbolsState)).apply()
+    }
+
+    private fun ensureOverlayPermission(): Boolean {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.M) {
+            return true
+        }
+        if (Settings.canDrawOverlays(this)) {
+            return true
+        }
+        val intent = Intent(
+            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+            Uri.parse("package:$packageName")
+        )
+        startActivity(intent)
+        return false
+    }
+
+    private fun refreshSymbolsFromPrefs() {
+        val latest = loadSymbols()
+        if (symbolsState.toList() != latest) {
+            symbolsState.clear()
+            symbolsState.addAll(latest)
+            val intent = Intent(this, FloatingWindowService::class.java).apply {
+                action = FloatingWindowService.ACTION_SET_SYMBOLS
+                putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST, ArrayList(symbolsState))
+            }
+            startService(intent)
+        }
+    }
+
+    private fun applyFloatingConfig() {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val fontSize = prefs.getFloat(PREFS_FONT_SIZE, 10f)
+        val opacity = prefs.getFloat(PREFS_OPACITY, 0.5f)
+        val showSymbol = prefs.getBoolean(PREFS_SHOW_SYMBOL, false)
+        val itemsPerPage = prefs.getInt(PREFS_ITEMS_PER_PAGE, 1)
+        val intent = Intent(this, FloatingWindowService::class.java).apply {
+            action = FloatingWindowService.ACTION_CONFIG
+            putExtra(FloatingWindowService.EXTRA_FONT_SIZE, fontSize)
+            putExtra(FloatingWindowService.EXTRA_OPACITY, opacity)
+            putExtra(FloatingWindowService.EXTRA_SHOW_SYMBOL, showSymbol)
+            putExtra(FloatingWindowService.EXTRA_ITEMS_PER_PAGE, itemsPerPage)
+        }
+        startService(intent)
     }
 
     @Composable
@@ -136,7 +247,10 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 // Header
-                GlassHeader(onSettingsClick = { openSettings() })
+                GlassHeader(
+                    onEditClick = { openEdit() },
+                    onSettingsClick = { openSettings() }
+                )
 
                 // Add Symbol Input
                 AddSymbolRow(
@@ -182,7 +296,7 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
     }
 
     @Composable
-    fun GlassHeader(onSettingsClick: () -> Unit) {
+    fun GlassHeader(onEditClick: () -> Unit, onSettingsClick: () -> Unit) {
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
@@ -203,6 +317,19 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
                     color = AccentGold,
                     modifier = Modifier.weight(1f)
                 )
+                IconButton(
+                    onClick = onEditClick,
+                    modifier = Modifier
+                        .size(38.dp)
+                        .background(BgSecondary, RoundedCornerShape(10.dp))
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Edit,
+                        contentDescription = "排序",
+                        tint = TextPrimary
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
                 // Settings button
                 IconButton(
                     onClick = onSettingsClick,
@@ -210,7 +337,11 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
                         .size(38.dp)
                         .background(BgSecondary, RoundedCornerShape(10.dp))
                 ) {
-                    Text("⚙", fontSize = 18.sp, color = TextPrimary)
+                    Icon(
+                        imageVector = Icons.Filled.Settings,
+                        contentDescription = "设置",
+                        tint = TextPrimary
+                    )
                 }
             }
         }
@@ -333,7 +464,11 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
                         .padding(4.dp)
                         .size(36.dp)
                 ) {
-                    Text("🔔", fontSize = 16.sp)
+                    Icon(
+                        imageVector = Icons.Filled.Notifications,
+                        contentDescription = "预警",
+                        tint = TextSecondary
+                    )
                 }
             }
         }
@@ -363,11 +498,11 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
                         colors = ButtonDefaults.buttonColors(containerColor = AccentRed),
                         shape = RoundedCornerShape(10.dp)
                     ) {
-                        Text("✕ 关闭悬浮窗", color = Color.White, fontWeight = FontWeight.Bold)
+                        Text("关闭悬浮窗", color = Color.White, fontWeight = FontWeight.Bold)
                     }
                 } else {
                     GradientButton(
-                        text = "🔲 开启悬浮窗",
+                        text = "开启悬浮窗",
                         onClick = onToggle,
                         modifier = Modifier.weight(1f).height(44.dp)
                     )
@@ -379,7 +514,7 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary),
                     border = androidx.compose.foundation.BorderStroke(1.dp, BorderColor)
                 ) {
-                    Text("⚙ 设置")
+                    Text("设置")
                 }
             }
         }
