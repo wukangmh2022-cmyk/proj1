@@ -672,6 +672,61 @@ function AlertPage() {
   );
 }
 
+function SettingsPage() {
+  const navigate = useNavigate();
+  const [config, setConfig] = useState(getFloatingConfig());
+
+  const updateConfig = async (key, value) => {
+    const newConfig = { ...config, [key]: value };
+    setConfig(newConfig);
+    saveFloatingConfig(newConfig);
+    if (Capacitor.isNativePlatform()) {
+      try {
+        await FloatingWidget.updateConfig({
+          fontSize: newConfig.fontSize,
+          opacity: newConfig.opacity,
+          showSymbol: newConfig.showSymbol,
+          itemsPerPage: newConfig.itemsPerPage
+        });
+      } catch (e) {
+        console.error('Failed to update config', e);
+      }
+    }
+  };
+
+  return (
+    <div className="app-container" style={{ padding: 16 }}>
+      <div className="header">
+        <h1>悬浮窗设置</h1>
+        <div className="header-actions">
+          <button className="btn btn-secondary" onClick={() => navigate('/')}>返回</button>
+        </div>
+      </div>
+      <SettingsPanel
+        config={config}
+        onUpdate={updateConfig}
+        onDone={() => navigate('/')}
+        showDiagnostics={DIAG_ENABLED && Capacitor.isNativePlatform() ? () => navigate('/diag') : null}
+      />
+    </div>
+  );
+}
+
+function EditPage() {
+  const navigate = useNavigate();
+  return (
+    <div className="app-container">
+      <div className="header">
+        <h1>排序</h1>
+        <div className="header-actions">
+          <button className="btn btn-primary" onClick={() => navigate('/')}>完成</button>
+        </div>
+      </div>
+      <HomePage initialEditMode hideHeader allowSettingsModal={false} />
+    </div>
+  );
+}
+
 const ChartPageWrapper = () => {
   const { symbol } = useParams();
   return <ChartPage key={symbol} />;
