@@ -224,9 +224,7 @@ public class MainActivity extends BridgeActivity {
 
             if (pendingSymbol != null) {
                 if (pendingOpenAlert) {
-                    // Navigate to home with symbol param for alert modal
-                    // The React app will detect this and open alert modal
-                    String script = "window.location.replace('#/?alertSymbol=" + pendingSymbol + "');";
+                    String script = "window.location.replace('#/alert/" + pendingSymbol + "');";
                     getBridge().getWebView().evaluateJavascript(script, null);
                 } else {
                     String script = "window.location.replace('#/chart/" + pendingSymbol + "');";

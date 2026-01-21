@@ -14,6 +14,15 @@
     animation: fadeIn 0.2s ease;
 }
 
+.alert-page {
+    min-height: 100vh;
+    width: 100%;
+    background: #0d1117;
+    display: flex;
+    align-items: stretch;
+    justify-content: center;
+}
+
 /* Panel */
 .alert-panel {
     width: 100%;
@@ -25,6 +34,14 @@
     flex-direction: column;
     overflow: hidden;
     animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.alert-panel-page {
+    max-width: none;
+    max-height: none;
+    height: 100vh;
+    border-radius: 0;
+    animation: none;
 }
 
 @keyframes slideUp {

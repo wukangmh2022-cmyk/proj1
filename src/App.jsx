@@ -7,7 +7,7 @@ import FloatingWidget from './plugins/FloatingWidget';
 import { Capacitor } from '@capacitor/core';
 import { getSymbols, addSymbol, removeSymbol, saveSymbols, getFloatingConfig, saveFloatingConfig } from './utils/storage';
 import { getAlerts } from './utils/alert_storage';
-import { serializeDrawingAlert } from './utils/drawing_alert_utils';
+import { normalizeAlertsForNative } from './utils/alertNormalize';
 import ChartPage from './components/ChartPage';
 import AlertConfigModal from './components/AlertConfigModal';
 import './App.css';
@@ -72,7 +72,6 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
   const navigate = useNavigate();
   const [symbols, setSymbols] = useState(getSymbols());
   const [showSettings, setShowSettings] = useState(false);
-  const [alertModalSymbol, setAlertModalSymbol] = useState(null);
   const [newSymbol, setNewSymbol] = useState('');
   const [searchSuggestions, setSearchSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -95,18 +94,23 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
 
     if (alertSymbol) {
       const sym = decodeURIComponent(alertSymbol);
-      if (sym) setAlertModalSymbol(sym);
+      if (sym) navigate(`/alert/${sym}`, { replace: true });
     }
     if (openSettings === '1') {
-      setShowSettings(true);
+      if (Capacitor.isNativePlatform()) {
+        navigate('/settings', { replace: true });
+      } else {
+        setShowSettings(true);
+      }
     }
     if (editMode === '1') {
-      setIsEditMode(true);
+      if (Capacitor.isNativePlatform()) {
+        navigate('/edit', { replace: true });
+      } else {
+        setIsEditMode(true);
+      }
     }
-    if (alertSymbol || openSettings === '1' || editMode === '1') {
-      window.location.hash = '/';
-    }
-  }, []);
+  }, [navigate]);
 
   // Back Button Handling
   useEffect(() => {
@@ -114,10 +118,8 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
 
     const handleBackButton = async () => {
       // 1. Close Modals if open
-      if (showSettings || alertModalSymbol) {
-        // No add modal anymore
+      if (showSettings) {
         setShowSettings(false);
-        setAlertModalSymbol(null);
         return;
       }
 
@@ -144,7 +146,7 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
     return () => {
       listener.then(remove => remove.remove());
     };
-  }, [showSettings, alertModalSymbol, isEditMode]);
+  }, [showSettings, isEditMode]);
 
   useEffect(() => {
     perfLog('[perf] HomePage mount at', Date.now());
@@ -176,17 +178,6 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
 
 
   // Sync alerts to native whenever alert modal closes (might have changed)
-  useEffect(() => {
-    if (!alertModalSymbol && Capacitor.isNativePlatform()) {
-      // Import alerts and sync to native
-      // Import alerts and sync to native
-      import('./utils/alert_storage').then(({ getAlerts }) => {
-        const allAlerts = normalizeAlertsForNative(getAlerts());
-        FloatingWidget.syncAlerts({ alerts: allAlerts }).catch(console.error);
-      });
-    }
-  }, [alertModalSymbol]);
-
   useEffect(() => {
     floatingActiveRef.current = floatingActive;
   }, [floatingActive]);
@@ -324,8 +315,30 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
               <button className="btn btn-primary" onClick={() => setIsEditMode(false)}>完成</button>
             ) : (
               <>
-                <button className="btn btn-secondary" onClick={() => setIsEditMode(true)}>编辑</button>
-                <button className="btn btn-secondary btn-icon" onClick={() => setShowSettings(true)}>⚙</button>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    if (Capacitor.isNativePlatform()) {
+                      navigate('/edit');
+                    } else {
+                      setIsEditMode(true);
+                    }
+                  }}
+                >
+                  编辑
+                </button>
+                <button
+                  className="btn btn-secondary btn-icon"
+                  onClick={() => {
+                    if (Capacitor.isNativePlatform()) {
+                      navigate('/settings');
+                    } else {
+                      setShowSettings(true);
+                    }
+                  }}
+                >
+                  ⚙
+                </button>
               </>
             )}
           </div>
@@ -428,8 +441,11 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
               {symbols.map((symbol, index) => {
                 const data = tickers[symbol];
                 const price = data ? formatQuotePrice(data.price) : '--';
-                const change = data ? data.changePercent.toFixed(2) : '0.00';
-                const isPositive = data ? data.changePercent >= 0 : true;
+                const changeValue = typeof data?.changePercent === 'number'
+                  ? data.changePercent
+                  : Number(data?.changePercent);
+                const change = Number.isFinite(changeValue) ? changeValue.toFixed(2) : '--';
+                const isPositive = Number.isFinite(changeValue) ? changeValue >= 0 : true;
 
                 return (
                   <Draggable key={symbol} draggableId={symbol} index={index} isDragDisabled={!isEditMode}>
@@ -463,7 +479,7 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
                               className="btn-bell"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setAlertModalSymbol(symbol);
+                                navigate(`/alert/${symbol}`);
                               }}
                             >🔔</button>
                           )}
@@ -508,7 +524,16 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
               ✕ 关闭悬浮窗
             </button>
           )}
-          <button className="btn btn-secondary" onClick={() => setShowSettings(true)}>
+          <button
+            className="btn btn-secondary"
+            onClick={() => {
+              if (Capacitor.isNativePlatform()) {
+                navigate('/settings');
+              } else {
+                setShowSettings(true);
+              }
+            }}
+          >
             ⚙ 设置
           </button>
         </div>
@@ -527,13 +552,122 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
         </div>
       )}
 
-      {alertModalSymbol && (
-        <AlertConfigModal
-          symbol={alertModalSymbol}
-          currentPrice={tickers[alertModalSymbol]?.price || ''}
-          onClose={() => setAlertModalSymbol(null)}
-        />
-      )}
+    </div>
+  );
+}
+
+function SettingsPage() {
+  const navigate = useNavigate();
+  const [config, setConfig] = useState(getFloatingConfig());
+  const exitToNativeHome = useCallback(() => {
+    if (Capacitor.isNativePlatform()) {
+      CapacitorApp.exitApp();
+    } else {
+      navigate('/');
+    }
+  }, [navigate]);
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    const listener = CapacitorApp.addListener('backButton', exitToNativeHome);
+    return () => { listener.then(r => r.remove()); };
+  }, [exitToNativeHome]);
+
+  const updateConfig = async (key, value) => {
+    const newConfig = { ...config, [key]: value };
+    setConfig(newConfig);
+    saveFloatingConfig(newConfig);
+    if (Capacitor.isNativePlatform()) {
+      try {
+        await FloatingWidget.updateConfig({
+          fontSize: newConfig.fontSize,
+          opacity: newConfig.opacity,
+          showSymbol: newConfig.showSymbol,
+          itemsPerPage: newConfig.itemsPerPage
+        });
+      } catch (e) {
+        console.error('Failed to update config', e);
+      }
+    }
+  };
+
+  return (
+    <div className="app-container" style={{ padding: 16 }}>
+      <div className="header">
+        <h1>悬浮窗设置</h1>
+        <div className="header-actions">
+          <button className="btn btn-secondary" onClick={exitToNativeHome}>返回</button>
+        </div>
+      </div>
+      <SettingsPanel
+        config={config}
+        onUpdate={updateConfig}
+        onDone={exitToNativeHome}
+        showDiagnostics={DIAG_ENABLED && Capacitor.isNativePlatform() ? () => navigate('/diag') : null}
+      />
+    </div>
+  );
+}
+
+function EditPage() {
+  const navigate = useNavigate();
+  const exitToNativeHome = useCallback(() => {
+    if (Capacitor.isNativePlatform()) {
+      CapacitorApp.exitApp();
+    } else {
+      navigate('/');
+    }
+  }, [navigate]);
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    const listener = CapacitorApp.addListener('backButton', exitToNativeHome);
+    return () => { listener.then(r => r.remove()); };
+  }, [exitToNativeHome]);
+
+  return (
+    <div className="app-container">
+      <div className="header">
+        <h1>排序</h1>
+        <div className="header-actions">
+          <button className="btn btn-primary" onClick={exitToNativeHome}>完成</button>
+        </div>
+      </div>
+      <HomePage initialEditMode hideHeader allowSettingsModal={false} />
+    </div>
+  );
+}
+
+function AlertPage() {
+  const { symbol } = useParams();
+  const navigate = useNavigate();
+  const tickers = useBinanceTickers(symbol ? [symbol] : []);
+  const exitToNativeHome = useCallback(() => {
+    if (Capacitor.isNativePlatform()) {
+      CapacitorApp.exitApp();
+    } else {
+      navigate('/');
+    }
+  }, [navigate]);
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    const listener = CapacitorApp.addListener('backButton', exitToNativeHome);
+    return () => { listener.then(r => r.remove()); };
+  }, [exitToNativeHome]);
+
+  if (!symbol) {
+    return null;
+  }
+
+  return (
+    <div className="app-container">
+      <AlertConfigModal
+        symbol={symbol}
+        currentPrice={tickers[symbol]?.price || ''}
+        onClose={exitToNativeHome}
+        variant="page"
+      />
     </div>
   );
 }
@@ -714,50 +848,6 @@ function App() {
 
   const [symbols] = useState(getSymbols());
 
-  const normalizeAlertsForNative = (alerts) => {
-    return alerts.map(a => {
-      const normalizedCondition = Array.isArray(a.condition)
-        ? a.condition[0]
-        : (Array.isArray(a.conditions) ? a.conditions[0] : a.condition);
-      const normalizedConditions = Array.isArray(a.conditions)
-        ? a.conditions
-        : (Array.isArray(a.condition) ? a.condition : (a.condition ? [a.condition] : null));
-      const normalizedTargetValue = Array.isArray(a.targetValue) ? a.targetValue[0] : a.targetValue;
-      const normalizedTargetValues = Array.isArray(a.targetValues)
-        ? a.targetValues
-        : (Array.isArray(a.targetValue) ? a.targetValue : null);
-      const baseAlert = {
-        ...a,
-        condition: normalizedCondition,
-        conditions: normalizedConditions,
-        targetValue: normalizedTargetValue,
-        targetValues: normalizedTargetValues
-      };
-
-      if (baseAlert.targetType === 'drawing' && baseAlert.target === 0) {
-        try {
-          const drawingsStr = localStorage.getItem(`chart_drawings_${baseAlert.symbol}`);
-          if (drawingsStr) {
-            const drawings = JSON.parse(drawingsStr);
-            const d = drawings.find(x => x.id === baseAlert.targetValue);
-            if (d) {
-              const serialized = serializeDrawingAlert(d);
-              if (serialized) {
-                // Merge Algo and Params into the Alert object for Native Service
-                return {
-                  ...baseAlert,
-                  algo: serialized.algo,
-                  params: serialized.params
-                };
-              }
-            }
-          }
-        } catch (e) { console.error('Enrich Drawing Alert Error', e); }
-      }
-      return baseAlert;
-    });
-  };
-
   useEffect(() => {
     perfLog('[perf] App useEffect startData/syncAlerts at', Date.now(), 'isNative=', Capacitor.isNativePlatform());
     if (Capacitor.isNativePlatform()) {
@@ -789,6 +879,7 @@ function App() {
         <Route path="/" element={<HomePage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/edit" element={<EditPage />} />
+        <Route path="/alert/:symbol" element={<AlertPage />} />
         <Route path="/chart/:symbol" element={<ChartPageWrapper />} />
         {DIAG_ENABLED && <Route path="/diag" element={<DiagnosticsPage />} />}
       </Routes>
