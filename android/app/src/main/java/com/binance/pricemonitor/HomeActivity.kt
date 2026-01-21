@@ -2,6 +2,8 @@ package com.binance.pricemonitor
 
 import android.content.Intent
 import android.os.Bundle
+import android.provider.Settings
+import android.net.Uri
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.animateColorAsState
@@ -14,6 +16,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -46,6 +52,10 @@ private val BorderColor = Color(0xFF2D333B)
 
 private const val PREFS_NAME = "amaze_monitor_prefs"
 private const val PREFS_SYMBOLS_KEY = "binance_symbols"
+private const val PREFS_FONT_SIZE = "floating_font_size"
+private const val PREFS_OPACITY = "floating_opacity"
+private const val PREFS_SHOW_SYMBOL = "floating_show_symbol"
+private const val PREFS_ITEMS_PER_PAGE = "floating_items_per_page"
 
 class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateListener {
 
@@ -68,6 +78,7 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
             putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST, ArrayList(symbolsState))
         }
         startService(intent)
+        applyFloatingConfig()
 
         setContent {
             HomeScreen()
@@ -78,6 +89,7 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
         super.onResume()
         refreshSymbolsFromPrefs()
         FloatingWindowService.setTickerListener(this)
+        applyFloatingConfig()
         val intent = Intent(this, FloatingWindowService::class.java).apply {
             action = FloatingWindowService.ACTION_REQUEST_UPDATE
         }
@@ -85,10 +97,12 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
     }
 
     override fun onTickerUpdate(symbol: String, price: Double, changePercent: Double) {
-        priceMap[symbol] = price
-        changeMap[symbol] = changePercent
-        // Trigger recomposition
-        updateTrigger.value++
+        runOnUiThread {
+            priceMap[symbol] = price
+            changeMap[symbol] = changePercent
+            // Trigger recomposition
+            updateTrigger.value++
+        }
     }
 
     private fun addSymbol(text: String) {
@@ -106,9 +120,16 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
     }
 
     private fun toggleFloating() {
-        floatingActive.value = !floatingActive.value
+        val turningOn = !floatingActive.value
+        if (turningOn && !ensureOverlayPermission()) {
+            return
+        }
+        floatingActive.value = turningOn
+        if (turningOn) {
+            applyFloatingConfig()
+        }
         val intent = Intent(this, FloatingWindowService::class.java).apply {
-            action = if (floatingActive.value) FloatingWindowService.ACTION_SHOW_WINDOW 
+            action = if (floatingActive.value) FloatingWindowService.ACTION_SHOW_WINDOW
                      else FloatingWindowService.ACTION_HIDE_WINDOW
         }
         startService(intent)
@@ -169,6 +190,21 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
         prefs.edit().putString(PREFS_SYMBOLS_KEY, gson.toJson(symbolsState)).apply()
     }
 
+    private fun ensureOverlayPermission(): Boolean {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.M) {
+            return true
+        }
+        if (Settings.canDrawOverlays(this)) {
+            return true
+        }
+        val intent = Intent(
+            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+            Uri.parse("package:$packageName")
+        )
+        startActivity(intent)
+        return false
+    }
+
     private fun refreshSymbolsFromPrefs() {
         val latest = loadSymbols()
         if (symbolsState.toList() != latest) {
@@ -180,6 +216,22 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
             }
             startService(intent)
         }
+    }
+
+    private fun applyFloatingConfig() {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val fontSize = prefs.getFloat(PREFS_FONT_SIZE, 10f)
+        val opacity = prefs.getFloat(PREFS_OPACITY, 0.5f)
+        val showSymbol = prefs.getBoolean(PREFS_SHOW_SYMBOL, false)
+        val itemsPerPage = prefs.getInt(PREFS_ITEMS_PER_PAGE, 1)
+        val intent = Intent(this, FloatingWindowService::class.java).apply {
+            action = FloatingWindowService.ACTION_CONFIG
+            putExtra(FloatingWindowService.EXTRA_FONT_SIZE, fontSize)
+            putExtra(FloatingWindowService.EXTRA_OPACITY, opacity)
+            putExtra(FloatingWindowService.EXTRA_SHOW_SYMBOL, showSymbol)
+            putExtra(FloatingWindowService.EXTRA_ITEMS_PER_PAGE, itemsPerPage)
+        }
+        startService(intent)
     }
 
     @Composable
@@ -271,7 +323,11 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
                         .size(38.dp)
                         .background(BgSecondary, RoundedCornerShape(10.dp))
                 ) {
-                    Text("↕", fontSize = 18.sp, color = TextPrimary)
+                    Icon(
+                        imageVector = Icons.Filled.Edit,
+                        contentDescription = "排序",
+                        tint = TextPrimary
+                    )
                 }
                 Spacer(Modifier.width(8.dp))
                 // Settings button
@@ -281,7 +337,11 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
                         .size(38.dp)
                         .background(BgSecondary, RoundedCornerShape(10.dp))
                 ) {
-                    Text("⚙", fontSize = 18.sp, color = TextPrimary)
+                    Icon(
+                        imageVector = Icons.Filled.Settings,
+                        contentDescription = "设置",
+                        tint = TextPrimary
+                    )
                 }
             }
         }
@@ -404,7 +464,11 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
                         .padding(4.dp)
                         .size(36.dp)
                 ) {
-                    Text("🔔", fontSize = 16.sp)
+                    Icon(
+                        imageVector = Icons.Filled.Notifications,
+                        contentDescription = "预警",
+                        tint = TextSecondary
+                    )
                 }
             }
         }
@@ -434,11 +498,11 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
                         colors = ButtonDefaults.buttonColors(containerColor = AccentRed),
                         shape = RoundedCornerShape(10.dp)
                     ) {
-                        Text("✕ 关闭悬浮窗", color = Color.White, fontWeight = FontWeight.Bold)
+                        Text("关闭悬浮窗", color = Color.White, fontWeight = FontWeight.Bold)
                     }
                 } else {
                     GradientButton(
-                        text = "🔲 开启悬浮窗",
+                        text = "开启悬浮窗",
                         onClick = onToggle,
                         modifier = Modifier.weight(1f).height(44.dp)
                     )
@@ -450,7 +514,7 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary),
                     border = androidx.compose.foundation.BorderStroke(1.dp, BorderColor)
                 ) {
-                    Text("⚙ 设置")
+                    Text("设置")
                 }
             }
         }

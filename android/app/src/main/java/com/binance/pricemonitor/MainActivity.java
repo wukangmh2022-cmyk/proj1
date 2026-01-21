@@ -240,11 +240,11 @@ public class MainActivity extends BridgeActivity {
             }
 
             if (pendingOpenSettings) {
-                String script = "window.location.replace('#/?openSettings=1');";
+                String script = "window.location.replace('#/settings');";
                 getBridge().getWebView().evaluateJavascript(script, null);
                 pendingOpenSettings = false;
             } else if (pendingOpenEdit) {
-                String script = "window.location.replace('#/?editMode=1');";
+                String script = "window.location.replace('#/edit');";
                 getBridge().getWebView().evaluateJavascript(script, null);
                 pendingOpenEdit = false;
             }

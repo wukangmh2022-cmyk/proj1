@@ -35,7 +35,40 @@ const formatQuotePrice = (price) => {
   return n.toLocaleString(undefined, { minimumFractionDigits: precision, maximumFractionDigits: precision });
 };
 
-function HomePage() {
+const SettingsPanel = ({ config, onUpdate, onDone, showDiagnostics }) => {
+  return (
+    <div className="modal" onClick={e => e.stopPropagation()}>
+      <h2>悬浮窗设置</h2>
+      <div className="settings-group">
+        <label>显示币种名称
+          <input type="checkbox" checked={config.showSymbol} onChange={e => onUpdate('showSymbol', e.target.checked)} />
+        </label>
+      </div>
+      <div className="settings-group">
+        <label>字体大小: {config.fontSize}px</label>
+        <input type="range" min="10" max="24" value={config.fontSize} onChange={e => onUpdate('fontSize', parseInt(e.target.value))} />
+      </div>
+      <div className="settings-group">
+        <label>背景透明度: {Math.round(config.opacity * 100)}%</label>
+        <input type="range" min="20" max="100" value={config.opacity * 100} onChange={e => onUpdate('opacity', parseInt(e.target.value) / 100)} />
+      </div>
+      <div className="settings-group">
+        <label>每页显示数量: {config.itemsPerPage}</label>
+        <input type="range" min="1" max="5" value={config.itemsPerPage} onChange={e => onUpdate('itemsPerPage', parseInt(e.target.value))} />
+      </div>
+      <div className="modal-actions">
+        <button className="btn btn-primary" onClick={onDone}>完成</button>
+        {showDiagnostics && (
+          <button className="btn btn-secondary" onClick={showDiagnostics}>
+            诊断
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
+
+function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsModal = true }) {
   const navigate = useNavigate();
   const [symbols, setSymbols] = useState(getSymbols());
   const [showSettings, setShowSettings] = useState(false);
@@ -47,7 +80,7 @@ function HomePage() {
   const [config, setConfig] = useState(getFloatingConfig());
   const floatingActiveRef = useRef(false);
 
-  const [isEditMode, setIsEditMode] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(initialEditMode);
   const longPressTimerRef = useRef(null);
 
   // Check for URL parameters (from Native HomeActivity)
@@ -283,20 +316,21 @@ function HomePage() {
       // Only exit edit mode if clicking background, not when dragging
       // This was a bit aggressive before
     }}>
-      {/* Header */}
-      <div className="header">
-        <h1>实时</h1>
-        <div className="header-actions">
-          {isEditMode ? (
-            <button className="btn btn-primary" onClick={() => setIsEditMode(false)}>完成</button>
-          ) : (
-            <>
-              <button className="btn btn-secondary" onClick={() => setIsEditMode(true)}>编辑</button>
-              <button className="btn btn-secondary btn-icon" onClick={() => setShowSettings(true)}>⚙</button>
-            </>
-          )}
+      {!hideHeader && (
+        <div className="header">
+          <h1>实时</h1>
+          <div className="header-actions">
+            {isEditMode ? (
+              <button className="btn btn-primary" onClick={() => setIsEditMode(false)}>完成</button>
+            ) : (
+              <>
+                <button className="btn btn-secondary" onClick={() => setIsEditMode(true)}>编辑</button>
+                <button className="btn btn-secondary btn-icon" onClick={() => setShowSettings(true)}>⚙</button>
+              </>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Add Symbol Input (Below Header) */}
       {!isEditMode && (
@@ -463,7 +497,7 @@ function HomePage() {
 
 
       {/* Floating Controls */}
-      {!isEditMode && (
+      {!isEditMode && allowSettingsModal && (
         <div className="floating-controls">
           {!floatingActive ? (
             <button className="btn btn-primary" onClick={startFloating}>
@@ -482,36 +516,14 @@ function HomePage() {
 
       {/* Modals */}
 
-      {showSettings && (
+      {allowSettingsModal && showSettings && (
         <div className="modal-overlay" onClick={() => setShowSettings(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <h2>悬浮窗设置</h2>
-            <div className="settings-group">
-              <label>显示币种名称
-                <input type="checkbox" checked={config.showSymbol} onChange={e => updateConfig('showSymbol', e.target.checked)} />
-              </label>
-            </div>
-            <div className="settings-group">
-              <label>字体大小: {config.fontSize}px</label>
-              <input type="range" min="10" max="24" value={config.fontSize} onChange={e => updateConfig('fontSize', parseInt(e.target.value))} />
-            </div>
-            <div className="settings-group">
-              <label>背景透明度: {Math.round(config.opacity * 100)}%</label>
-              <input type="range" min="20" max="100" value={config.opacity * 100} onChange={e => updateConfig('opacity', parseInt(e.target.value) / 100)} />
-            </div>
-            <div className="settings-group">
-              <label>每页显示数量: {config.itemsPerPage}</label>
-              <input type="range" min="1" max="5" value={config.itemsPerPage} onChange={e => updateConfig('itemsPerPage', parseInt(e.target.value))} />
-            </div>
-            <div className="modal-actions">
-              <button className="btn btn-primary" onClick={() => setShowSettings(false)}>完成</button>
-              {DIAG_ENABLED && Capacitor.isNativePlatform() && (
-                <button className="btn btn-secondary" onClick={() => { setShowSettings(false); openDiagnostics(); }}>
-                  诊断
-                </button>
-              )}
-            </div>
-          </div>
+          <SettingsPanel
+            config={config}
+            onUpdate={updateConfig}
+            onDone={() => setShowSettings(false)}
+            showDiagnostics={DIAG_ENABLED && Capacitor.isNativePlatform() ? () => { setShowSettings(false); openDiagnostics(); } : null}
+          />
         </div>
       )}
 
@@ -522,6 +534,61 @@ function HomePage() {
           onClose={() => setAlertModalSymbol(null)}
         />
       )}
+    </div>
+  );
+}
+
+function SettingsPage() {
+  const navigate = useNavigate();
+  const [config, setConfig] = useState(getFloatingConfig());
+
+  const updateConfig = async (key, value) => {
+    const newConfig = { ...config, [key]: value };
+    setConfig(newConfig);
+    saveFloatingConfig(newConfig);
+    if (Capacitor.isNativePlatform()) {
+      try {
+        await FloatingWidget.updateConfig({
+          fontSize: newConfig.fontSize,
+          opacity: newConfig.opacity,
+          showSymbol: newConfig.showSymbol,
+          itemsPerPage: newConfig.itemsPerPage
+        });
+      } catch (e) {
+        console.error('Failed to update config', e);
+      }
+    }
+  };
+
+  return (
+    <div className="app-container" style={{ padding: 16 }}>
+      <div className="header">
+        <h1>悬浮窗设置</h1>
+        <div className="header-actions">
+          <button className="btn btn-secondary" onClick={() => navigate('/')}>返回</button>
+        </div>
+      </div>
+      <SettingsPanel
+        config={config}
+        onUpdate={updateConfig}
+        onDone={() => navigate('/')}
+        showDiagnostics={DIAG_ENABLED && Capacitor.isNativePlatform() ? () => navigate('/diag') : null}
+      />
+    </div>
+  );
+}
+
+function EditPage() {
+  const navigate = useNavigate();
+  return (
+    <div className="app-container">
+      <div className="header">
+        <h1>排序</h1>
+        <div className="header-actions">
+          <button className="btn btn-primary" onClick={() => navigate('/')}>完成</button>
+        </div>
+      </div>
+      <HomePage initialEditMode hideHeader allowSettingsModal={false} />
     </div>
   );
 }
@@ -720,6 +787,8 @@ function App() {
     <HashRouter>
       <Routes>
         <Route path="/" element={<HomePage />} />
+        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/edit" element={<EditPage />} />
         <Route path="/chart/:symbol" element={<ChartPageWrapper />} />
         {DIAG_ENABLED && <Route path="/diag" element={<DiagnosticsPage />} />}
       </Routes>

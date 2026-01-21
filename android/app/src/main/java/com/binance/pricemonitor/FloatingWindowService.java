@@ -18,6 +18,7 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.provider.Settings;
 import androidx.core.app.NotificationCompat;
 
 public class FloatingWindowService extends Service {
@@ -236,6 +237,9 @@ public class FloatingWindowService extends Service {
         // Show floating window
         if (ACTION_SHOW_WINDOW.equals(action)) {
             if (!windowVisible && windowManager != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+                    return START_STICKY;
+                }
                 windowManager.addView(floatingView, params);
                 windowVisible = true;
                 // Reconnect data feed if it was stopped while hidden

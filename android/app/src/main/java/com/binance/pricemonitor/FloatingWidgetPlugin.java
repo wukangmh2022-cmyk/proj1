@@ -16,6 +16,11 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 @CapacitorPlugin(name = "FloatingWidget")
 public class FloatingWidgetPlugin extends Plugin {
+    private static final String PREFS_NAME = "amaze_monitor_prefs";
+    private static final String PREFS_FONT_SIZE = "floating_font_size";
+    private static final String PREFS_OPACITY = "floating_opacity";
+    private static final String PREFS_SHOW_SYMBOL = "floating_show_symbol";
+    private static final String PREFS_ITEMS_PER_PAGE = "floating_items_per_page";
 
     private BroadcastReceiver broadcastReceiver;
 
@@ -195,6 +200,8 @@ public class FloatingWidgetPlugin extends Plugin {
         boolean showSymbol = call.getBoolean("showSymbol", true);
         int itemsPerPage = call.getInt("itemsPerPage", 1);
 
+        persistFloatingConfig(fontSize, opacity, showSymbol, itemsPerPage);
+
         Context context = getContext().getApplicationContext();
         Intent intent = new Intent(context, FloatingWindowService.class);
         intent.setAction(FloatingWindowService.ACTION_CONFIG);
@@ -210,6 +217,18 @@ public class FloatingWidgetPlugin extends Plugin {
         }
         
         call.resolve();
+    }
+
+    private void persistFloatingConfig(float fontSize, float opacity, boolean showSymbol, int itemsPerPage) {
+        try {
+            android.content.SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            prefs.edit()
+                    .putFloat(PREFS_FONT_SIZE, fontSize)
+                    .putFloat(PREFS_OPACITY, opacity)
+                    .putBoolean(PREFS_SHOW_SYMBOL, showSymbol)
+                    .putInt(PREFS_ITEMS_PER_PAGE, itemsPerPage)
+                    .apply();
+        } catch (Exception ignored) {}
     }
 
     @PluginMethod
