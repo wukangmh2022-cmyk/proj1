@@ -1,9 +1,12 @@
-apply plugin: 'com.android.application'
-apply plugin: 'org.jetbrains.kotlin.android'
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+    id 'org.jetbrains.kotlin.plugin.compose'
+}
 
 android {
     namespace "com.binance.pricemonitor"
-    compileSdk rootProject.ext.compileSdkVersion
+    compileSdk 35
     defaultConfig {
         applicationId "com.binance.pricemonitor"
         minSdkVersion rootProject.ext.minSdkVersion
@@ -27,11 +30,11 @@ android {
     
     // Kotlin JVM target
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
     }
     kotlinOptions {
-        jvmTarget = '17'
+        jvmTarget = '21'
     }
     
     // Enable Compose
@@ -39,7 +42,7 @@ android {
         compose true
     }
     composeOptions {
-        kotlinCompilerExtensionVersion = '1.5.8'
+        kotlinCompilerExtensionVersion = '2.0.0'
     }
 }
 
@@ -76,10 +79,10 @@ dependencies {
     debugImplementation 'androidx.compose.ui:ui-tooling'
 
     constraints {
-        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22") {
+        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.2.0") {
             because("kotlin-stdlib-jdk7 is now part of kotlin-stdlib")
         }
-        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22") {
+        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.2.0") {
             because("kotlin-stdlib-jdk8 is now part of kotlin-stdlib")
         }
     }
