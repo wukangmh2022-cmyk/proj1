@@ -50,17 +50,28 @@ function HomePage() {
   const [isEditMode, setIsEditMode] = useState(false);
   const longPressTimerRef = useRef(null);
 
-  // Check for alertSymbol in URL (from Native HomeActivity)
+  // Check for URL parameters (from Native HomeActivity)
   useEffect(() => {
-    const hash = window.location.hash;
-    const match = hash.match(/alertSymbol=([^&]+)/);
-    if (match) {
-      const sym = decodeURIComponent(match[1]);
-      if (sym) {
-        setAlertModalSymbol(sym);
-        // Clean up URL
-        window.location.hash = '/';
-      }
+    const hash = window.location.hash || '';
+    const queryIndex = hash.indexOf('?');
+    const query = queryIndex >= 0 ? hash.slice(queryIndex + 1) : '';
+    const params = new URLSearchParams(query);
+    const alertSymbol = params.get('alertSymbol');
+    const openSettings = params.get('openSettings');
+    const editMode = params.get('editMode');
+
+    if (alertSymbol) {
+      const sym = decodeURIComponent(alertSymbol);
+      if (sym) setAlertModalSymbol(sym);
+    }
+    if (openSettings === '1') {
+      setShowSettings(true);
+    }
+    if (editMode === '1') {
+      setIsEditMode(true);
+    }
+    if (alertSymbol || openSettings === '1' || editMode === '1') {
+      window.location.hash = '/';
     }
   }, []);
 
