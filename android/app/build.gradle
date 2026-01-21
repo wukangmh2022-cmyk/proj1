@@ -1,5 +1,6 @@
 apply plugin: 'com.android.application'
 apply plugin: 'org.jetbrains.kotlin.android'
+apply plugin: 'org.jetbrains.kotlin.plugin.compose'
 
 android {
     namespace "com.binance.pricemonitor"
@@ -39,7 +40,7 @@ android {
         compose true
     }
     composeOptions {
-        kotlinCompilerExtensionVersion = '1.5.8'
+        kotlinCompilerExtensionVersion = '2.0.0'
     }
 }
 
@@ -76,10 +77,10 @@ dependencies {
     debugImplementation 'androidx.compose.ui:ui-tooling'
 
     constraints {
-        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22") {
+        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.2.0") {
             because("kotlin-stdlib-jdk7 is now part of kotlin-stdlib")
         }
-        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22") {
+        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.2.0") {
             because("kotlin-stdlib-jdk8 is now part of kotlin-stdlib")
         }
     }
