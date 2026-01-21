@@ -72,9 +72,9 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
 
         symbolsState.addAll(loadSymbols())
 
-        // Start service with symbols
+        // Start data service with symbols to ensure ticker feed is live on native home
         val intent = Intent(this, FloatingWindowService::class.java).apply {
-            action = FloatingWindowService.ACTION_SET_SYMBOLS
+            action = FloatingWindowService.ACTION_START_DATA
             putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST, ArrayList(symbolsState))
         }
         startService(intent)
@@ -89,6 +89,11 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
         super.onResume()
         refreshSymbolsFromPrefs()
         FloatingWindowService.setTickerListener(this)
+        val dataIntent = Intent(this, FloatingWindowService::class.java).apply {
+            action = FloatingWindowService.ACTION_START_DATA
+            putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST, ArrayList(symbolsState))
+        }
+        startService(dataIntent)
         applyFloatingConfig()
         val intent = Intent(this, FloatingWindowService::class.java).apply {
             action = FloatingWindowService.ACTION_REQUEST_UPDATE
