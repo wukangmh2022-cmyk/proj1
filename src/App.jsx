@@ -110,7 +110,10 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
   const [newSymbol, setNewSymbol] = useState('');
   const [searchSuggestions, setSearchSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [floatingActive, setFloatingActive] = useState(false);
+  const [floatingActive, setFloatingActive] = useState(() => {
+    if (!Capacitor.isNativePlatform()) return false;
+    return localStorage.getItem('floating_active') === 'true';
+  });
   const [config, setConfig] = useState(getFloatingConfig());
   const floatingActiveRef = useRef(false);
 
