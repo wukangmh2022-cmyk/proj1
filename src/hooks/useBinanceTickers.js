@@ -340,9 +340,8 @@ export const useBinanceTickers = (symbols = []) => {
         };
     }, [JSON.stringify(symbols), isNative]);
 
-    // Web fallback: periodically fetch missing symbols that have no price yet (covers newly added .P)
+    // Web + Native fallback: periodically fetch missing symbols that have no price yet (covers newly added .P)
     useEffect(() => {
-        if (isNative) return;
         if (symbols.length === 0) return;
         let timer = null;
 
@@ -370,7 +369,7 @@ export const useBinanceTickers = (symbols = []) => {
             }
         };
 
-        timer = setInterval(fetchMissing, 4000);
+        timer = setInterval(fetchMissing, isNative ? 6000 : 4000);
         fetchMissing();
 
         return () => { if (timer) clearInterval(timer); };

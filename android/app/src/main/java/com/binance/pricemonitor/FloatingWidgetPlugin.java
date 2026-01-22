@@ -21,8 +21,12 @@ public class FloatingWidgetPlugin extends Plugin {
     private static final String PREFS_OPACITY = "floating_opacity";
     private static final String PREFS_SHOW_SYMBOL = "floating_show_symbol";
     private static final String PREFS_ITEMS_PER_PAGE = "floating_items_per_page";
+    private static final long EMIT_DEDUP_MS = 200L;
 
     private BroadcastReceiver broadcastReceiver;
+    private final java.util.Map<String, Long> lastEmitBySymbolMs = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<String, Double> lastEmitPrice = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<String, Double> lastEmitChange = new java.util.concurrent.ConcurrentHashMap<>();
 
     @Override
     public void load() {
@@ -37,12 +41,7 @@ public class FloatingWidgetPlugin extends Plugin {
                     double price = intent.getDoubleExtra("price", 0);
                     double changePercent = intent.getDoubleExtra("changePercent", 0);
                     
-                    JSObject data = new JSObject();
-                    data.put("symbol", symbol);
-                    data.put("price", price);
-                    data.put("changePercent", changePercent);
-                    
-                    notifyListeners("tickerUpdate", data);
+                    emitTickerUpdate(symbol, price, changePercent);
                 }
             }
         };
@@ -54,18 +53,7 @@ public class FloatingWidgetPlugin extends Plugin {
         }
 
         // Keep static listener for backward compat (if same process)
-        FloatingWindowService.setTickerListener((symbol, price, changePercent) -> {
-            // If we receive both (same process), we might duplicate. 
-            // Check if we are in main process? 
-            // Actually, if we are in :chart, static listener won't fire. 
-            // If we are in main, both might fire?
-            // Service calls listener AND broadcast.
-            // If in main process, listener fires. Broadcast fires. Receiver fires.
-            // We get double updates!
-            // We should relying ONLY on broadcast?
-            // Or remove listener logic?
-            // Let's rely on broadcast for consistency.
-        });
+        FloatingWindowService.setTickerListener((symbol, price, changePercent) -> emitTickerUpdate(symbol, price, changePercent));
     }
     
     @Override
@@ -77,6 +65,31 @@ public class FloatingWidgetPlugin extends Plugin {
             }
         } catch (Exception e) {}
         FloatingWindowService.setTickerListener(null);
+    }
+
+    private void emitTickerUpdate(String symbol, double price, double changePercent) {
+        if (symbol == null) return;
+        long now = System.currentTimeMillis();
+        Long lastMs = lastEmitBySymbolMs.get(symbol);
+        Double lastPrice = lastEmitPrice.get(symbol);
+        Double lastChange = lastEmitChange.get(symbol);
+        boolean isDuplicate = lastMs != null
+                && lastPrice != null
+                && lastChange != null
+                && lastPrice == price
+                && lastChange == changePercent
+                && now - lastMs < EMIT_DEDUP_MS;
+        if (isDuplicate) return;
+
+        lastEmitBySymbolMs.put(symbol, now);
+        lastEmitPrice.put(symbol, price);
+        lastEmitChange.put(symbol, changePercent);
+
+        JSObject data = new JSObject();
+        data.put("symbol", symbol);
+        data.put("price", price);
+        data.put("changePercent", changePercent);
+        notifyListeners("tickerUpdate", data);
     }
 
     @PluginMethod
