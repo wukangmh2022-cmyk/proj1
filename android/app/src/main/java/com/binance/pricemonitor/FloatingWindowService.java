@@ -60,6 +60,7 @@ public class FloatingWindowService extends Service {
     private java.util.Map<String, double[]> rawPriceDataMap = new java.util.concurrent.ConcurrentHashMap<>();
     private int currentIndex = 0;
     private boolean hasPriceAlerts = false;
+    private boolean keepDataAlive = false;
     
     // Config values
     private float fontSize = 14f;
@@ -227,6 +228,7 @@ public class FloatingWindowService extends Service {
         if (ACTION_START_DATA.equals(action)) {
             java.util.ArrayList<String> received = intent.getStringArrayListExtra(EXTRA_SYMBOL_LIST);
             if (received != null && !received.isEmpty()) {
+                keepDataAlive = true;
                 symbolList = received;
                 persistSymbols(symbolList);
                 connectWebSockets();
@@ -258,7 +260,7 @@ public class FloatingWindowService extends Service {
                 windowManager.removeView(floatingView);
             }
             windowVisible = false;
-            if (!hasPriceAlerts) {
+            if (!hasPriceAlerts && !keepDataAlive) {
                 stopWebSockets();
             }
             return START_STICKY;
@@ -308,7 +310,7 @@ public class FloatingWindowService extends Service {
             android.util.Log.d(PERF_TAG, "ACTION_REQUEST_UPDATE at " + System.currentTimeMillis() +
                     " hasListener=" + (tickerListener != null) +
                     " symbolsCount=" + rawPriceDataMap.size());
-            if (tickerListener != null && !rawPriceDataMap.isEmpty()) {
+            if (!rawPriceDataMap.isEmpty()) {
                 for (java.util.Map.Entry<String, double[]> entry : rawPriceDataMap.entrySet()) {
                     String symbol = entry.getKey();
                     double[] vals = entry.getValue();

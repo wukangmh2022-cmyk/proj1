@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { HashRouter, Routes, Route, useNavigate, useParams } from 'react-router-dom';
+import { HashRouter, Routes, Route, useNavigate, useParams, useLocation } from 'react-router-dom';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { useBinanceTickers } from './hooks/useBinanceTickers';
 import { usePriceAlerts } from './hooks/usePriceAlerts';
@@ -17,6 +17,9 @@ import Diagnostics from './plugins/Diagnostics';
 import { App as CapacitorApp } from '@capacitor/app';
 
 const DIAG_ENABLED = 1;
+const ROUTE_STORAGE_KEY = 'amaze_last_route';
+const ROUTE_TS_KEY = 'amaze_last_background_ts';
+const ROUTE_RESUME_WINDOW_MS = 2 * 60 * 1000;
 
 const getPricePrecision = (price) => {
   const p = Math.abs(Number(price));
@@ -66,6 +69,38 @@ const SettingsPanel = ({ config, onUpdate, onDone, showDiagnostics }) => {
       </div>
     </div>
   );
+};
+
+const RouteStateSync = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    const path = `${location.pathname}${location.search || ''}`;
+    localStorage.setItem(ROUTE_STORAGE_KEY, path);
+  }, [location.pathname, location.search]);
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    const listener = CapacitorApp.addListener('appStateChange', (state) => {
+      if (!state?.isActive) {
+        localStorage.setItem(ROUTE_TS_KEY, String(Date.now()));
+        return;
+      }
+      const lastTs = Number(localStorage.getItem(ROUTE_TS_KEY) || 0);
+      if (!lastTs || Date.now() - lastTs > ROUTE_RESUME_WINDOW_MS) return;
+      const lastRoute = localStorage.getItem(ROUTE_STORAGE_KEY);
+      if (lastRoute && lastRoute !== '/' && location.pathname === '/') {
+        navigate(lastRoute, { replace: true });
+      }
+    });
+    return () => {
+      listener.then(result => result.remove());
+    };
+  }, [navigate, location.pathname]);
+
+  return null;
 };
 
 function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsModal = true }) {
@@ -187,9 +222,18 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
   usePriceAlerts(tickers);
 
 
+  const buildSymbolSuggestions = (value) => {
+    const trimmed = value.toUpperCase().trim();
+    if (!trimmed) return [];
+    const base = trimmed.replace('.P', '');
+    const spot = base.includes('USDT') ? base : `${base}USDT`;
+    return [spot, `${spot}.P`];
+  };
+
   const handleAddSymbol = (symbolToAdd) => {
     const raw = symbolToAdd || newSymbol;
-    const sym = raw.toUpperCase().trim();
+    const suggestions = buildSymbolSuggestions(raw);
+    const sym = (symbolToAdd ? raw : (suggestions[0] || raw)).toUpperCase().trim();
     if (sym.trim()) {
       const updated = addSymbol(sym);
       setSymbols([...updated]);
@@ -202,11 +246,7 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
     setNewSymbol(value.toUpperCase());
     if (value.trim().length > 0) {
       // Generate suggestions: spot and perpetual
-      const base = value.toUpperCase().replace('.P', '');
-      const suggestions = [
-        base.includes('USDT') ? base : `${base}USDT`,
-        (base.includes('USDT') ? base : `${base}USDT`) + '.P'
-      ];
+      const suggestions = buildSymbolSuggestions(value);
       setSearchSuggestions(suggestions);
       setShowSuggestions(true);
     } else {
@@ -821,6 +861,7 @@ function App() {
 
   return (
     <HashRouter>
+      <RouteStateSync />
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/settings" element={<SettingsPage />} />
