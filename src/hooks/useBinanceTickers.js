@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Capacitor } from '@capacitor/core';
 import FloatingWidget from '../plugins/FloatingWidget';
 import { perfLog } from '../utils/perfLogger';
+import { getCompositeLegs, isCompositeSymbol, normalizeSymbol } from '../utils/symbols';
 
 const BINANCE_SPOT_WS = 'wss://stream.binance.com:9443/stream';
 const BINANCE_FUTURES_WS = 'wss://fstream.binance.com/stream';
@@ -25,8 +26,21 @@ export const useBinanceTickers = (symbols = []) => {
     const flushIntervalRef = useRef(null);
     const perfLoggedRef = useRef(false);
     const resumeHeartbeatRef = useRef(null);
+    const compositeSpecsRef = useRef([]);
 
     const isNative = Capacitor.isNativePlatform();
+    const normalizedSymbols = symbols.map(normalizeSymbol).filter(Boolean);
+    const compositeSpecs = normalizedSymbols.map((s) => (isCompositeSymbol(s) ? getCompositeLegs(s) : null)).filter(Boolean);
+    const compositeSymbols = new Set(compositeSpecs.map(spec => spec.symbol));
+    const subscriptionSymbolsSet = new Set(normalizedSymbols.filter(s => !compositeSymbols.has(s)));
+    compositeSpecs.forEach(spec => {
+        subscriptionSymbolsSet.add(spec.baseSpot);
+        subscriptionSymbolsSet.add(spec.basePerp);
+        subscriptionSymbolsSet.add(spec.quoteSpot);
+        subscriptionSymbolsSet.add(spec.quotePerp);
+    });
+    const subscriptionSymbols = Array.from(subscriptionSymbolsSet).sort();
+    const subscriptionKey = JSON.stringify(subscriptionSymbols);
     useEffect(() => {
         if (perfLoggedRef.current) return;
         perfLoggedRef.current = true;
@@ -41,6 +55,68 @@ export const useBinanceTickers = (symbols = []) => {
     // Helper: Check if symbol is perpetual (.P suffix)
     const isPerpetual = (symbol) => symbol.endsWith('.P');
     const getBaseSymbol = (symbol) => isPerpetual(symbol) ? symbol.slice(0, -2) : symbol;
+    const getTickerOpen = (ticker) => {
+        if (!ticker || !isFinite(ticker.price)) return null;
+        if (isFinite(ticker.change)) return ticker.price - ticker.change;
+        if (isFinite(ticker.changePercent)) {
+            const ratio = 1 + ticker.changePercent / 100;
+            if (ratio === 0) return null;
+            return ticker.price / ratio;
+        }
+        return null;
+    };
+    const pickLegTicker = (source, spotSymbol, perpSymbol) => {
+        const spot = source[spotSymbol];
+        if (spot && isFinite(spot.price)) return { ticker: spot, symbol: spotSymbol };
+        const perp = source[perpSymbol];
+        if (perp && isFinite(perp.price)) return { ticker: perp, symbol: perpSymbol };
+        return null;
+    };
+    const computeCompositeTickers = (source) => {
+        const specs = compositeSpecsRef.current || [];
+        if (!specs.length) return {};
+        const derived = {};
+        specs.forEach((spec) => {
+            const basePick = pickLegTicker(source, spec.baseSpot, spec.basePerp);
+            const quotePick = pickLegTicker(source, spec.quoteSpot, spec.quotePerp);
+            const basePrice = basePick?.ticker?.price;
+            const quotePrice = quotePick?.ticker?.price;
+            if (!isFinite(basePrice) || !isFinite(quotePrice) || quotePrice === 0) return;
+
+            const price = basePrice / quotePrice;
+            const baseOpen = getTickerOpen(basePick?.ticker);
+            const quoteOpen = getTickerOpen(quotePick?.ticker);
+            let change = 0;
+            let changePercent = 0;
+            if (isFinite(baseOpen) && isFinite(quoteOpen) && quoteOpen !== 0) {
+                const open = baseOpen / quoteOpen;
+                if (isFinite(open) && open !== 0) {
+                    change = price - open;
+                    changePercent = (change / open) * 100;
+                }
+            } else if (isFinite(basePick?.ticker?.changePercent) && isFinite(quotePick?.ticker?.changePercent)) {
+                const b = basePick.ticker.changePercent / 100;
+                const q = quotePick.ticker.changePercent / 100;
+                const ratio = (1 + b) / (1 + q) - 1;
+                if (isFinite(ratio)) {
+                    changePercent = ratio * 100;
+                    change = price - price / (1 + ratio);
+                }
+            }
+
+            derived[spec.symbol] = {
+                price,
+                change,
+                changePercent,
+                _composite: true,
+            };
+        });
+        return derived;
+    };
+
+    useEffect(() => {
+        compositeSpecsRef.current = compositeSpecs;
+    }, [subscriptionKey]);
 
     // ===== UI UPDATE LOOP (Throttling) =====
     // Decouples high-frequency data (WS/Native) from React Rendering
@@ -52,8 +128,9 @@ export const useBinanceTickers = (symbols = []) => {
                 setTickers(prev => {
                     // Merge buffer into previous state
                     const next = { ...prev, ...bufferRef.current };
+                    const composites = computeCompositeTickers(next);
                     bufferRef.current = {}; // Clear buffer
-                    return next;
+                    return Object.keys(composites).length > 0 ? { ...next, ...composites } : next;
                 });
             }
         };
@@ -101,7 +178,7 @@ export const useBinanceTickers = (symbols = []) => {
     useEffect(() => {
         if (!isNative) return;
 
-        perfLog('[perf] useBinanceTickers native listener setup at', Date.now(), 'symbols=', symbols);
+        perfLog('[perf] useBinanceTickers native listener setup at', Date.now(), 'symbols=', subscriptionSymbols);
 
         listenerRef.current = FloatingWidget.addListener('tickerUpdate', (data) => {
             const { symbol, price, changePercent } = data;
@@ -131,7 +208,7 @@ export const useBinanceTickers = (symbols = []) => {
     // Sync symbol list + request ticker updates when native data source is ready.
     useEffect(() => {
         if (!isNative) return;
-        if (symbols.length === 0) return;
+        if (subscriptionSymbols.length === 0) return;
 
         let cancelled = false;
         const retryTimers = [];
@@ -149,7 +226,7 @@ export const useBinanceTickers = (symbols = []) => {
         };
 
         try {
-            FloatingWidget.setSymbols({ symbols });
+            FloatingWidget.setSymbols({ symbols: subscriptionSymbols });
         } catch (e) {
             console.error('setSymbols failed', e);
         }
@@ -162,7 +239,31 @@ export const useBinanceTickers = (symbols = []) => {
             cancelled = true;
             retryTimers.forEach(clearTimeout);
         };
-    }, [isNative, JSON.stringify(symbols)]);
+    }, [isNative, subscriptionKey]);
+
+    // Native fallback: retry symbol sync + request updates if prices stay empty
+    useEffect(() => {
+        if (!isNative || subscriptionSymbols.length === 0) return;
+        let attempts = 0;
+
+        const tick = () => {
+            const hasAny = subscriptionSymbols.some(s => bufferRef.current[s] || Object.prototype.hasOwnProperty.call(tickers, s));
+            if (hasAny || attempts >= 3) return;
+            attempts += 1;
+            try {
+                FloatingWidget.setSymbols({ symbols: subscriptionSymbols });
+                FloatingWidget.requestTickerUpdate();
+            } catch (e) {
+                console.error('native retry failed', e);
+            }
+            resumeHeartbeatRef.current = setTimeout(tick, 1500);
+        };
+
+        resumeHeartbeatRef.current = setTimeout(tick, 1500);
+        return () => {
+            if (resumeHeartbeatRef.current) clearTimeout(resumeHeartbeatRef.current);
+        };
+    }, [isNative, subscriptionKey, tickers]);
 
     // ===== WEB MODE =====
     const connectSpot = (spotSymbols) => {
@@ -273,11 +374,11 @@ export const useBinanceTickers = (symbols = []) => {
 
     useEffect(() => {
         if (isNative) return; // Use native data on Android
-        if (symbols.length === 0) return;
+        if (subscriptionSymbols.length === 0) return;
 
         // Separate spot and futures symbols
-        const spotSymbols = symbols.filter(s => !isPerpetual(s));
-        const futuresSymbols = symbols.filter(s => isPerpetual(s));
+        const spotSymbols = subscriptionSymbols.filter(s => !isPerpetual(s));
+        const futuresSymbols = subscriptionSymbols.filter(s => isPerpetual(s));
 
         connectSpot(spotSymbols);
         connectFutures(futuresSymbols);
@@ -306,7 +407,11 @@ export const useBinanceTickers = (symbols = []) => {
                     } catch (_) { }
                 }));
                 if (Object.keys(updates).length > 0) {
-                    setTickers(prev => ({ ...prev, ...updates }));
+                    setTickers(prev => {
+                        const merged = { ...prev, ...updates };
+                        const composites = computeCompositeTickers(merged);
+                        return Object.keys(composites).length > 0 ? { ...merged, ...composites } : merged;
+                    });
                 }
             } catch (e) {
                 console.error('Seed price fetch failed', e);
@@ -338,15 +443,15 @@ export const useBinanceTickers = (symbols = []) => {
                 wsFuturesRef.current.close();
             }
         };
-    }, [JSON.stringify(symbols), isNative]);
+    }, [subscriptionKey, isNative]);
 
     // Web + Native fallback: periodically fetch missing symbols that have no price yet (covers newly added .P)
     useEffect(() => {
-        if (symbols.length === 0) return;
+        if (subscriptionSymbols.length === 0) return;
         let timer = null;
 
         const fetchMissing = async () => {
-            const missing = symbols.filter(s => !bufferRef.current[s] && !Object.prototype.hasOwnProperty.call(tickers, s));
+            const missing = subscriptionSymbols.filter(s => !bufferRef.current[s] && !Object.prototype.hasOwnProperty.call(tickers, s));
             if (missing.length === 0) return;
             const updates = {};
             await Promise.all(missing.map(async (s) => {
@@ -365,7 +470,11 @@ export const useBinanceTickers = (symbols = []) => {
                 } catch (_) { }
             }));
             if (Object.keys(updates).length > 0) {
-                setTickers(prev => ({ ...prev, ...updates }));
+                setTickers(prev => {
+                    const merged = { ...prev, ...updates };
+                    const composites = computeCompositeTickers(merged);
+                    return Object.keys(composites).length > 0 ? { ...merged, ...composites } : merged;
+                });
             }
         };
 
@@ -373,7 +482,7 @@ export const useBinanceTickers = (symbols = []) => {
         fetchMissing();
 
         return () => { if (timer) clearInterval(timer); };
-    }, [symbols, tickers, isNative]);
+    }, [subscriptionKey, tickers, isNative]);
 
     return tickers;
 };

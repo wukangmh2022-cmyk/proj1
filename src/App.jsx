@@ -6,6 +6,7 @@ import { usePriceAlerts } from './hooks/usePriceAlerts';
 import FloatingWidget from './plugins/FloatingWidget';
 import { Capacitor } from '@capacitor/core';
 import { getSymbols, addSymbol, removeSymbol, saveSymbols, getFloatingConfig, saveFloatingConfig } from './utils/storage';
+import { getCompositeLegs, isCompositeSymbol, normalizeCompositeSymbol, normalizeSymbol, tokenToSpotSymbol } from './utils/symbols';
 import { getAlerts } from './utils/alert_storage';
 import { normalizeAlertsForNative } from './utils/alertNormalize';
 import ChartPage from './components/ChartPage';
@@ -36,6 +37,26 @@ const formatQuotePrice = (price) => {
   if (!isFinite(n)) return '--';
   const precision = getPricePrecision(n);
   return n.toLocaleString(undefined, { minimumFractionDigits: precision, maximumFractionDigits: precision });
+};
+
+const expandSymbolsForNative = (list) => {
+  const set = new Set();
+  list.forEach((raw) => {
+    const normalized = normalizeSymbol(raw);
+    if (!normalized) return;
+    if (isCompositeSymbol(normalized)) {
+      const legs = getCompositeLegs(normalized);
+      if (legs) {
+        set.add(legs.baseSpot);
+        set.add(legs.basePerp);
+        set.add(legs.quoteSpot);
+        set.add(legs.quotePerp);
+      }
+      return;
+    }
+    set.add(normalized);
+  });
+  return Array.from(set);
 };
 
 const SettingsPanel = ({ config, onUpdate, onDone, showDiagnostics }) => {
@@ -132,7 +153,7 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
 
     if (alertSymbol) {
       const sym = decodeURIComponent(alertSymbol);
-      if (sym) navigate(`/alert/${sym}`, { replace: true });
+      if (sym) navigate(`/alert/${encodeURIComponent(sym)}`, { replace: true });
     }
     if (openSettings === '1') {
       if (Capacitor.isNativePlatform()) {
@@ -226,19 +247,25 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
 
 
   const buildSymbolSuggestions = (value) => {
-    const trimmed = value.toUpperCase().trim();
+    const trimmed = normalizeSymbol(value);
     if (!trimmed) return [];
-    const base = trimmed.replace('.P', '');
-    const spot = base.includes('USDT') ? base : `${base}USDT`;
+    if (isCompositeSymbol(trimmed)) {
+      return [normalizeCompositeSymbol(trimmed)];
+    }
+    const spot = tokenToSpotSymbol(trimmed);
+    if (!spot) return [];
     return [spot, `${spot}.P`];
   };
 
   const handleAddSymbol = (symbolToAdd) => {
     const raw = symbolToAdd || newSymbol;
     const suggestions = buildSymbolSuggestions(raw);
-    const sym = (symbolToAdd ? raw : (suggestions[0] || raw)).toUpperCase().trim();
-    if (sym.trim()) {
-      const updated = addSymbol(sym);
+    const candidate = symbolToAdd ? raw : (suggestions[0] || raw);
+    const normalized = isCompositeSymbol(candidate)
+      ? normalizeCompositeSymbol(candidate)
+      : normalizeSymbol(candidate);
+    if (normalized.trim()) {
+      const updated = addSymbol(normalized);
       setSymbols([...updated]);
       setNewSymbol('');
       setShowSuggestions(false);
@@ -246,7 +273,7 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
   };
 
   const handleSearchInput = (value) => {
-    setNewSymbol(value.toUpperCase());
+    setNewSymbol(normalizeSymbol(value));
     if (value.trim().length > 0) {
       // Generate suggestions: spot and perpetual
       const suggestions = buildSymbolSuggestions(value);
@@ -290,7 +317,8 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
       setFloatingActive(true);
       localStorage.setItem('floating_active', 'true'); // Persist state
       floatingActiveRef.current = true;
-      await FloatingWidget.setSymbols({ symbols });
+      const nativeSymbols = expandSymbolsForNative(symbols);
+      await FloatingWidget.setSymbols({ symbols: nativeSymbols });
       const currentConfig = getFloatingConfig();
       await FloatingWidget.updateConfig({
         fontSize: currentConfig.fontSize,
@@ -502,7 +530,7 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
                           // In edit mode, maybe clicking does nothing or deletes?
                           // User said 'click cannot enter edit' previously. 
                           // Let's allow navigation ONLY if NOT in edit mode.
-                          if (!isEditMode) navigate(`/chart/${symbol}`);
+                          if (!isEditMode) navigate(`/chart/${encodeURIComponent(symbol)}`);
                         }}
                         style={{
                           ...provided.draggableProps.style,
@@ -523,7 +551,7 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
                               className="btn-bell"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                navigate(`/alert/${symbol}`);
+                                navigate(`/alert/${encodeURIComponent(symbol)}`);
                               }}
                             >🔔</button>
                           )}
@@ -683,7 +711,8 @@ function EditPage() {
 }
 
 function AlertPage() {
-  const { symbol } = useParams();
+  const { symbol: rawSymbol } = useParams();
+  const symbol = rawSymbol ? decodeURIComponent(rawSymbol) : '';
   const navigate = useNavigate();
   const tickers = useBinanceTickers(symbol ? [symbol] : []);
   const exitToNativeHome = useCallback(() => {
@@ -845,7 +874,8 @@ function App() {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           if (cancelled) return;
-          FloatingWidget.startData({ symbols }).catch(console.error);
+          const nativeSymbols = expandSymbolsForNative(symbols);
+          FloatingWidget.startData({ symbols: nativeSymbols }).catch(console.error);
           // Initial alert sync (can be heavy if drawings are present)
           setTimeout(() => {
             if (cancelled) return;

@@ -4,6 +4,7 @@ import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { createChart, CandlestickSeries, LineSeries, HistogramSeries } from 'lightweight-charts';
 import { getSymbols } from '../utils/storage';
+import { getCompositeLegs, isCompositeSymbol } from '../utils/symbols';
 import { useBinanceTickers } from '../hooks/useBinanceTickers';
 import { perfLog } from '../utils/perfLogger';
 import '../App.css';
@@ -41,13 +42,63 @@ const parseInterval = (int) => {
     return 60;
 };
 
+const toCandle = (raw) => ({
+    time: raw[0] / 1000,
+    open: +raw[1],
+    high: +raw[2],
+    low: +raw[3],
+    close: +raw[4],
+    volume: +raw[5],
+});
+
+const computeCompositeCandle = (base, quote) => {
+    if (!base || !quote) return null;
+    const denomOpen = quote.open;
+    const denomClose = quote.close;
+    const denomHigh = quote.high;
+    const denomLow = quote.low;
+    if (!isFinite(denomOpen) || !isFinite(denomClose) || !isFinite(denomHigh) || !isFinite(denomLow)) return null;
+    if (denomOpen === 0 || denomClose === 0 || denomHigh === 0 || denomLow === 0) return null;
+    if (!isFinite(base.open) || !isFinite(base.close) || !isFinite(base.high) || !isFinite(base.low)) return null;
+
+    const open = base.open / denomOpen;
+    const close = base.close / denomClose;
+    const high = base.high / denomLow;
+    const low = base.low / denomHigh;
+    if (!isFinite(open) || !isFinite(close) || !isFinite(high) || !isFinite(low)) return null;
+
+    return {
+        time: base.time,
+        open,
+        high,
+        low,
+        close,
+        volume: isFinite(base.volume) ? base.volume : 0,
+    };
+};
+
+const buildCompositeSeries = (baseData, quoteData) => {
+    const quoteMap = new Map(quoteData.map(c => [c.time, c]));
+    const out = [];
+    baseData.forEach((b) => {
+        const q = quoteMap.get(b.time);
+        if (!q) return;
+        const c = computeCompositeCandle(b, q);
+        if (c) out.push(c);
+    });
+    return out;
+};
+
 export default function ChartPage() {
-    const { symbol } = useParams();
+    const { symbol: rawSymbol } = useParams();
+    const symbol = rawSymbol ? decodeURIComponent(rawSymbol) : '';
     const navigate = useNavigate();
     const containerRef = useRef(null);
     const chartRef = useRef(null);
     const seriesRef = useRef(null);
     const labelsInitializedRef = useRef(false);
+    const compositeLegRef = useRef(null);
+    const compositeLiveRef = useRef({ base: null, quote: null });
     const [chartReadyTick, setChartReadyTick] = useState(0);
 
     const getPrefix = (type) => LABEL_PREFIX[type] || 'd';
@@ -1421,20 +1472,68 @@ export default function ChartPage() {
         setIsLoading(true);
         setLoadingStage('连接中...');
 
-        const isPerpetual = symbol.endsWith('.P');
-        const baseSymbol = isPerpetual ? symbol.slice(0, -2) : symbol;
-        const apiBase = isPerpetual ? 'https://fapi.binance.com/fapi/v1' : 'https://api.binance.com/api/v3';
-        const wsBase = isPerpetual ? 'wss://fstream.binance.com/ws' : 'wss://stream.binance.com:9443/ws';
+        const isComposite = isCompositeSymbol(symbol);
+        const compositeSpec = isComposite ? getCompositeLegs(symbol) : null;
+        const apiSpot = 'https://api.binance.com/api/v3';
+        const apiFutures = 'https://fapi.binance.com/fapi/v1';
+        const wsSpot = 'wss://stream.binance.com:9443/ws';
+        const wsFutures = 'wss://fstream.binance.com/ws';
+        let ws = null;
+        let baseWs = null;
+        let quoteWs = null;
+
+        const fetchKlines = async (symbolValue, isPerp, endTime) => {
+            const base = isPerp ? symbolValue.slice(0, -2) : symbolValue;
+            const apiBase = isPerp ? apiFutures : apiSpot;
+            const endParam = typeof endTime === 'number' ? `&endTime=${endTime}` : '';
+            const res = await fetch(`${apiBase}/klines?symbol=${base}&interval=${interval}&limit=500${endParam}`);
+            const data = await res.json();
+            return Array.isArray(data) ? data : null;
+        };
+
+        const fetchWithFallback = async (spotSymbol, perpSymbol, endTime) => {
+            const spot = await fetchKlines(spotSymbol, false, endTime);
+            if (spot && spot.length > 0) {
+                return { symbol: spotSymbol, isPerp: false, data: spot };
+            }
+            const perp = await fetchKlines(perpSymbol, true, endTime);
+            if (perp && perp.length > 0) {
+                return { symbol: perpSymbol, isPerp: true, data: perp };
+            }
+            return null;
+        };
 
         // Initial Load
         const load = async () => {
             try {
                 perfLog('[perf] chart fetch start', symbol, interval);
-                const res = await fetch(`${apiBase}/klines?symbol=${baseSymbol}&interval=${interval}&limit=500`);
-                const data = await res.json();
-                setLoadingStage('数据处理中...');
-                const formatted = data.map(d => ({ time: d[0] / 1000, open: +d[1], high: +d[2], low: +d[3], close: +d[4], volume: +d[5] }));
+                let formatted = [];
+                if (isComposite && compositeSpec) {
+                    const baseRes = await fetchWithFallback(compositeSpec.baseSpot, compositeSpec.basePerp);
+                    const quoteRes = await fetchWithFallback(compositeSpec.quoteSpot, compositeSpec.quotePerp);
+                    if (!baseRes || !quoteRes) {
+                        throw new Error('composite_fetch_failed');
+                    }
+                    const baseFormatted = baseRes.data.map(toCandle);
+                    const quoteFormatted = quoteRes.data.map(toCandle);
+                    formatted = buildCompositeSeries(baseFormatted, quoteFormatted);
 
+                    compositeLegRef.current = {
+                        base: { symbol: baseRes.symbol, isPerp: baseRes.isPerp },
+                        quote: { symbol: quoteRes.symbol, isPerp: quoteRes.isPerp }
+                    };
+                    compositeLiveRef.current = { base: null, quote: null };
+                } else {
+                    const isPerpetual = symbol.endsWith('.P');
+                    const baseSymbol = isPerpetual ? symbol.slice(0, -2) : symbol;
+                    const apiBase = isPerpetual ? apiFutures : apiSpot;
+                    const res = await fetch(`${apiBase}/klines?symbol=${baseSymbol}&interval=${interval}&limit=500`);
+                    const data = await res.json();
+                    formatted = data.map(toCandle);
+                    compositeLegRef.current = null;
+                }
+
+                setLoadingStage('鏁版嵁澶勭悊涓?..');
                 allDataRef.current = formatted;
                 seriesRef.current.setData(formatted);
                 applyPriceFormat(formatted[formatted.length - 1]?.close);
@@ -1485,36 +1584,89 @@ export default function ChartPage() {
             // Clear stage shortly after finishing to avoid stale text
             stageTimer = setTimeout(() => setLoadingStage(''), 300);
         };
-        load();
+        load().then(() => {
+            if (isComposite && compositeSpec && compositeLegRef.current) {
+                const openLegWs = (legKey, legMeta) => {
+                    const baseSymbol = legMeta.isPerp ? legMeta.symbol.slice(0, -2) : legMeta.symbol;
+                    const wsBase = legMeta.isPerp ? wsFutures : wsSpot;
+                    const wsRef = new WebSocket(`${wsBase}/${baseSymbol.toLowerCase()}@kline_${interval}`);
+                    wsRef.onopen = () => {
+                        perfLog('[perf] chart ws open', symbol, interval, legKey);
+                    };
+                    wsRef.onmessage = (e) => {
+                        if (allDataRef.current.length === 0) return;
+                        const m = JSON.parse(e.data);
+                        if (!m.k) return;
+                        const k = {
+                            time: m.k.t / 1000,
+                            open: +m.k.o,
+                            high: +m.k.h,
+                            low: +m.k.l,
+                            close: +m.k.c,
+                            volume: +m.k.v,
+                            isClosed: !!m.k.x,
+                        };
+                        compositeLiveRef.current[legKey] = k;
+                        const otherKey = legKey === 'base' ? 'quote' : 'base';
+                        const other = compositeLiveRef.current[otherKey];
+                        if (!other || other.time !== k.time) return;
+                        const composite = computeCompositeCandle(
+                            legKey === 'base' ? k : other,
+                            legKey === 'base' ? other : k
+                        );
+                        if (!composite) return;
+                        if (!firstWsTick) {
+                            firstWsTick = true;
+                            perfLog('[perf] chart ws first tick', symbol, interval, 'ms=', Date.now() - loadStart);
+                        }
+                        seriesRef.current.update(composite);
+                        applyPriceFormat(composite.close);
+                        const last = allDataRef.current[allDataRef.current.length - 1];
+                        if (last && last.time === composite.time) {
+                            allDataRef.current[allDataRef.current.length - 1] = composite;
+                        } else {
+                            allDataRef.current.push(composite);
+                        }
+                        updateIndicators(allDataRef.current);
+                    };
+                    return wsRef;
+                };
 
-        // WebSocket
-        const ws = new WebSocket(`${wsBase}/${baseSymbol.toLowerCase()}@kline_${interval}`);
-        ws.onopen = () => {
-            perfLog('[perf] chart ws open', symbol, interval);
-        };
-        ws.onmessage = (e) => {
-            // Guard: don't update if initial load hasn't finished (prevent mixing intervals)
-            if (allDataRef.current.length === 0) return;
+                baseWs = openLegWs('base', compositeLegRef.current.base);
+                quoteWs = openLegWs('quote', compositeLegRef.current.quote);
+            } else if (!isComposite) {
+                const isPerpetual = symbol.endsWith('.P');
+                const baseSymbol = isPerpetual ? symbol.slice(0, -2) : symbol;
+                const wsBase = isPerpetual ? wsFutures : wsSpot;
+                ws = new WebSocket(`${wsBase}/${baseSymbol.toLowerCase()}@kline_${interval}`);
+                ws.onopen = () => {
+                    perfLog('[perf] chart ws open', symbol, interval);
+                };
+                ws.onmessage = (e) => {
+                    // Guard: don't update if initial load hasn't finished (prevent mixing intervals)
+                    if (allDataRef.current.length === 0) return;
 
-            if (!firstWsTick) {
-                firstWsTick = true;
-                perfLog('[perf] chart ws first tick', symbol, interval, 'ms=', Date.now() - loadStart);
+                    if (!firstWsTick) {
+                        firstWsTick = true;
+                        perfLog('[perf] chart ws first tick', symbol, interval, 'ms=', Date.now() - loadStart);
+                    }
+                    const m = JSON.parse(e.data);
+                    if (m.k) {
+                        const k = { time: m.k.t / 1000, open: +m.k.o, high: +m.k.h, low: +m.k.l, close: +m.k.c, volume: +m.k.v };
+                        seriesRef.current.update(k);
+                        applyPriceFormat(k.close);
+                        // Sync allDataRef
+                        const last = allDataRef.current[allDataRef.current.length - 1];
+                        if (last && last.time === k.time) {
+                            allDataRef.current[allDataRef.current.length - 1] = k;
+                        } else {
+                            allDataRef.current.push(k);
+                        }
+                        updateIndicators(allDataRef.current);
+                    }
+                };
             }
-            const m = JSON.parse(e.data);
-            if (m.k) {
-                const k = { time: m.k.t / 1000, open: +m.k.o, high: +m.k.h, low: +m.k.l, close: +m.k.c, volume: +m.k.v };
-                seriesRef.current.update(k);
-                applyPriceFormat(k.close);
-                // Sync allDataRef
-                const last = allDataRef.current[allDataRef.current.length - 1];
-                if (last && last.time === k.time) {
-                    allDataRef.current[allDataRef.current.length - 1] = k;
-                } else {
-                    allDataRef.current.push(k);
-                }
-                updateIndicators(allDataRef.current);
-            }
-        };
+        });
 
         // Infinite Scroll Handler
         const handleScroll = async (newRange) => {
@@ -1535,19 +1687,45 @@ export default function ChartPage() {
                 const oldestTime = allDataRef.current[0].time * 1000;
                 isFetchingHistoryRef.current = true;
                 try {
-                    const res = await fetch(`${apiBase}/klines?symbol=${baseSymbol}&interval=${interval}&limit=500&endTime=${oldestTime - 1}`);
-                    const raw = await res.json();
-                    if (Array.isArray(raw) && raw.length > 0) {
-                        const newData = raw.map(d => ({ time: d[0] / 1000, open: +d[1], high: +d[2], low: +d[3], close: +d[4], volume: +d[5] }));
-                        // Filter to avoid overlaps
-                        const uniqueNew = newData.filter(d => d.time < allDataRef.current[0].time);
-                        if (uniqueNew.length > 0) {
-                            const merged = [...uniqueNew, ...allDataRef.current];
-                            allDataRef.current = merged;
-                            seriesRef.current.setData(merged);
-                            updateIndicators(merged);
+                    if (isComposite && compositeLegRef.current) {
+                        const baseMeta = compositeLegRef.current.base;
+                        const quoteMeta = compositeLegRef.current.quote;
+                        const endTime = oldestTime - 1;
+                        const baseRaw = await fetchKlines(baseMeta.symbol, baseMeta.isPerp, endTime);
+                        const quoteRaw = await fetchKlines(quoteMeta.symbol, quoteMeta.isPerp, endTime);
+                        if (Array.isArray(baseRaw) && Array.isArray(quoteRaw)) {
+                            const baseData = baseRaw.map(toCandle);
+                            const quoteData = quoteRaw.map(toCandle);
+                            const newData = buildCompositeSeries(baseData, quoteData);
+                            // Filter to avoid overlaps
+                            const uniqueNew = newData.filter(d => d.time < allDataRef.current[0].time);
+                            if (uniqueNew.length > 0) {
+                                const merged = [...uniqueNew, ...allDataRef.current];
+                                allDataRef.current = merged;
+                                seriesRef.current.setData(merged);
+                                updateIndicators(merged);
 
-                            // No shift needed for drawings now! They use time.
+                                // No shift needed for drawings now! They use time.
+                            }
+                        }
+                    } else {
+                        const isPerpetual = symbol.endsWith('.P');
+                        const baseSymbol = isPerpetual ? symbol.slice(0, -2) : symbol;
+                        const apiBase = isPerpetual ? apiFutures : apiSpot;
+                        const res = await fetch(`${apiBase}/klines?symbol=${baseSymbol}&interval=${interval}&limit=500&endTime=${oldestTime - 1}`);
+                        const raw = await res.json();
+                        if (Array.isArray(raw) && raw.length > 0) {
+                            const newData = raw.map(toCandle);
+                            // Filter to avoid overlaps
+                            const uniqueNew = newData.filter(d => d.time < allDataRef.current[0].time);
+                            if (uniqueNew.length > 0) {
+                                const merged = [...uniqueNew, ...allDataRef.current];
+                                allDataRef.current = merged;
+                                seriesRef.current.setData(merged);
+                                updateIndicators(merged);
+
+                                // No shift needed for drawings now! They use time.
+                            }
                         }
                     }
                 } catch (err) { console.error(err); }
@@ -1558,7 +1736,9 @@ export default function ChartPage() {
         chartRef.current.timeScale().subscribeVisibleLogicalRangeChange(handleScroll);
 
         return () => {
-            ws.close();
+            if (ws) ws.close();
+            if (baseWs) baseWs.close();
+            if (quoteWs) quoteWs.close();
             if (chartRef.current) chartRef.current.timeScale().unsubscribeVisibleLogicalRangeChange(handleScroll);
             if (stageTimer) clearTimeout(stageTimer);
         };
@@ -3303,7 +3483,7 @@ export default function ChartPage() {
                                     <div key={sym}
                                         onClick={() => {
                                             if (!isCurrent) {
-                                                navigate(`/chart/${sym}`);
+                                                navigate(`/chart/${encodeURIComponent(sym)}`);
                                                 setShowSymbolMenu(false);
                                             }
                                         }}
