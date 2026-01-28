@@ -1461,6 +1461,7 @@ export default function ChartPage() {
         let stageTimer;
         let loadStart = Date.now();
         let firstWsTick = false;
+        let loadOk = false;
         perfLog('[perf] chart load start', symbol, interval, loadStart);
 
         // Save interval preference
@@ -1508,6 +1509,9 @@ export default function ChartPage() {
             try {
                 perfLog('[perf] chart fetch start', symbol, interval);
                 let formatted = [];
+                if (isComposite && !compositeSpec) {
+                    throw new Error('invalid_composite');
+                }
                 if (isComposite && compositeSpec) {
                     const baseRes = await fetchWithFallback(compositeSpec.baseSpot, compositeSpec.basePerp);
                     const quoteRes = await fetchWithFallback(compositeSpec.quoteSpot, compositeSpec.quotePerp);
@@ -1529,17 +1533,25 @@ export default function ChartPage() {
                     const apiBase = isPerpetual ? apiFutures : apiSpot;
                     const res = await fetch(`${apiBase}/klines?symbol=${baseSymbol}&interval=${interval}&limit=500`);
                     const data = await res.json();
+                    if (!Array.isArray(data)) {
+                        throw new Error('fetch_failed');
+                    }
                     formatted = data.map(toCandle);
                     compositeLegRef.current = null;
                 }
 
-                setLoadingStage('鏁版嵁澶勭悊涓?..');
+                if (!Array.isArray(formatted) || formatted.length === 0) {
+                    throw new Error('no_data');
+                }
+
+                setLoadingStage('数据处理中...');
                 allDataRef.current = formatted;
                 seriesRef.current.setData(formatted);
                 applyPriceFormat(formatted[formatted.length - 1]?.close);
                 dataIntervalRef.current = interval; // mark data interval
                 lastLogicalRangeRef.current = chartRef.current.timeScale().getVisibleLogicalRange() || lastLogicalRangeRef.current;
                 updateIndicators(formatted);
+                loadOk = true;
                 perfLog('[perf] chart data set', symbol, interval, 'bars=', formatted.length, 'ms=', Date.now() - loadStart);
                 // Force redraw drawings with new data time-scale, using rAF to ensure TimeScale is ready
                 requestAnimationFrame(() => requestScreenDrawingsUpdateRef.current?.());
@@ -1577,7 +1589,10 @@ export default function ChartPage() {
             } catch (e) {
                 console.error(e);
                 perfLog('[perf] chart load error', symbol, interval, String(e));
-                setLoadingStage('加载失败');
+                compositeLegRef.current = null;
+                compositeLiveRef.current = { base: null, quote: null };
+                const msg = e?.message === 'invalid_composite' ? '交易对无效' : '加载失败';
+                setLoadingStage(msg);
             }
             setIsLoading(false);
             perfLog('[perf] chart load end', symbol, interval, 'ms=', Date.now() - loadStart);
@@ -1585,6 +1600,7 @@ export default function ChartPage() {
             stageTimer = setTimeout(() => setLoadingStage(''), 300);
         };
         load().then(() => {
+            if (!loadOk) return;
             if (isComposite && compositeSpec && compositeLegRef.current) {
                 const openLegWs = (legKey, legMeta) => {
                     const baseSymbol = legMeta.isPerp ? legMeta.symbol.slice(0, -2) : legMeta.symbol;

@@ -5,7 +5,7 @@ import { useBinanceTickers } from './hooks/useBinanceTickers';
 import { usePriceAlerts } from './hooks/usePriceAlerts';
 import FloatingWidget from './plugins/FloatingWidget';
 import { Capacitor } from '@capacitor/core';
-import { getSymbols, addSymbol, removeSymbol, saveSymbols, getFloatingConfig, saveFloatingConfig } from './utils/storage';
+import { getSymbols, saveSymbols, getFloatingConfig, saveFloatingConfig } from './utils/storage';
 import { getCompositeLegs, isCompositeSymbol, normalizeCompositeSymbol, normalizeSymbol, tokenToSpotSymbol } from './utils/symbols';
 import { getAlerts } from './utils/alert_storage';
 import { normalizeAlertsForNative } from './utils/alertNormalize';
@@ -265,8 +265,14 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
       ? normalizeCompositeSymbol(candidate)
       : normalizeSymbol(candidate);
     if (normalized.trim()) {
-      const updated = addSymbol(normalized);
-      setSymbols([...updated]);
+      setSymbols(prev => {
+        const next = [...prev];
+        if (!next.includes(normalized)) {
+          next.push(normalized);
+          saveSymbols(next);
+        }
+        return next;
+      });
       setNewSymbol('');
       setShowSuggestions(false);
     }
@@ -286,8 +292,11 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
 
   const handleRemoveSymbol = (symbol, e) => {
     e.stopPropagation();
-    const updated = removeSymbol(symbol);
-    setSymbols([...updated]);
+    setSymbols(prev => {
+      const next = prev.filter(s => s !== symbol);
+      saveSymbols(next);
+      return next;
+    });
   };
 
   const handleDragEnd = (result) => {
@@ -295,9 +304,53 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
     const items = Array.from(symbols);
     const [reorderedItem] = items.splice(result.source.index, 1);
     items.splice(result.destination.index, 0, reorderedItem);
-    setSymbols(items);
+    setSymbols([...items]);
     saveSymbols(items);
   };
+
+  const syncSymbolsFromStorage = useCallback(() => {
+    const stored = getSymbols();
+    setSymbols(prev => {
+      if (prev.length === stored.length && prev.every((s, i) => s === stored[i])) {
+        return prev;
+      }
+      return stored;
+    });
+  }, []);
+
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (!document.hidden) syncSymbolsFromStorage();
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', syncSymbolsFromStorage);
+    let appListener = null;
+    if (Capacitor.isNativePlatform()) {
+      appListener = CapacitorApp.addListener('appStateChange', (state) => {
+        if (state?.isActive) syncSymbolsFromStorage();
+      });
+    }
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', syncSymbolsFromStorage);
+      if (appListener) {
+        appListener.then(r => r.remove());
+      }
+    };
+  }, [syncSymbolsFromStorage]);
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    const timer = setInterval(syncSymbolsFromStorage, 1000);
+    return () => clearInterval(timer);
+  }, [syncSymbolsFromStorage]);
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    const nativeSymbols = expandSymbolsForNative(symbols);
+    Promise.resolve(FloatingWidget.setSymbols({ symbols: nativeSymbols })).catch(console.error);
+    Promise.resolve(FloatingWidget.requestTickerUpdate()).catch(console.error);
+  }, [symbols]);
 
   // Drag handling logic is now explicit via Edit Mode and Handle
 

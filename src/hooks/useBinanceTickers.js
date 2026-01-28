@@ -383,42 +383,6 @@ export const useBinanceTickers = (symbols = []) => {
         connectSpot(spotSymbols);
         connectFutures(futuresSymbols);
 
-        // One-shot REST fallback to seed prices (useful for .P before WS ticks land)
-        const seedPrices = async () => {
-            try {
-                const updates = {};
-                // Spot
-                await Promise.all(spotSymbols.map(async (s) => {
-                    try {
-                        const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${s}`);
-                        const json = await res.json();
-                        const price = parseFloat(json.price);
-                        if (!Number.isNaN(price)) updates[s] = { price, change: 0, changePercent: 0 };
-                    } catch (_) { }
-                }));
-                // Futures
-                await Promise.all(futuresSymbols.map(async (s) => {
-                    try {
-                        const base = getBaseSymbol(s);
-                        const res = await fetch(`https://fapi.binance.com/fapi/v1/ticker/price?symbol=${base}`);
-                        const json = await res.json();
-                        const price = parseFloat(json.price);
-                        if (!Number.isNaN(price)) updates[s] = { price, change: 0, changePercent: 0 };
-                    } catch (_) { }
-                }));
-                if (Object.keys(updates).length > 0) {
-                    setTickers(prev => {
-                        const merged = { ...prev, ...updates };
-                        const composites = computeCompositeTickers(merged);
-                        return Object.keys(composites).length > 0 ? { ...merged, ...composites } : merged;
-                    });
-                }
-            } catch (e) {
-                console.error('Seed price fetch failed', e);
-            }
-        };
-        seedPrices();
-
         watchdogIntervalRef.current = setInterval(() => {
             const now = Date.now();
             const timeSinceLastUpdate = now - lastUpdateRef.current;
@@ -444,6 +408,51 @@ export const useBinanceTickers = (symbols = []) => {
             }
         };
     }, [subscriptionKey, isNative]);
+
+    // Seed prices via REST for both native + web (helps avoid long "--" before WS/native data)
+    useEffect(() => {
+        if (subscriptionSymbols.length === 0) return;
+        let cancelled = false;
+
+        const seedPrices = async () => {
+            try {
+                const updates = {};
+                const spotSymbols = subscriptionSymbols.filter(s => !isPerpetual(s));
+                const futuresSymbols = subscriptionSymbols.filter(s => isPerpetual(s));
+
+                await Promise.all(spotSymbols.map(async (s) => {
+                    try {
+                        const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${s}`);
+                        const json = await res.json();
+                        const price = parseFloat(json.price);
+                        if (!Number.isNaN(price)) updates[s] = { price, change: 0, changePercent: 0 };
+                    } catch (_) { }
+                }));
+
+                await Promise.all(futuresSymbols.map(async (s) => {
+                    try {
+                        const base = getBaseSymbol(s);
+                        const res = await fetch(`https://fapi.binance.com/fapi/v1/ticker/price?symbol=${base}`);
+                        const json = await res.json();
+                        const price = parseFloat(json.price);
+                        if (!Number.isNaN(price)) updates[s] = { price, change: 0, changePercent: 0 };
+                    } catch (_) { }
+                }));
+
+                if (cancelled || Object.keys(updates).length === 0) return;
+                setTickers(prev => {
+                    const merged = { ...prev, ...updates };
+                    const composites = computeCompositeTickers(merged);
+                    return Object.keys(composites).length > 0 ? { ...merged, ...composites } : merged;
+                });
+            } catch (e) {
+                console.error('Seed price fetch failed', e);
+            }
+        };
+
+        seedPrices();
+        return () => { cancelled = true; };
+    }, [subscriptionKey]);
 
     // Web + Native fallback: periodically fetch missing symbols that have no price yet (covers newly added .P)
     useEffect(() => {
