@@ -125,7 +125,6 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
         if (!symbolsState.contains(sym)) {
             symbolsState.add(sym)
             persistSymbols()
-            refreshSymbolsFromPrefs()
             // Update service
             val intent = Intent(this, FloatingWindowService::class.java).apply {
                 action = FloatingWindowService.ACTION_SET_SYMBOLS
@@ -186,7 +185,7 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
 
     private fun buildMainIntent(): Intent {
         return Intent(this, MainActivity::class.java).apply {
-            putExtra("symbolsJson", gson.toJson(symbolsState))
+            putExtra("symbolsJson", gson.toJson(symbolsState.toList()))
         }
     }
 
@@ -208,8 +207,11 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
 
     private fun persistSymbols() {
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        prefs.edit().putString(PREFS_SYMBOLS_KEY, gson.toJson(symbolsState)).commit()
-        prefs.edit().putString(PREFS_SYMBOLS_DISPLAY_KEY, gson.toJson(symbolsState)).commit()
+        val list = symbolsState.toList()
+        val editor = prefs.edit()
+        editor.putString(PREFS_SYMBOLS_KEY, gson.toJson(list))
+        editor.putString(PREFS_SYMBOLS_DISPLAY_KEY, gson.toJson(list))
+        editor.commit()
     }
 
     private fun ensureOverlayPermission(): Boolean {
