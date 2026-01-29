@@ -512,7 +512,7 @@ public class FloatingWindowService extends Service {
     private void persistSymbols(java.util.List<String> symbols, String key) {
         try {
             android.content.SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-            prefs.edit().putString(key, gson.toJson(symbols)).apply();
+            prefs.edit().putString(key, gson.toJson(symbols)).commit();
         } catch (Exception ignored) {}
     }
     

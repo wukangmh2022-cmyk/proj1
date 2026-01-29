@@ -39,6 +39,72 @@ const formatQuotePrice = (price) => {
   return n.toLocaleString(undefined, { minimumFractionDigits: precision, maximumFractionDigits: precision });
 };
 
+const BACKUP_VERSION = 1;
+const BACKUP_EXCLUDE_KEYS = new Set([
+  'amaze_diag_js',
+  'amaze_last_route',
+  'amaze_last_background_ts'
+]);
+
+const isBackupKey = (key) => {
+  if (!key) return false;
+  if (BACKUP_EXCLUDE_KEYS.has(key)) return false;
+  return key.startsWith('chart_') || key.startsWith('binance_') || key.startsWith('floating_');
+};
+
+const collectBackupData = () => {
+  const data = {};
+  for (let i = 0; i < localStorage.length; i += 1) {
+    const key = localStorage.key(i);
+    if (!isBackupKey(key)) continue;
+    data[key] = localStorage.getItem(key);
+  }
+  return {
+    version: BACKUP_VERSION,
+    exportedAt: Date.now(),
+    data
+  };
+};
+
+const parseBackupPayload = (raw) => {
+  if (!raw) throw new Error('empty');
+  const parsed = JSON.parse(raw);
+  if (parsed && typeof parsed === 'object' && parsed.data && typeof parsed.data === 'object') {
+    return parsed.data;
+  }
+  if (parsed && typeof parsed === 'object') {
+    return parsed;
+  }
+  throw new Error('invalid');
+};
+
+const hasBackupData = () => {
+  for (let i = 0; i < localStorage.length; i += 1) {
+    const key = localStorage.key(i);
+    if (isBackupKey(key)) return true;
+  }
+  return false;
+};
+
+const applyBackupData = (data, mode = 'overwrite') => {
+  if (mode === 'overwrite') {
+    const keysToClear = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (isBackupKey(key)) keysToClear.push(key);
+    }
+    keysToClear.forEach((key) => localStorage.removeItem(key));
+  }
+  Object.entries(data || {}).forEach(([key, value]) => {
+    if (!isBackupKey(key)) return;
+    if (typeof value === 'string') {
+      localStorage.setItem(key, value);
+    } else {
+      localStorage.setItem(key, JSON.stringify(value));
+    }
+  });
+};
+
 const expandSymbolsForNative = (list) => {
   const set = new Set();
   list.forEach((raw) => {
@@ -60,6 +126,87 @@ const expandSymbolsForNative = (list) => {
 };
 
 const SettingsPanel = ({ config, onUpdate, onDone, showDiagnostics }) => {
+  const [showImport, setShowImport] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [importError, setImportError] = useState('');
+  const [showImportConfirm, setShowImportConfirm] = useState(false);
+  const [pendingImportData, setPendingImportData] = useState(null);
+
+  const copyText = async (text) => {
+    const v = text || '';
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(v);
+        return true;
+      }
+    } catch { }
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = v;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  };
+
+  const handleCopyConfig = async () => {
+    try {
+      const payload = collectBackupData();
+      const text = JSON.stringify(payload);
+      const ok = await copyText(text);
+      if (!ok) alert('复制失败，请手动长按复制');
+      else alert('配置已复制');
+    } catch (e) {
+      alert('复制失败：' + (e?.message || e));
+    }
+  };
+
+  const syncNativeSymbolsFromData = (data) => {
+    const rawSymbols = data?.binance_symbols_display || data?.binance_symbols;
+    if (!rawSymbols || !Capacitor.isNativePlatform()) return;
+    let list = [];
+    if (Array.isArray(rawSymbols)) {
+      list = rawSymbols;
+    } else if (typeof rawSymbols === 'string') {
+      try { list = JSON.parse(rawSymbols); } catch { list = []; }
+    }
+    if (Array.isArray(list) && list.length > 0) {
+      const nativeSymbols = expandSymbolsForNative(list);
+      Promise.resolve(FloatingWidget.setSymbols({ symbols: nativeSymbols, displaySymbols: list })).catch(console.error);
+      Promise.resolve(FloatingWidget.startData({ symbols: nativeSymbols, displaySymbols: list })).catch(console.error);
+      Promise.resolve(FloatingWidget.requestTickerUpdate()).catch(console.error);
+    }
+  };
+
+  const finalizeImport = (mode, data) => {
+    applyBackupData(data, mode);
+    syncNativeSymbolsFromData(data);
+    alert(mode === 'merge' ? '合并成功，将刷新页面' : '覆盖成功，将刷新页面');
+    window.location.reload();
+  };
+
+  const handleImport = async () => {
+    setImportError('');
+    try {
+      const data = parseBackupPayload(importText);
+      if (hasBackupData()) {
+        setPendingImportData(data);
+        setShowImportConfirm(true);
+        return;
+      }
+      finalizeImport('overwrite', data);
+    } catch (e) {
+      setImportError('导入失败：格式不正确');
+    }
+  };
+
   return (
     <div className="modal" onClick={e => e.stopPropagation()}>
       <h2>悬浮窗设置</h2>
@@ -88,6 +235,64 @@ const SettingsPanel = ({ config, onUpdate, onDone, showDiagnostics }) => {
           </button>
         )}
       </div>
+      <div className="settings-group" style={{ marginTop: 16 }}>
+        <label>配置备份</label>
+        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+          <button className="btn btn-secondary" onClick={handleCopyConfig}>一键复制配置</button>
+          <button className="btn btn-secondary" onClick={() => { setShowImport(true); setImportError(''); }}>导入配置</button>
+        </div>
+      </div>
+      {showImport && (
+        <div style={{ marginTop: 12 }}>
+          <textarea
+            value={importText}
+            onChange={(e) => setImportText(e.target.value)}
+            placeholder="粘贴配置JSON"
+            style={{
+              width: '100%',
+              minHeight: 120,
+              background: '#0b0f14',
+              border: '1px solid rgba(255,255,255,0.1)',
+              padding: 10,
+              borderRadius: 8,
+              color: '#d1d5db',
+              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace',
+              fontSize: 12,
+              lineHeight: 1.35
+            }}
+          />
+          {importError && <div style={{ color: '#ef5350', marginTop: 6, fontSize: 12 }}>{importError}</div>}
+          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+            <button className="btn btn-primary" onClick={handleImport}>确认导入</button>
+            <button className="btn btn-secondary" onClick={() => setShowImport(false)}>取消</button>
+          </div>
+          {showImportConfirm && (
+            <div style={{ marginTop: 10, padding: 10, borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)', background: '#11161d' }}>
+              <div style={{ color: '#d1d5db', fontSize: 12, marginBottom: 8 }}>
+                检测到已有配置，选择合并或覆盖？
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-primary" onClick={() => {
+                  const data = pendingImportData;
+                  setShowImportConfirm(false);
+                  setPendingImportData(null);
+                  if (data) finalizeImport('merge', data);
+                }}>合并</button>
+                <button className="btn btn-danger" onClick={() => {
+                  const data = pendingImportData;
+                  setShowImportConfirm(false);
+                  setPendingImportData(null);
+                  if (data) finalizeImport('overwrite', data);
+                }}>覆盖</button>
+                <button className="btn btn-secondary" onClick={() => {
+                  setShowImportConfirm(false);
+                  setPendingImportData(null);
+                }}>取消</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

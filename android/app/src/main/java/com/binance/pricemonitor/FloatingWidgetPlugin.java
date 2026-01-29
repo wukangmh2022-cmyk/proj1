@@ -263,12 +263,13 @@ public class FloatingWidgetPlugin extends Plugin {
     private void persistFloatingConfig(float fontSize, float opacity, boolean showSymbol, int itemsPerPage) {
         try {
             android.content.SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            // Use commit() to ensure config is flushed before app/process exit.
             prefs.edit()
                     .putFloat(PREFS_FONT_SIZE, fontSize)
                     .putFloat(PREFS_OPACITY, opacity)
                     .putBoolean(PREFS_SHOW_SYMBOL, showSymbol)
                     .putInt(PREFS_ITEMS_PER_PAGE, itemsPerPage)
-                    .apply();
+                    .commit();
         } catch (Exception ignored) {}
     }
 
