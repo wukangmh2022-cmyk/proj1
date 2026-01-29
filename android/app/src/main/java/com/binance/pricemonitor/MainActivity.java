@@ -219,7 +219,9 @@ public class MainActivity extends BridgeActivity {
         // Navigate to pending symbol if needed
         if (getBridge() != null && getBridge().getWebView() != null) {
             if (pendingSymbolsJson != null && !pendingSymbolsJson.isEmpty()) {
-                String syncScript = "try{localStorage.setItem('binance_symbols', JSON.stringify(" + pendingSymbolsJson + "));}catch(e){}";
+                String syncScript = "try{localStorage.setItem('binance_symbols', JSON.stringify(" + pendingSymbolsJson + "));"
+                        + "localStorage.setItem('binance_symbols_display', JSON.stringify(" + pendingSymbolsJson + "));"
+                        + "window.dispatchEvent(new Event('amaze_symbols_sync'));}catch(e){}";
                 getBridge().getWebView().evaluateJavascript(syncScript, null);
                 pendingSymbolsJson = null;
             }

@@ -52,12 +52,25 @@ const isBackupKey = (key) => {
   return key.startsWith('chart_') || key.startsWith('binance_') || key.startsWith('floating_');
 };
 
+const parseMaybeJson = (value) => {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  if (!(trimmed.startsWith('{') || trimmed.startsWith('['))) return value;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+};
+
 const collectBackupData = () => {
   const data = {};
   for (let i = 0; i < localStorage.length; i += 1) {
     const key = localStorage.key(i);
     if (!isBackupKey(key)) continue;
-    data[key] = localStorage.getItem(key);
+    const raw = localStorage.getItem(key);
+    data[key] = parseMaybeJson(raw);
   }
   return {
     version: BACKUP_VERSION,
@@ -159,7 +172,7 @@ const SettingsPanel = ({ config, onUpdate, onDone, showDiagnostics }) => {
   const handleCopyConfig = async () => {
     try {
       const payload = collectBackupData();
-      const text = JSON.stringify(payload);
+      const text = JSON.stringify(payload, null, 2);
       const ok = await copyText(text);
       if (!ok) alert('复制失败，请手动长按复制');
       else alert('配置已复制');
@@ -529,6 +542,10 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
     };
     document.addEventListener('visibilitychange', handleVisibility);
     window.addEventListener('focus', syncSymbolsFromStorage);
+    const handleNativeSync = () => {
+      syncSymbolsFromStorage();
+    };
+    window.addEventListener('amaze_symbols_sync', handleNativeSync);
     let appListener = null;
     if (Capacitor.isNativePlatform()) {
       appListener = CapacitorApp.addListener('appStateChange', (state) => {
@@ -538,6 +555,7 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
     return () => {
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('focus', syncSymbolsFromStorage);
+      window.removeEventListener('amaze_symbols_sync', handleNativeSync);
       if (appListener) {
         appListener.then(r => r.remove());
       }
@@ -605,7 +623,7 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
     const newConfig = { ...config, [key]: value };
     setConfig(newConfig);
     saveFloatingConfig(newConfig);
-    if (Capacitor.isNativePlatform() && floatingActive) {
+    if (Capacitor.isNativePlatform()) {
       try {
         await FloatingWidget.updateConfig({
           fontSize: newConfig.fontSize,

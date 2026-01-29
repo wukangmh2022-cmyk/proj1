@@ -25,6 +25,10 @@ public class FloatingWindowService extends Service {
     private static final String PREFS_NAME = "amaze_monitor_prefs";
     private static final String PREFS_SYMBOLS_KEY = "binance_symbols";
     private static final String PREFS_SYMBOLS_DISPLAY_KEY = "binance_symbols_display";
+    private static final String PREFS_FONT_SIZE = "floating_font_size";
+    private static final String PREFS_OPACITY = "floating_opacity";
+    private static final String PREFS_SHOW_SYMBOL = "floating_show_symbol";
+    private static final String PREFS_ITEMS_PER_PAGE = "floating_items_per_page";
     private static final long TICKER_STALE_MS = 90_000L;
     private static final long TICKER_WATCHDOG_INTERVAL_MS = 30_000L;
     private static final long REST_REFRESH_INTERVAL_MS = 300_000L;
@@ -313,6 +317,7 @@ public class FloatingWindowService extends Service {
             opacity = intent.getFloatExtra(EXTRA_OPACITY, 0.85f);
             showSymbol = intent.getBooleanExtra(EXTRA_SHOW_SYMBOL, true);
             itemsPerPage = intent.getIntExtra(EXTRA_ITEMS_PER_PAGE, 1);
+            persistFloatingConfig(fontSize, opacity, showSymbol, itemsPerPage);
             applyConfig();
             if (windowVisible) updateUI();
             return START_STICKY;
@@ -522,6 +527,18 @@ public class FloatingWindowService extends Service {
         try {
             android.content.SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
             prefs.edit().putString(key, gson.toJson(symbols)).commit();
+        } catch (Exception ignored) {}
+    }
+
+    private void persistFloatingConfig(float fontSize, float opacity, boolean showSymbol, int itemsPerPage) {
+        try {
+            android.content.SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+            prefs.edit()
+                    .putFloat(PREFS_FONT_SIZE, fontSize)
+                    .putFloat(PREFS_OPACITY, opacity)
+                    .putBoolean(PREFS_SHOW_SYMBOL, showSymbol)
+                    .putInt(PREFS_ITEMS_PER_PAGE, itemsPerPage)
+                    .commit();
         } catch (Exception ignored) {}
     }
     

@@ -135,6 +135,17 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
             startService(Intent(this, FloatingWindowService::class.java).apply {
                 action = FloatingWindowService.ACTION_REQUEST_UPDATE
             })
+            val handler = android.os.Handler(android.os.Looper.getMainLooper())
+            handler.postDelayed({
+                startService(Intent(this, FloatingWindowService::class.java).apply {
+                    action = FloatingWindowService.ACTION_REQUEST_UPDATE
+                })
+            }, 1500)
+            handler.postDelayed({
+                startService(Intent(this, FloatingWindowService::class.java).apply {
+                    action = FloatingWindowService.ACTION_REQUEST_UPDATE
+                })
+            }, 3500)
         }
     }
 
