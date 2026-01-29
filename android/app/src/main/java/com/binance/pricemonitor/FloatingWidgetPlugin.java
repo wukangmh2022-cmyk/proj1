@@ -96,6 +96,8 @@ public class FloatingWidgetPlugin extends Plugin {
     public void startData(PluginCall call) {
         com.getcapacitor.JSArray jsArray = call.getArray("symbols");
         java.util.ArrayList<String> symbols = new java.util.ArrayList<>();
+        java.util.ArrayList<String> displaySymbols = new java.util.ArrayList<>();
+        boolean hasDisplaySymbols = false;
         try {
             for (int i = 0; i < jsArray.length(); i++) {
                 symbols.add(jsArray.getString(i));
@@ -104,11 +106,23 @@ public class FloatingWidgetPlugin extends Plugin {
             call.reject("Invalid symbol list");
             return;
         }
+        try {
+            com.getcapacitor.JSArray displayArray = call.getArray("displaySymbols");
+            if (displayArray != null) {
+                hasDisplaySymbols = true;
+                for (int i = 0; i < displayArray.length(); i++) {
+                    displaySymbols.add(displayArray.getString(i));
+                }
+            }
+        } catch (Exception ignored) {}
 
         Context context = getContext().getApplicationContext();
         Intent intent = new Intent(context, FloatingWindowService.class);
         intent.setAction(FloatingWindowService.ACTION_START_DATA);
         intent.putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST, symbols);
+        if (hasDisplaySymbols) {
+            intent.putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST_DISPLAY, displaySymbols);
+        }
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             context.startForegroundService(intent);
@@ -168,6 +182,8 @@ public class FloatingWidgetPlugin extends Plugin {
     public void setSymbols(PluginCall call) {
         com.getcapacitor.JSArray jsArray = call.getArray("symbols");
         java.util.ArrayList<String> symbols = new java.util.ArrayList<>();
+        java.util.ArrayList<String> displaySymbols = new java.util.ArrayList<>();
+        boolean hasDisplaySymbols = false;
         try {
             for (int i = 0; i < jsArray.length(); i++) {
                 symbols.add(jsArray.getString(i));
@@ -176,11 +192,23 @@ public class FloatingWidgetPlugin extends Plugin {
             call.reject("Invalid symbol list");
             return;
         }
+        try {
+            com.getcapacitor.JSArray displayArray = call.getArray("displaySymbols");
+            if (displayArray != null) {
+                hasDisplaySymbols = true;
+                for (int i = 0; i < displayArray.length(); i++) {
+                    displaySymbols.add(displayArray.getString(i));
+                }
+            }
+        } catch (Exception ignored) {}
 
         Context context = getContext().getApplicationContext();
         Intent intent = new Intent(context, FloatingWindowService.class);
         intent.setAction(FloatingWindowService.ACTION_SET_SYMBOLS);
         intent.putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST, symbols);
+        if (hasDisplaySymbols) {
+            intent.putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST_DISPLAY, displaySymbols);
+        }
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             context.startForegroundService(intent);

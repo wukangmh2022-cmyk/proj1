@@ -348,7 +348,7 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
     const nativeSymbols = expandSymbolsForNative(symbols);
-    Promise.resolve(FloatingWidget.setSymbols({ symbols: nativeSymbols })).catch(console.error);
+    Promise.resolve(FloatingWidget.setSymbols({ symbols: nativeSymbols, displaySymbols: symbols })).catch(console.error);
     Promise.resolve(FloatingWidget.requestTickerUpdate()).catch(console.error);
   }, [symbols]);
 
@@ -371,7 +371,7 @@ function HomePage({ initialEditMode = false, hideHeader = false, allowSettingsMo
       localStorage.setItem('floating_active', 'true'); // Persist state
       floatingActiveRef.current = true;
       const nativeSymbols = expandSymbolsForNative(symbols);
-      await FloatingWidget.setSymbols({ symbols: nativeSymbols });
+      await FloatingWidget.setSymbols({ symbols: nativeSymbols, displaySymbols: symbols });
       const currentConfig = getFloatingConfig();
       await FloatingWidget.updateConfig({
         fontSize: currentConfig.fontSize,
@@ -928,7 +928,7 @@ function App() {
         requestAnimationFrame(() => {
           if (cancelled) return;
           const nativeSymbols = expandSymbolsForNative(symbols);
-          FloatingWidget.startData({ symbols: nativeSymbols }).catch(console.error);
+          FloatingWidget.startData({ symbols: nativeSymbols, displaySymbols: symbols }).catch(console.error);
           // Initial alert sync (can be heavy if drawings are present)
           setTimeout(() => {
             if (cancelled) return;

@@ -24,6 +24,7 @@ import androidx.core.app.NotificationCompat;
 public class FloatingWindowService extends Service {
     private static final String PREFS_NAME = "amaze_monitor_prefs";
     private static final String PREFS_SYMBOLS_KEY = "binance_symbols";
+    private static final String PREFS_SYMBOLS_DISPLAY_KEY = "binance_symbols_display";
     private static final long TICKER_STALE_MS = 90_000L;
     private static final long TICKER_WATCHDOG_INTERVAL_MS = 30_000L;
     private static final long REST_REFRESH_INTERVAL_MS = 300_000L;
@@ -117,6 +118,7 @@ public class FloatingWindowService extends Service {
     public static final String EXTRA_OPACITY = "OPACITY";
     public static final String EXTRA_SHOW_SYMBOL = "SHOW_SYMBOL";
     public static final String EXTRA_SYMBOL_LIST = "SYMBOL_LIST";
+    public static final String EXTRA_SYMBOL_LIST_DISPLAY = "SYMBOL_LIST_DISPLAY";
     public static final String EXTRA_ITEMS_PER_PAGE = "ITEMS_PER_PAGE";
     public static final String EXTRA_SOUND_ID = "SOUND_ID";
 
@@ -227,11 +229,16 @@ public class FloatingWindowService extends Service {
         // Start data service (WebSocket) without showing window
         if (ACTION_START_DATA.equals(action)) {
             java.util.ArrayList<String> received = intent.getStringArrayListExtra(EXTRA_SYMBOL_LIST);
+            java.util.ArrayList<String> display = intent.getStringArrayListExtra(EXTRA_SYMBOL_LIST_DISPLAY);
+            if (display != null) {
+                persistSymbols(display, PREFS_SYMBOLS_DISPLAY_KEY);
+            }
             if (received != null && !received.isEmpty()) {
                 keepDataAlive = true;
                 symbolList = received;
                 persistSymbols(symbolList);
                 connectWebSockets();
+                requestRestRefresh();
             }
             return START_STICKY;
         }
@@ -268,12 +275,17 @@ public class FloatingWindowService extends Service {
         
         if (ACTION_SET_SYMBOLS.equals(action)) {
             java.util.ArrayList<String> received = intent.getStringArrayListExtra(EXTRA_SYMBOL_LIST);
+            java.util.ArrayList<String> display = intent.getStringArrayListExtra(EXTRA_SYMBOL_LIST_DISPLAY);
             if (received != null) {
                 String currentSymbol = (symbolList.size() > 0 && currentIndex < symbolList.size()) 
                     ? symbolList.get(currentIndex) : null;
                 
+                keepDataAlive = true;
                 symbolList = received;
                 persistSymbols(symbolList);
+                if (display != null) {
+                    persistSymbols(display, PREFS_SYMBOLS_DISPLAY_KEY);
+                }
                 currentIndex = 0;
                 
                 if (currentSymbol != null) {
@@ -282,6 +294,7 @@ public class FloatingWindowService extends Service {
                 }
                 if (windowVisible) updateUI();
                 connectWebSockets();
+                requestRestRefresh();
             }
             return START_STICKY;
         }
@@ -493,9 +506,13 @@ public class FloatingWindowService extends Service {
     }
 
     private void persistSymbols(java.util.List<String> symbols) {
+        persistSymbols(symbols, PREFS_SYMBOLS_KEY);
+    }
+
+    private void persistSymbols(java.util.List<String> symbols, String key) {
         try {
             android.content.SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-            prefs.edit().putString(PREFS_SYMBOLS_KEY, gson.toJson(symbols)).apply();
+            prefs.edit().putString(key, gson.toJson(symbols)).apply();
         } catch (Exception ignored) {}
     }
     

@@ -52,6 +52,7 @@ private val BorderColor = Color(0xFF2D333B)
 
 private const val PREFS_NAME = "amaze_monitor_prefs"
 private const val PREFS_SYMBOLS_KEY = "binance_symbols"
+private const val PREFS_SYMBOLS_DISPLAY_KEY = "binance_symbols_display"
 private const val PREFS_FONT_SIZE = "floating_font_size"
 private const val PREFS_OPACITY = "floating_opacity"
 private const val PREFS_SHOW_SYMBOL = "floating_show_symbol"
@@ -60,11 +61,11 @@ private const val PREFS_ITEMS_PER_PAGE = "floating_items_per_page"
 class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateListener {
 
     private val symbolsState = mutableStateListOf<String>()
-    private val priceMap = ConcurrentHashMap<String, Double>()
-    private val changeMap = ConcurrentHashMap<String, Double>()
-    private var updateTrigger = mutableStateOf(0)
+    private val priceMap = mutableStateMapOf<String, Double>()
+    private val changeMap = mutableStateMapOf<String, Double>()
     private var floatingActive = mutableStateOf(false)
     private val gson = Gson()
+    private var prefsListener: android.content.SharedPreferences.OnSharedPreferenceChangeListener? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -75,7 +76,8 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
         // Start data service with symbols to ensure ticker feed is live on native home
         val intent = Intent(this, FloatingWindowService::class.java).apply {
             action = FloatingWindowService.ACTION_START_DATA
-            putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST, ArrayList(symbolsState))
+            putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST, ArrayList(expandSymbolsForService(symbolsState)))
+            putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST_DISPLAY, ArrayList(symbolsState))
         }
         startService(intent)
         applyFloatingConfig()
@@ -89,9 +91,11 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
         super.onResume()
         refreshSymbolsFromPrefs()
         FloatingWindowService.setTickerListener(this)
+        registerPrefsListener()
         val dataIntent = Intent(this, FloatingWindowService::class.java).apply {
             action = FloatingWindowService.ACTION_START_DATA
-            putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST, ArrayList(symbolsState))
+            putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST, ArrayList(expandSymbolsForService(symbolsState)))
+            putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST_DISPLAY, ArrayList(symbolsState))
         }
         startService(dataIntent)
         applyFloatingConfig()
@@ -105,22 +109,32 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
         runOnUiThread {
             priceMap[symbol] = price
             changeMap[symbol] = changePercent
-            // Trigger recomposition
-            updateTrigger.value++
         }
     }
 
     private fun addSymbol(text: String) {
-        val sym = if (text.contains("USDT")) text.uppercase() else "${text.uppercase()}USDT"
+        val normalized = normalizeSymbol(text)
+        if (normalized.isBlank()) return
+        val sym = if (isCompositeSymbol(normalized)) {
+            normalizeCompositeSymbol(normalized)
+        } else {
+            val base = if (normalized.endsWith(".P")) normalized.dropLast(2) else normalized
+            val spot = if (base.endsWith("USDT")) base else "${base}USDT"
+            if (normalized.endsWith(".P")) "${spot}.P" else spot
+        }
         if (!symbolsState.contains(sym)) {
             symbolsState.add(sym)
             persistSymbols()
             // Update service
             val intent = Intent(this, FloatingWindowService::class.java).apply {
                 action = FloatingWindowService.ACTION_SET_SYMBOLS
-                putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST, ArrayList(symbolsState))
+                putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST, ArrayList(expandSymbolsForService(symbolsState)))
+                putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST_DISPLAY, ArrayList(symbolsState))
             }
             startService(intent)
+            startService(Intent(this, FloatingWindowService::class.java).apply {
+                action = FloatingWindowService.ACTION_REQUEST_UPDATE
+            })
         }
     }
 
@@ -177,7 +191,8 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
 
     private fun loadSymbols(): List<String> {
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val stored = prefs.getString(PREFS_SYMBOLS_KEY, null)
+        val stored = prefs.getString(PREFS_SYMBOLS_DISPLAY_KEY, null)
+            ?: prefs.getString(PREFS_SYMBOLS_KEY, null)
         if (!stored.isNullOrBlank()) {
             try {
                 val type = object : TypeToken<List<String>>() {}.type
@@ -193,6 +208,7 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
     private fun persistSymbols() {
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         prefs.edit().putString(PREFS_SYMBOLS_KEY, gson.toJson(symbolsState)).apply()
+        prefs.edit().putString(PREFS_SYMBOLS_DISPLAY_KEY, gson.toJson(symbolsState)).apply()
     }
 
     private fun ensureOverlayPermission(): Boolean {
@@ -217,10 +233,34 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
             symbolsState.addAll(latest)
             val intent = Intent(this, FloatingWindowService::class.java).apply {
                 action = FloatingWindowService.ACTION_SET_SYMBOLS
-                putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST, ArrayList(symbolsState))
+                putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST, ArrayList(expandSymbolsForService(symbolsState)))
+                putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST_DISPLAY, ArrayList(symbolsState))
             }
             startService(intent)
+            startService(Intent(this, FloatingWindowService::class.java).apply {
+                action = FloatingWindowService.ACTION_REQUEST_UPDATE
+            })
         }
+    }
+
+    private fun registerPrefsListener() {
+        if (prefsListener != null) return
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        prefsListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == PREFS_SYMBOLS_DISPLAY_KEY || key == PREFS_SYMBOLS_KEY) {
+                refreshSymbolsFromPrefs()
+            }
+        }
+        prefs.registerOnSharedPreferenceChangeListener(prefsListener)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        prefsListener?.let { listener ->
+            val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            prefs.unregisterOnSharedPreferenceChangeListener(listener)
+        }
+        prefsListener = null
     }
 
     private fun applyFloatingConfig() {
@@ -241,9 +281,8 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
 
     @Composable
     fun HomeScreen() {
-        // Force recomposition when prices update
-        val tick by updateTrigger
         var inputText by remember { mutableStateOf("") }
+        val suggestions = remember(inputText) { buildSuggestions(inputText) }
 
         Box(
             modifier = Modifier
@@ -268,6 +307,15 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
                         }
                     }
                 )
+                if (suggestions.isNotEmpty()) {
+                    SuggestionList(
+                        suggestions = suggestions,
+                        onPick = {
+                            addSymbol(it)
+                            inputText = ""
+                        }
+                    )
+                }
 
                 // Symbol List
                 LazyColumn(
@@ -277,10 +325,11 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
                     contentPadding = PaddingValues(bottom = 100.dp)
                 ) {
                     itemsIndexed(symbolsState) { _, symbol ->
+                        val composite = if (isCompositeSymbol(symbol)) computeCompositeTicker(symbol) else null
                         TickerCard(
                             symbol = symbol,
-                            price = priceMap[symbol],
-                            change = changeMap[symbol],
+                            price = composite?.first ?: priceMap[symbol],
+                            change = composite?.second ?: changeMap[symbol],
                             onCardClick = { openChart(symbol) },
                             onAlertClick = { openAlert(symbol) }
                         )
@@ -391,6 +440,49 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
                 text = "添加",
                 onClick = onAdd
             )
+        }
+    }
+
+    @Composable
+    fun SuggestionList(
+        suggestions: List<String>,
+        onPick: (String) -> Unit
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            shape = RoundedCornerShape(10.dp),
+            color = BgCard,
+            border = androidx.compose.foundation.BorderStroke(1.dp, BorderColor)
+        ) {
+            Column {
+                suggestions.forEachIndexed { idx, sug ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onPick(sug) }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = sug,
+                            color = TextPrimary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            text = if (sug.endsWith(".P")) "永续" else "现货",
+                            color = TextSecondary,
+                            fontSize = 12.sp
+                        )
+                    }
+                    if (idx < suggestions.size - 1) {
+                        Divider(color = BorderColor, thickness = 1.dp)
+                    }
+                }
+            }
         }
     }
 
@@ -557,5 +649,98 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
             price >= 1 -> String.format("%.4f", price)
             else -> String.format("%.6f", price)
         }
+    }
+
+    private fun normalizeSymbol(input: String): String {
+        return input.trim().uppercase().replace("\\s+".toRegex(), "")
+    }
+
+    private fun buildSuggestions(input: String): List<String> {
+        val normalized = normalizeSymbol(input)
+        if (normalized.isBlank()) return emptyList()
+        if (isCompositeSymbol(normalized)) {
+            return listOf(normalizeCompositeSymbol(normalized))
+        }
+        val base = if (normalized.endsWith(".P")) normalized.dropLast(2) else normalized
+        val spot = if (base.endsWith("USDT")) base else "${base}USDT"
+        return listOf(spot, "${spot}.P").distinct()
+    }
+
+    private fun isCompositeSymbol(value: String): Boolean {
+        if (!value.contains("/")) return false
+        val parts = value.split("/")
+        return parts.size == 2 && parts[0].isNotBlank() && parts[1].isNotBlank()
+    }
+
+    private fun normalizeCompositeSymbol(value: String): String {
+        val normalized = normalizeSymbol(value)
+        val parts = normalized.split("/")
+        if (parts.size != 2) return normalized
+        return "${parts[0]}/${parts[1]}"
+    }
+
+    private fun stripPerpSuffix(token: String): String {
+        return if (token.endsWith(".P")) token.dropLast(2) else token
+    }
+
+    private fun tokenToSpotSymbol(token: String): String {
+        return if (token.endsWith("USDT")) token else "${token}USDT"
+    }
+
+    private fun expandSymbolsForService(displaySymbols: List<String>): List<String> {
+        val out = linkedSetOf<String>()
+        displaySymbols.forEach { raw ->
+            val normalized = normalizeSymbol(raw)
+            if (normalized.isBlank()) return@forEach
+            if (isCompositeSymbol(normalized)) {
+                val parts = normalizeCompositeSymbol(normalized).split("/")
+                if (parts.size != 2) return@forEach
+                val baseToken = stripPerpSuffix(parts[0])
+                val quoteToken = stripPerpSuffix(parts[1])
+                val baseSpot = tokenToSpotSymbol(baseToken)
+                val quoteSpot = tokenToSpotSymbol(quoteToken)
+                out.add(baseSpot)
+                out.add("${baseSpot}.P")
+                out.add(quoteSpot)
+                out.add("${quoteSpot}.P")
+            } else {
+                out.add(normalized)
+            }
+        }
+        return out.toList()
+    }
+
+    private fun pickLegPrice(spotSymbol: String, perpSymbol: String): Pair<Double, Double?>? {
+        val spotPrice = priceMap[spotSymbol]
+        if (spotPrice != null) return Pair(spotPrice, changeMap[spotSymbol])
+        val perpPrice = priceMap[perpSymbol]
+        if (perpPrice != null) return Pair(perpPrice, changeMap[perpSymbol])
+        return null
+    }
+
+    private fun computeCompositeTicker(symbol: String): Pair<Double?, Double?>? {
+        if (!isCompositeSymbol(symbol)) return null
+        val parts = normalizeCompositeSymbol(symbol).split("/")
+        if (parts.size != 2) return null
+        val baseToken = stripPerpSuffix(parts[0])
+        val quoteToken = stripPerpSuffix(parts[1])
+        val baseSpot = tokenToSpotSymbol(baseToken)
+        val quoteSpot = tokenToSpotSymbol(quoteToken)
+        val basePick = pickLegPrice(baseSpot, "${baseSpot}.P")
+        val quotePick = pickLegPrice(quoteSpot, "${quoteSpot}.P")
+        val basePrice = basePick?.first
+        val quotePrice = quotePick?.first
+        if (basePrice == null || quotePrice == null || quotePrice == 0.0) return Pair(null, null)
+        val price = basePrice / quotePrice
+
+        val baseChange = basePick.second
+        val quoteChange = quotePick.second
+        val change = if (baseChange != null && quoteChange != null) {
+            val ratio = (1 + baseChange / 100.0) / (1 + quoteChange / 100.0) - 1
+            ratio * 100.0
+        } else {
+            null
+        }
+        return Pair(price, change)
     }
 }

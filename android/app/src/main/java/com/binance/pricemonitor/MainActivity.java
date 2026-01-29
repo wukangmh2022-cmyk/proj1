@@ -7,6 +7,8 @@ import android.widget.FrameLayout;
 import android.widget.ProgressBar;
 import android.os.Build;
 import android.content.Intent;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
@@ -223,11 +225,15 @@ public class MainActivity extends BridgeActivity {
             }
 
             if (pendingSymbol != null) {
+                String encoded = pendingSymbol;
+                try {
+                    encoded = URLEncoder.encode(pendingSymbol, StandardCharsets.UTF_8.toString());
+                } catch (Exception ignored) {}
                 if (pendingOpenAlert) {
-                    String script = "window.location.replace('#/alert/" + pendingSymbol + "');";
+                    String script = "window.location.replace('#/alert/" + encoded + "');";
                     getBridge().getWebView().evaluateJavascript(script, null);
                 } else {
-                    String script = "window.location.replace('#/chart/" + pendingSymbol + "');";
+                    String script = "window.location.replace('#/chart/" + encoded + "');";
                     getBridge().getWebView().evaluateJavascript(script, null);
                 }
                 pendingSymbol = null;
