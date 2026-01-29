@@ -45,6 +45,11 @@ const BACKUP_EXCLUDE_KEYS = new Set([
   'amaze_last_route',
   'amaze_last_background_ts'
 ]);
+const BACKUP_KNOWN_KEYS = new Set([
+  'binance_symbols',
+  'binance_symbols_display',
+  'floating_config'
+]);
 
 const isBackupKey = (key) => {
   if (!key) return false;
@@ -79,16 +84,197 @@ const collectBackupData = () => {
   };
 };
 
+const isPrimitive = (value) => {
+  return value === null || ['string', 'number', 'boolean'].includes(typeof value);
+};
+
+const tomlKey = (key) => {
+  return /^[A-Za-z0-9_-]+$/.test(key) ? key : JSON.stringify(key);
+};
+
+const tomlQuote = (value) => {
+  return JSON.stringify(value);
+};
+
+const tomlArray = (values) => {
+  const items = values.map((v) => {
+    if (typeof v === 'string') return tomlQuote(v);
+    if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+    return tomlQuote(String(v));
+  });
+  return `[${items.join(', ')}]`;
+};
+
+const tomlLiteral = (value) => {
+  const safe = value ?? '';
+  return `'''\n${safe}\n'''`;
+};
+
+const buildTomlExport = (payload) => {
+  const data = payload?.data || {};
+  const lines = [];
+  const version = payload?.version ?? BACKUP_VERSION;
+  lines.push(`version = ${version}`);
+  lines.push(`exportedAt = ${payload?.exportedAt ?? Date.now()}`);
+
+  const symbols = data.binance_symbols;
+  const symbolsDisplay = data.binance_symbols_display;
+  const symbolsList = Array.isArray(symbols) ? symbols : parseMaybeJson(symbols);
+  const symbolsDisplayList = Array.isArray(symbolsDisplay) ? symbolsDisplay : parseMaybeJson(symbolsDisplay);
+  if (Array.isArray(symbolsList) || Array.isArray(symbolsDisplayList)) {
+    lines.push('');
+    lines.push('[binance]');
+    if (Array.isArray(symbolsList)) lines.push(`${tomlKey('symbols')} = ${tomlArray(symbolsList)}`);
+    if (Array.isArray(symbolsDisplayList)) lines.push(`${tomlKey('symbols_display')} = ${tomlArray(symbolsDisplayList)}`);
+  }
+
+  const floatingConfig = data.floating_config;
+  const floatingObj = typeof floatingConfig === 'string' ? parseMaybeJson(floatingConfig) : floatingConfig;
+  if (floatingObj && typeof floatingObj === 'object' && !Array.isArray(floatingObj)) {
+    lines.push('');
+    lines.push('[floating_config]');
+    Object.entries(floatingObj).forEach(([key, value]) => {
+      if (typeof value === 'string') {
+        lines.push(`${tomlKey(key)} = ${tomlQuote(value)}`);
+      } else if (typeof value === 'number' || typeof value === 'boolean') {
+        lines.push(`${tomlKey(key)} = ${value}`);
+      } else if (Array.isArray(value) && value.every(isPrimitive)) {
+        lines.push(`${tomlKey(key)} = ${tomlArray(value)}`);
+      }
+    });
+  }
+
+  const rawKeys = Object.keys(data).filter((key) => !BACKUP_KNOWN_KEYS.has(key));
+  if (rawKeys.length > 0) {
+    lines.push('');
+    lines.push('[raw]');
+    rawKeys.forEach((key) => {
+      const value = data[key];
+      if (Array.isArray(value) && value.every(isPrimitive)) {
+        lines.push(`${tomlKey(key)} = ${tomlArray(value)}`);
+        return;
+      }
+      if (isPrimitive(value)) {
+        if (typeof value === 'string') {
+          lines.push(`${tomlKey(key)} = ${tomlQuote(value)}`);
+        } else {
+          lines.push(`${tomlKey(key)} = ${value}`);
+        }
+        return;
+      }
+      const json = JSON.stringify(value ?? null, null, 2);
+      lines.push(`${tomlKey(key)} = ${tomlLiteral(json)}`);
+    });
+  }
+
+  return lines.join('\n');
+};
+
+const parseToml = (input) => {
+  const out = { raw: {} };
+  let section = null;
+  const lines = input.split(/\r?\n/);
+  let i = 0;
+
+  const setValue = (target, key, value) => {
+    target[key] = value;
+  };
+
+  const parseValue = (value) => {
+    const v = value.trim();
+    if (v.startsWith("'''")) {
+      return { literal: true, value: v.slice(3) };
+    }
+    if (v.startsWith('"')) {
+      try { return JSON.parse(v); } catch { return v.slice(1, -1); }
+    }
+    if (v.startsWith('[')) {
+      try { return JSON.parse(v); } catch { return v; }
+    }
+    if (v === 'true') return true;
+    if (v === 'false') return false;
+    if (/^-?\d+(\.\d+)?$/.test(v)) return Number(v);
+    return v;
+  };
+
+  while (i < lines.length) {
+    let line = lines[i];
+    i += 1;
+    if (!line) continue;
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      const name = trimmed.replace(/^\[+|\]+$/g, '').trim();
+      section = name;
+      if (name && !out[name]) out[name] = {};
+      continue;
+    }
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    let key = trimmed.slice(0, eq).trim();
+    let valueRaw = trimmed.slice(eq + 1).trim();
+    if (key.startsWith('"') && key.endsWith('"')) {
+      try { key = JSON.parse(key); } catch { key = key.slice(1, -1); }
+    }
+    const parsed = parseValue(valueRaw);
+    if (parsed && parsed.literal) {
+      let chunk = parsed.value;
+      while (!chunk.includes("'''") && i < lines.length) {
+        chunk += '\n' + lines[i];
+        i += 1;
+      }
+      const endIdx = chunk.indexOf("'''");
+      const literal = endIdx >= 0 ? chunk.slice(0, endIdx) : chunk;
+      const text = literal.startsWith('\n') ? literal.slice(1) : literal;
+      const target = section ? out[section] : out;
+      setValue(target, key, text);
+      continue;
+    }
+    const target = section ? out[section] : out;
+    setValue(target, key, parsed);
+  }
+  return out;
+};
+
+const tomlToDataMap = (parsed) => {
+  const data = {};
+  if (parsed?.binance?.symbols) {
+    data.binance_symbols = JSON.stringify(parsed.binance.symbols);
+  }
+  if (parsed?.binance?.symbols_display) {
+    data.binance_symbols_display = JSON.stringify(parsed.binance.symbols_display);
+  }
+  if (parsed?.floating_config && typeof parsed.floating_config === 'object') {
+    data.floating_config = JSON.stringify(parsed.floating_config);
+  }
+  if (parsed?.raw && typeof parsed.raw === 'object') {
+    Object.entries(parsed.raw).forEach(([key, value]) => {
+      if (typeof value === 'string') {
+        data[key] = value;
+      } else {
+        data[key] = JSON.stringify(value);
+      }
+    });
+  }
+  return data;
+};
+
 const parseBackupPayload = (raw) => {
   if (!raw) throw new Error('empty');
-  const parsed = JSON.parse(raw);
-  if (parsed && typeof parsed === 'object' && parsed.data && typeof parsed.data === 'object') {
-    return parsed.data;
+  const trimmed = raw.trim();
+  if (!trimmed) throw new Error('empty');
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === 'object' && parsed.data && typeof parsed.data === 'object') {
+      return parsed.data;
+    }
+    if (parsed && typeof parsed === 'object') {
+      return parsed;
+    }
+    throw new Error('invalid');
   }
-  if (parsed && typeof parsed === 'object') {
-    return parsed;
-  }
-  throw new Error('invalid');
+  const parsedToml = parseToml(trimmed);
+  return tomlToDataMap(parsedToml);
 };
 
 const hasBackupData = () => {
@@ -172,7 +358,7 @@ const SettingsPanel = ({ config, onUpdate, onDone, showDiagnostics }) => {
   const handleCopyConfig = async () => {
     try {
       const payload = collectBackupData();
-      const text = JSON.stringify(payload, null, 2);
+      const text = buildTomlExport(payload);
       const ok = await copyText(text);
       if (!ok) alert('复制失败，请手动长按复制');
       else alert('配置已复制');
@@ -260,7 +446,7 @@ const SettingsPanel = ({ config, onUpdate, onDone, showDiagnostics }) => {
           <textarea
             value={importText}
             onChange={(e) => setImportText(e.target.value)}
-            placeholder="粘贴配置JSON"
+            placeholder="粘贴配置 TOML/JSON"
             style={{
               width: '100%',
               minHeight: 120,
