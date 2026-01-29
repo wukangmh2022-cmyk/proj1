@@ -57,6 +57,7 @@ public class FloatingWindowService extends Service {
     
     // Data storage
     private java.util.List<String> symbolList = new java.util.ArrayList<>();
+    private java.util.List<String> displaySymbolList = new java.util.ArrayList<>();
     private java.util.Map<String, String[]> priceDataMap = new java.util.concurrent.ConcurrentHashMap<>();
     private java.util.Map<String, double[]> rawPriceDataMap = new java.util.concurrent.ConcurrentHashMap<>();
     private int currentIndex = 0;
@@ -232,11 +233,15 @@ public class FloatingWindowService extends Service {
             java.util.ArrayList<String> display = intent.getStringArrayListExtra(EXTRA_SYMBOL_LIST_DISPLAY);
             if (display != null) {
                 persistSymbols(display, PREFS_SYMBOLS_DISPLAY_KEY);
+                displaySymbolList = display;
             }
             if (received != null && !received.isEmpty()) {
                 keepDataAlive = true;
                 symbolList = received;
                 persistSymbols(symbolList);
+                if (displaySymbolList.isEmpty()) {
+                    displaySymbolList = received;
+                }
                 connectWebSockets();
                 requestRestRefresh();
             }
@@ -277,19 +282,23 @@ public class FloatingWindowService extends Service {
             java.util.ArrayList<String> received = intent.getStringArrayListExtra(EXTRA_SYMBOL_LIST);
             java.util.ArrayList<String> display = intent.getStringArrayListExtra(EXTRA_SYMBOL_LIST_DISPLAY);
             if (received != null) {
-                String currentSymbol = (symbolList.size() > 0 && currentIndex < symbolList.size()) 
-                    ? symbolList.get(currentIndex) : null;
+                java.util.List<String> beforeUiList = getDisplayList();
+                String currentSymbol = (beforeUiList.size() > 0 && currentIndex < beforeUiList.size())
+                    ? beforeUiList.get(currentIndex) : null;
                 
                 keepDataAlive = true;
                 symbolList = received;
                 persistSymbols(symbolList);
                 if (display != null) {
                     persistSymbols(display, PREFS_SYMBOLS_DISPLAY_KEY);
+                    displaySymbolList = display;
+                } else if (displaySymbolList.isEmpty()) {
+                    displaySymbolList = received;
                 }
                 currentIndex = 0;
                 
                 if (currentSymbol != null) {
-                    int idx = symbolList.indexOf(currentSymbol);
+                    int idx = getDisplayList().indexOf(currentSymbol);
                     if (idx >= 0) currentIndex = idx;
                 }
                 if (windowVisible) updateUI();
@@ -565,7 +574,7 @@ public class FloatingWindowService extends Service {
                         long now = android.os.SystemClock.uptimeMillis();
                         if (now - lastUiUpdateMs < UI_UPDATE_THROTTLE_MS) return;
                         lastUiUpdateMs = now;
-                        if (isSymbolVisible(symbol)) {
+                        if (shouldUpdateUiForSymbol(symbol)) {
                             updateUI();
                         }
                     });
@@ -584,12 +593,95 @@ public class FloatingWindowService extends Service {
         if (price >= 0.0001) return String.format(java.util.Locale.US, "%.6f", price).replaceAll("0*$", "").replaceAll("\\.$", "");
         return String.format(java.util.Locale.US, "%.8f", price).replaceAll("0*$", "").replaceAll("\\.$", "");
     }
+
+    private java.util.List<String> getDisplayList() {
+        return displaySymbolList.isEmpty() ? symbolList : displaySymbolList;
+    }
+
+    private boolean isCompositeSymbol(String symbol) {
+        if (symbol == null) return false;
+        return symbol.contains("/") && symbol.indexOf("/") > 0 && symbol.indexOf("/") < symbol.length() - 1;
+    }
+
+    private String normalizeSymbol(String symbol) {
+        if (symbol == null) return "";
+        return symbol.toUpperCase().trim().replaceAll("\\s+", "");
+    }
+
+    private String stripPerpSuffix(String symbol) {
+        String v = normalizeSymbol(symbol);
+        return v.endsWith(".P") ? v.substring(0, v.length() - 2) : v;
+    }
+
+    private String tokenToSpotSymbol(String token) {
+        if (token == null || token.isEmpty()) return "";
+        return token.endsWith("USDT") ? token : token + "USDT";
+    }
+
+    private double[] pickLegRaw(String spotSymbol, String perpSymbol) {
+        double[] spot = rawPriceDataMap.get(spotSymbol);
+        if (spot != null && spot.length >= 2 && spot[0] > 0) return spot;
+        double[] perp = rawPriceDataMap.get(perpSymbol);
+        if (perp != null && perp.length >= 2 && perp[0] > 0) return perp;
+        return null;
+    }
+
+    private String[] getDisplayData(String symbol) {
+        if (!isCompositeSymbol(symbol)) {
+            return priceDataMap.get(symbol);
+        }
+        String v = normalizeSymbol(symbol);
+        String[] parts = v.split("/");
+        if (parts.length != 2) return null;
+        String baseToken = stripPerpSuffix(parts[0]);
+        String quoteToken = stripPerpSuffix(parts[1]);
+        String baseSpot = tokenToSpotSymbol(baseToken);
+        String quoteSpot = tokenToSpotSymbol(quoteToken);
+        if (baseSpot.isEmpty() || quoteSpot.isEmpty()) return null;
+        double[] base = pickLegRaw(baseSpot, baseSpot + ".P");
+        double[] quote = pickLegRaw(quoteSpot, quoteSpot + ".P");
+        if (base == null || quote == null || quote[0] == 0) return null;
+        double price = base[0] / quote[0];
+        double baseChg = base.length > 1 ? base[1] : 0;
+        double quoteChg = quote.length > 1 ? quote[1] : 0;
+        double ratio = (1 + baseChg / 100.0) / (1 + quoteChg / 100.0) - 1;
+        String change = String.format(java.util.Locale.US, "%.2f", ratio * 100.0);
+        return new String[]{formatPrice(price), change};
+    }
+
+    private boolean shouldUpdateUiForSymbol(String symbol) {
+        if (isSymbolVisible(symbol)) return true;
+        java.util.List<String> list = getDisplayList();
+        if (list.isEmpty()) return false;
+        String leg = normalizeSymbol(symbol);
+        for (int i = 0; i < itemsPerPage; i++) {
+            int idx = (currentIndex + i) % list.size();
+            String item = list.get(idx);
+            if (!isCompositeSymbol(item)) continue;
+            if (compositeUsesLeg(item, leg)) return true;
+        }
+        return false;
+    }
+
+    private boolean compositeUsesLeg(String compositeSymbol, String leg) {
+        String v = normalizeSymbol(compositeSymbol);
+        String[] parts = v.split("/");
+        if (parts.length != 2) return false;
+        String baseToken = stripPerpSuffix(parts[0]);
+        String quoteToken = stripPerpSuffix(parts[1]);
+        String baseSpot = tokenToSpotSymbol(baseToken);
+        String quoteSpot = tokenToSpotSymbol(quoteToken);
+        if (leg.equals(baseSpot) || leg.equals(baseSpot + ".P")) return true;
+        if (leg.equals(quoteSpot) || leg.equals(quoteSpot + ".P")) return true;
+        return false;
+    }
     
     private boolean isSymbolVisible(String symbol) {
-        if (symbolList.isEmpty()) return false;
+        java.util.List<String> list = getDisplayList();
+        if (list.isEmpty()) return false;
         for (int i = 0; i < itemsPerPage; i++) {
-            int idx = (currentIndex + i) % symbolList.size();
-            if (symbol.equals(symbolList.get(idx))) {
+            int idx = (currentIndex + i) % list.size();
+            if (symbol.equals(list.get(idx))) {
                 return true;
             }
         }
@@ -597,8 +689,9 @@ public class FloatingWindowService extends Service {
     }
     
     private void showNextPage() {
-        if (symbolList.isEmpty()) return;
-        currentIndex = (currentIndex + itemsPerPage) % symbolList.size();
+        java.util.List<String> list = getDisplayList();
+        if (list.isEmpty()) return;
+        currentIndex = (currentIndex + itemsPerPage) % list.size();
         updateUI();
     }
     
@@ -606,18 +699,19 @@ public class FloatingWindowService extends Service {
         if (!windowVisible || itemsContainer == null) return;
         itemsContainer.removeAllViews();
         
-        if (symbolList.isEmpty()) {
+        java.util.List<String> list = getDisplayList();
+        if (list.isEmpty()) {
             addLoadingView();
             return;
         }
 
         for (int i = 0; i < itemsPerPage; i++) {
-            int idx = (currentIndex + i) % symbolList.size();
-            String symbol = symbolList.get(idx);
-            String[] data = priceDataMap.get(symbol);
+            int idx = (currentIndex + i) % list.size();
+            String symbol = list.get(idx);
+            String[] data = getDisplayData(symbol);
             addTickerView(symbol, data);
             
-            if (i >= symbolList.size() - 1) break; 
+            if (i >= list.size() - 1) break; 
         }
     }
     
