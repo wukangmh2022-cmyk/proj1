@@ -57,16 +57,41 @@ const isBackupKey = (key) => {
   return key.startsWith('chart_') || key.startsWith('binance_') || key.startsWith('floating_');
 };
 
+const stripBom = (value) => {
+  if (typeof value !== 'string') return value;
+  return value.replace(/[\uFEFF\u200B-\u200D]/g, '');
+};
+
 const parseMaybeJson = (value) => {
   if (typeof value !== 'string') return value;
-  const trimmed = value.trim();
-  if (!trimmed) return value;
-  if (!(trimmed.startsWith('{') || trimmed.startsWith('['))) return value;
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    return value;
+  const cleaned = stripBom(value);
+  const trimmed = cleaned.trim();
+  if (!trimmed) return cleaned;
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return cleaned;
+    }
   }
+  if ((trimmed.includes('\\"') || trimmed.includes('\\n') || trimmed.includes('\\t')) &&
+      (trimmed.includes('{') || trimmed.includes('['))) {
+    try {
+      const unescaped = JSON.parse(`"${trimmed.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`);
+      const untrimmed = unescaped.trim();
+      if (untrimmed.startsWith('{') || untrimmed.startsWith('[')) {
+        return JSON.parse(untrimmed);
+      }
+    } catch {
+      return cleaned;
+    }
+  }
+  return cleaned;
+};
+
+const normalizeExportText = (value) => {
+  if (typeof value !== 'string') return value;
+  return stripBom(value).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 };
 
 const collectBackupData = () => {
@@ -154,17 +179,28 @@ const buildTomlExport = (payload) => {
         lines.push(`${tomlKey(key)} = ${tomlArray(value)}`);
         return;
       }
-      if (isPrimitive(value)) {
-        if (typeof value === 'string') {
-          lines.push(`${tomlKey(key)} = ${tomlQuote(value)}`);
-        } else {
-          lines.push(`${tomlKey(key)} = ${value}`);
-        }
+    if (typeof value === 'string') {
+      const parsed = parseMaybeJson(value);
+      if (parsed && typeof parsed === 'object') {
+        const json = JSON.stringify(parsed, null, 2);
+        lines.push(`${tomlKey(key)} = ${tomlLiteral(json)}`);
         return;
       }
-      const json = JSON.stringify(value ?? null, null, 2);
-      lines.push(`${tomlKey(key)} = ${tomlLiteral(json)}`);
-    });
+      const text = normalizeExportText(value);
+      if (text.includes('\n')) {
+        lines.push(`${tomlKey(key)} = ${tomlLiteral(text)}`);
+      } else {
+        lines.push(`${tomlKey(key)} = ${tomlQuote(text)}`);
+      }
+      return;
+    }
+    if (isPrimitive(value)) {
+      lines.push(`${tomlKey(key)} = ${value}`);
+      return;
+    }
+    const json = JSON.stringify(value ?? null, null, 2);
+    lines.push(`${tomlKey(key)} = ${tomlLiteral(json)}`);
+  });
   }
 
   return lines.join('\n');
