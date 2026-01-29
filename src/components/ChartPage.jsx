@@ -51,7 +51,7 @@ const toCandle = (raw) => ({
     volume: +raw[5],
 });
 
-const computeCompositeCandle = (base, quote) => {
+const computeCompositeCandle = (base, quote, timeOverride) => {
     if (!base || !quote) return null;
     const denomOpen = quote.open;
     const denomClose = quote.close;
@@ -68,7 +68,7 @@ const computeCompositeCandle = (base, quote) => {
     if (!isFinite(open) || !isFinite(close) || !isFinite(high) || !isFinite(low)) return null;
 
     return {
-        time: base.time,
+        time: typeof timeOverride === 'number' ? timeOverride : base.time,
         open,
         high,
         low,
@@ -77,13 +77,26 @@ const computeCompositeCandle = (base, quote) => {
     };
 };
 
-const buildCompositeSeries = (baseData, quoteData) => {
-    const quoteMap = new Map(quoteData.map(c => [c.time, c]));
+const buildCompositeSeries = (baseData, quoteData, stepSec) => {
+    if (!Array.isArray(baseData) || !Array.isArray(quoteData)) return [];
+    if (!stepSec || stepSec <= 0) {
+        const quoteMap = new Map(quoteData.map(c => [c.time, c]));
+        const out = [];
+        baseData.forEach((b) => {
+            const q = quoteMap.get(b.time);
+            if (!q) return;
+            const c = computeCompositeCandle(b, q);
+            if (c) out.push(c);
+        });
+        return out;
+    }
+    const quoteMap = new Map(quoteData.map(c => [Math.round(c.time / stepSec), c]));
     const out = [];
     baseData.forEach((b) => {
-        const q = quoteMap.get(b.time);
+        const key = Math.round(b.time / stepSec);
+        const q = quoteMap.get(key);
         if (!q) return;
-        const c = computeCompositeCandle(b, q);
+        const c = computeCompositeCandle(b, q, key * stepSec);
         if (c) out.push(c);
     });
     return out;
@@ -1520,7 +1533,7 @@ export default function ChartPage() {
                     }
                     const baseFormatted = baseRes.data.map(toCandle);
                     const quoteFormatted = quoteRes.data.map(toCandle);
-                    formatted = buildCompositeSeries(baseFormatted, quoteFormatted);
+                    formatted = buildCompositeSeries(baseFormatted, quoteFormatted, parseInterval(interval));
 
                     compositeLegRef.current = {
                         base: { symbol: baseRes.symbol, isPerp: baseRes.isPerp },
@@ -1622,13 +1635,16 @@ export default function ChartPage() {
                             volume: +m.k.v,
                             isClosed: !!m.k.x,
                         };
-                        compositeLiveRef.current[legKey] = k;
+                        const stepSec = parseInterval(interval);
+                        const bucket = stepSec ? Math.round(k.time / stepSec) : k.time;
+                        compositeLiveRef.current[legKey] = { ...k, bucket };
                         const otherKey = legKey === 'base' ? 'quote' : 'base';
                         const other = compositeLiveRef.current[otherKey];
-                        if (!other || other.time !== k.time) return;
+                        if (!other || other.bucket !== bucket) return;
                         const composite = computeCompositeCandle(
                             legKey === 'base' ? k : other,
-                            legKey === 'base' ? other : k
+                            legKey === 'base' ? other : k,
+                            stepSec ? bucket * stepSec : k.time
                         );
                         if (!composite) return;
                         if (!firstWsTick) {
@@ -1712,7 +1728,7 @@ export default function ChartPage() {
                         if (Array.isArray(baseRaw) && Array.isArray(quoteRaw)) {
                             const baseData = baseRaw.map(toCandle);
                             const quoteData = quoteRaw.map(toCandle);
-                            const newData = buildCompositeSeries(baseData, quoteData);
+                            const newData = buildCompositeSeries(baseData, quoteData, parseInterval(interval));
                             // Filter to avoid overlaps
                             const uniqueNew = newData.filter(d => d.time < allDataRef.current[0].time);
                             if (uniqueNew.length > 0) {
