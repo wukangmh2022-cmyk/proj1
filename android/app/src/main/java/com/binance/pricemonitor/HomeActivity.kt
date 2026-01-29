@@ -92,17 +92,28 @@ class HomeActivity : ComponentActivity(), FloatingWindowService.TickerUpdateList
         refreshSymbolsFromPrefs()
         FloatingWindowService.setTickerListener(this)
         registerPrefsListener()
-        val dataIntent = Intent(this, FloatingWindowService::class.java).apply {
-            action = FloatingWindowService.ACTION_START_DATA
+        val setIntent = Intent(this, FloatingWindowService::class.java).apply {
+            action = FloatingWindowService.ACTION_SET_SYMBOLS
             putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST, ArrayList(expandSymbolsForService(symbolsState)))
             putStringArrayListExtra(FloatingWindowService.EXTRA_SYMBOL_LIST_DISPLAY, ArrayList(symbolsState))
         }
-        startService(dataIntent)
+        startService(setIntent)
         applyFloatingConfig()
         val intent = Intent(this, FloatingWindowService::class.java).apply {
             action = FloatingWindowService.ACTION_REQUEST_UPDATE
         }
         startService(intent)
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        handler.postDelayed({
+            startService(Intent(this, FloatingWindowService::class.java).apply {
+                action = FloatingWindowService.ACTION_REQUEST_UPDATE
+            })
+        }, 1000)
+        handler.postDelayed({
+            startService(Intent(this, FloatingWindowService::class.java).apply {
+                action = FloatingWindowService.ACTION_REQUEST_UPDATE
+            })
+        }, 3000)
     }
 
     override fun onTickerUpdate(symbol: String, price: Double, changePercent: Double) {

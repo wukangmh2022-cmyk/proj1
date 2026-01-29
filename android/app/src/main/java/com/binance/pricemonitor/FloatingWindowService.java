@@ -337,6 +337,11 @@ public class FloatingWindowService extends Service {
             android.util.Log.d(PERF_TAG, "ACTION_REQUEST_UPDATE at " + System.currentTimeMillis() +
                     " hasListener=" + (tickerListener != null) +
                     " symbolsCount=" + rawPriceDataMap.size());
+            long now = android.os.SystemClock.uptimeMillis();
+            if (lastTickerMessageMs == 0 || now - lastTickerMessageMs > TICKER_STALE_MS) {
+                connectWebSockets();
+                requestRestRefresh();
+            }
             if (!rawPriceDataMap.isEmpty()) {
                 for (java.util.Map.Entry<String, double[]> entry : rawPriceDataMap.entrySet()) {
                     String symbol = entry.getKey();
