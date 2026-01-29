@@ -90,10 +90,10 @@ const buildCompositeSeries = (baseData, quoteData, stepSec) => {
         });
         return out;
     }
-    const quoteMap = new Map(quoteData.map(c => [Math.round(c.time / stepSec), c]));
+    const quoteMap = new Map(quoteData.map(c => [Math.floor(c.time / stepSec), c]));
     const out = [];
     baseData.forEach((b) => {
-        const key = Math.round(b.time / stepSec);
+        const key = Math.floor(b.time / stepSec);
         const q = quoteMap.get(key);
         if (!q) return;
         const c = computeCompositeCandle(b, q, key * stepSec);
@@ -1475,6 +1475,7 @@ export default function ChartPage() {
         let loadStart = Date.now();
         let firstWsTick = false;
         let loadOk = false;
+        let waitingForFirstData = true;
         perfLog('[perf] chart load start', symbol, interval, loadStart);
 
         // Save interval preference
@@ -1553,18 +1554,27 @@ export default function ChartPage() {
                     compositeLegRef.current = null;
                 }
 
-                if (!Array.isArray(formatted) || formatted.length === 0) {
+                if (!Array.isArray(formatted)) {
                     throw new Error('no_data');
                 }
 
-                setLoadingStage('数据处理中...');
-                allDataRef.current = formatted;
-                seriesRef.current.setData(formatted);
-                applyPriceFormat(formatted[formatted.length - 1]?.close);
-                dataIntervalRef.current = interval; // mark data interval
-                lastLogicalRangeRef.current = chartRef.current.timeScale().getVisibleLogicalRange() || lastLogicalRangeRef.current;
-                updateIndicators(formatted);
-                loadOk = true;
+                if (formatted.length > 0) {
+                    setLoadingStage('数据处理中...');
+                    allDataRef.current = formatted;
+                    seriesRef.current.setData(formatted);
+                    applyPriceFormat(formatted[formatted.length - 1]?.close);
+                    dataIntervalRef.current = interval; // mark data interval
+                    lastLogicalRangeRef.current = chartRef.current.timeScale().getVisibleLogicalRange() || lastLogicalRangeRef.current;
+                    updateIndicators(formatted);
+                    waitingForFirstData = false;
+                    loadOk = true;
+                } else {
+                    // Keep chart alive; wait for websocket ticks.
+                    setLoadingStage('等待行情...');
+                    allDataRef.current = [];
+                    seriesRef.current.setData([]);
+                    loadOk = true;
+                }
                 perfLog('[perf] chart data set', symbol, interval, 'bars=', formatted.length, 'ms=', Date.now() - loadStart);
                 // Force redraw drawings with new data time-scale, using rAF to ensure TimeScale is ready
                 requestAnimationFrame(() => requestScreenDrawingsUpdateRef.current?.());
@@ -1595,7 +1605,7 @@ export default function ChartPage() {
                     } catch (e) { console.error(e); }
                 }
 
-                if (!restored) {
+                if (!restored && formatted.length > 0) {
                     chartRef.current.timeScale().fitContent();
                 }
 
@@ -1607,7 +1617,9 @@ export default function ChartPage() {
                 const msg = e?.message === 'invalid_composite' ? '交易对无效' : '加载失败';
                 setLoadingStage(msg);
             }
-            setIsLoading(false);
+            if (!waitingForFirstData) {
+                setIsLoading(false);
+            }
             perfLog('[perf] chart load end', symbol, interval, 'ms=', Date.now() - loadStart);
             // Clear stage shortly after finishing to avoid stale text
             stageTimer = setTimeout(() => setLoadingStage(''), 300);
@@ -1623,7 +1635,6 @@ export default function ChartPage() {
                         perfLog('[perf] chart ws open', symbol, interval, legKey);
                     };
                     wsRef.onmessage = (e) => {
-                        if (allDataRef.current.length === 0) return;
                         const m = JSON.parse(e.data);
                         if (!m.k) return;
                         const k = {
@@ -1636,7 +1647,7 @@ export default function ChartPage() {
                             isClosed: !!m.k.x,
                         };
                         const stepSec = parseInterval(interval);
-                        const bucket = stepSec ? Math.round(k.time / stepSec) : k.time;
+                        const bucket = stepSec ? Math.floor(k.time / stepSec) : k.time;
                         compositeLiveRef.current[legKey] = { ...k, bucket };
                         const otherKey = legKey === 'base' ? 'quote' : 'base';
                         const other = compositeLiveRef.current[otherKey];
@@ -1650,6 +1661,11 @@ export default function ChartPage() {
                         if (!firstWsTick) {
                             firstWsTick = true;
                             perfLog('[perf] chart ws first tick', symbol, interval, 'ms=', Date.now() - loadStart);
+                            if (waitingForFirstData) {
+                                waitingForFirstData = false;
+                                setIsLoading(false);
+                                setLoadingStage('');
+                            }
                         }
                         seriesRef.current.update(composite);
                         applyPriceFormat(composite.close);
@@ -1675,12 +1691,14 @@ export default function ChartPage() {
                     perfLog('[perf] chart ws open', symbol, interval);
                 };
                 ws.onmessage = (e) => {
-                    // Guard: don't update if initial load hasn't finished (prevent mixing intervals)
-                    if (allDataRef.current.length === 0) return;
-
                     if (!firstWsTick) {
                         firstWsTick = true;
                         perfLog('[perf] chart ws first tick', symbol, interval, 'ms=', Date.now() - loadStart);
+                        if (waitingForFirstData) {
+                            waitingForFirstData = false;
+                            setIsLoading(false);
+                            setLoadingStage('');
+                        }
                     }
                     const m = JSON.parse(e.data);
                     if (m.k) {
